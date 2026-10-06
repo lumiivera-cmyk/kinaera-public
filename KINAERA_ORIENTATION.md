@@ -14,7 +14,7 @@ Decisions made along the way:
 - **Stage 7 (ladder lessons):**
   - A lesson you try first waits for you: their part runs when you tap "Hand it to {name}" (`step-<id>-after: you`).
   - The lessons go in a fixed order (editing, profiles, library, linking, instruments) rather than as they come up in the scene: the step list is plain wording, and the order matches how each one uses the scene.
-  - The Night of the Living Dead text is fetched by `bun run fetch-example`, since this build's container couldn't reach Wikisource. Until it's committed, the library lesson says so and works with whatever is in the library.
+  - The Night of the Living Dead text ships in `defaults/library/`, converted from Wikisource's PDF of the transcript. `bun run fetch-example` can rebuild it from the site.
   - Their first draft of tastes moved into the instruments lesson until the write-up (stage 9).
 - **Stage 8 (the interview):**
   - Your "Keep something to myself" posts a line in #practice. Its optional note goes in your notebook, hidden from your kinwriter, so you can still read it. Theirs is a tool, `keep_to_myself`, offered only during the interview, that writes in their journal.

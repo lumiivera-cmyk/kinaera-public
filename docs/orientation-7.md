@@ -63,12 +63,12 @@ The card's point: a profile changes how their words come out, never who they are
 
 The example is Night of the Living Dead (1968). The film is public domain in the US, and the Wikisource transcript is marked public domain.
 
-`bun run fetch-example` (scripts/fetch-library-example.ts) does three things:
-1. fetches the transcript from Wikisource;
-2. turns its "Name: words" lines into cue lines (the name in capitals, the words under it), which the library reads as speakers;
-3. saves `defaults/library/night-of-the-living-dead.md`.
+It ships in `defaults/library/night-of-the-living-dead.md`: the film's full dialogue, about 47,000 characters in 35 passages. It was made from Wikisource's PDF of the transcript:
+- each speaker's name is a cue line in capitals, with their words under it, which the library reads as speakers;
+- signs and on-screen text (the TV's list of rescue stations) are in brackets;
+- the opening and closing credits are left out.
 
-Run it once somewhere with internet and commit the file. Until then, **Add the example** says so plainly, and the library lesson works with whatever is in the library.
+`bun run fetch-example` (scripts/fetch-library-example.ts) can rebuild it from Wikisource's own text, where that site is reachable. If the file is ever missing, **Add the example** says so plainly, and the library lesson works with whatever is in the library.
 
 ## API and data
 
