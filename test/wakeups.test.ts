@@ -1,0 +1,409 @@
+/**
+ * Tests for wake-ups: src/wakeups.ts (the hard rules, then your kinwriter's
+ * own turn), the wake prompt, and the API.
+ *
+ * Every model call goes to a fake nanoGPT (see helpers.ts). Wake-ups run
+ * only when a test asks, through a `Wakeups` with a clock the test controls.
+ * No wake-up ever asks Jev.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { promptForChannel } from "../src/kinwriter.ts";
+import { describeWake, isNothing, type WakeContext } from "../src/prompt.ts";
+import { createApp, type App } from "../src/server.ts";
+import { validateSettings } from "../src/store.ts";
+import { homeChannel, humanDuration, inQuietHours, Wakeups, type WakeEvent } from "../src/wakeups.ts";
+import type { Channel } from "../src/types.ts";
+import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
+
+let fake: FakeNanoGpt;
+let dir: ReturnType<typeof tempDir>;
+let app: App;
+let story: Channel;
+let ooc: Channel;
+/** The clock the wake-ups see. */
+let now: Date;
+let wakeups: Wakeups;
+
+const HOUR = 3_600_000;
+
+beforeEach(() => {
+  fake = startFakeNanoGpt();
+  dir = tempDir();
+  app = createApp(testConfig(dir.path, fake.baseUrl));
+  [story, ooc] = app.store.listChannels() as [Channel, Channel];
+  // Noon, so default quiet hours (none) and any set below are predictable.
+  now = new Date();
+  now.setHours(12, 0, 0, 0);
+  wakeups = new Wakeups(app.store, app.kinwriter, true, () => now);
+});
+
+afterEach(() => {
+  app.summarizer.stop();
+  app.store.close();
+  fake.stop();
+  dir.cleanup();
+});
+
+function settings(update: Record<string, unknown>) {
+  app.store.updateSettings(validateSettings(update));
+}
+
+/** Something you wrote `hoursAgo` hours before `now`. */
+function youWrote(hoursAgo: number, channel = ooc, content = "hey") {
+  return app.store.addMessage({
+    channelId: channel.id,
+    author: "user",
+    content,
+    createdAt: new Date(now.getTime() - hoursAgo * HOUR).toISOString(),
+  });
+}
+
+/** Which requests went to Jev, and which to the writer. */
+const jevRequests = () => fake.jevRequests;
+const writerRequests = () => fake.requests;
+
+async function wake(event: WakeEvent = "opened", detail = {}) {
+  return wakeups.event(event, detail);
+}
+
+async function call(method: string, path: string, body?: unknown) {
+  const response = await app.fetch(
+    new Request(`http://localhost${path}`, {
+      method,
+      headers: body === undefined ? {} : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
+  return { status: response.status, data: (await response.json()) as any };
+}
+
+describe("helpers", () => {
+  test("humanDuration", () => {
+    expect(humanDuration(30_000)).toBe("1 minute");
+    expect(humanDuration(5 * 60_000)).toBe("5 minutes");
+    expect(humanDuration(3 * HOUR)).toBe("3 hours");
+    expect(humanDuration(72 * HOUR)).toBe("3 days");
+  });
+
+  test("quiet hours, wrapping past midnight", () => {
+    const at = (h: number) => {
+      const d = new Date();
+      d.setHours(h, 30, 0, 0);
+      return d;
+    };
+    expect(inQuietHours(at(23), -1, 8)).toBe(false);
+    expect(inQuietHours(at(23), 22, 8)).toBe(true);
+    expect(inQuietHours(at(3), 22, 8)).toBe(true);
+    expect(inQuietHours(at(8), 22, 8)).toBe(false);
+    expect(inQuietHours(at(14), 13, 15)).toBe(true);
+    expect(inQuietHours(at(15), 13, 15)).toBe(false);
+  });
+
+  test("the home channel is the OOC channel you talked in last", () => {
+    const other = app.store.createChannel({ name: "chat", kind: "ooc" });
+    youWrote(5, ooc);
+    youWrote(1, other);
+    expect(homeChannel(app.store, app.store.listChannels())!.id).toBe(other.id);
+  });
+
+  test("[nothing] is recognised, loosely", () => {
+    expect(isNothing("[nothing]")).toBe(true);
+    expect(isNothing("  [Nothing] ")).toBe(true);
+    expect(isNothing("nothing much, you?")).toBe(false);
+  });
+});
+
+describe("coming back", () => {
+  test("after being away, your kinwriter gets the turn and writes in OOC", async () => {
+    youWrote(6);
+    fake.replies.push({ content: "Welcome back! How was your day?" });
+    const result = await wake();
+    expect(result).toMatchObject({ outcome: "posted", reason: "away" });
+    expect(result.messages[0]!.content).toBe("Welcome back! How was your day?");
+    expect(app.store.lastMessage(ooc.id)!.content).toBe("Welcome back! How was your day?");
+    // Nobody asked Jev whether it was the moment: that was your kinwriter's call.
+    // Jev never decides whether they wake; it only reads their draft for their own reflexes (src/reflexes.ts).
+    expect(jevRequests().every((r) => JSON.stringify(r.messages).includes("draft reply"))).toBe(true);
+    // They were told why they're up.
+    const prompt = JSON.stringify(writerRequests()[0]!.messages);
+    expect(prompt).toContain("6 hours");
+    expect(app.store.wakeLog.recent()[0]).toMatchObject({ reason: "away", outcome: "posted", channelId: ooc.id });
+  });
+
+  test("your kinwriter can choose not to write", async () => {
+    youWrote(6);
+    fake.replies.push({ content: "[nothing]" });
+    const result = await wake();
+    expect(result).toMatchObject({ outcome: "quiet", messages: [] });
+    // "[nothing]" never becomes a message.
+    expect(app.store.lastMessage(ooc.id)!.content).toBe("hey");
+  });
+
+  test("do_nothing counts as quiet", async () => {
+    youWrote(6);
+    fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: {} }] });
+    expect((await wake()).outcome).toBe("quiet");
+    expect(app.store.lastMessage(ooc.id)!.author).toBe("user");
+  });
+
+  test("a failed turn is logged as failed", async () => {
+    youWrote(6);
+    fake.replies.push({ status: 500, error: "down" });
+    const result = await wake();
+    expect(result.outcome).toBe("failed");
+    expect(app.store.wakeLog.recent()[0]).toMatchObject({ outcome: "failed" });
+  });
+
+  test("just opening the app counts only when chatty, and not mid-conversation", async () => {
+    youWrote(1);
+    expect((await wake()).outcome).toBeNull(); // normal: "opened" doesn't count
+    expect(fake.requests.length + fake.jevRequests.length).toBe(0);
+
+    settings({ wakeups: "chatty" });
+    youWrote(0.1);
+    const result = await wake();
+    expect(result.outcome).toBeNull();
+    expect(result.detail).toContain("talking just now");
+
+    now = new Date(now.getTime() + HOUR);
+    fake.replies.push({ content: "Oh hi" });
+    expect(await wake()).toMatchObject({ outcome: "posted", reason: "opened" });
+  });
+});
+
+describe("the rules", () => {
+  test("off means never", async () => {
+    settings({ wakeups: "off" });
+    youWrote(48);
+    expect((await wake()).outcome).toBeNull();
+    expect(fake.requests.length + fake.jevRequests.length).toBe(0);
+    expect(app.store.wakeLog.recent()).toHaveLength(0);
+  });
+
+  test("quiet hours", async () => {
+    settings({ quietStart: 10, quietEnd: 14 });
+    youWrote(6);
+    const result = await wake();
+    expect(result.outcome).toBeNull();
+    expect(result.detail).toContain("quiet hours");
+  });
+
+  test("one double text, never a third without you writing, and a cooldown", async () => {
+    youWrote(6);
+    fake.replies.push({ content: "Welcome back" });
+    expect((await wake()).outcome).toBe("posted");
+
+    // Hours later, still no reply from you: one follow-up is fine…
+    now = new Date(now.getTime() + 5 * HOUR);
+    fake.replies.push({ content: "you around?" });
+    expect((await wake()).outcome).toBe("posted");
+
+    // …but not a third.
+    now = new Date(now.getTime() + 5 * HOUR);
+    let result = await wake();
+    expect(result.outcome).toBeNull();
+    expect(result.detail).toContain("twice, and is waiting for you");
+
+    // Writing in their practice channel (an orientation) messages no one: it doesn't count.
+    app.store.wakeLog.add({ at: now.toISOString(), reason: "orientation", outcome: "posted", channelId: ooc.id, detail: "" });
+    expect(app.store.wakeLog.postedSince(null)).toBe(2);
+
+    // You write, then leave; coming back soon after is within the cooldown.
+    youWrote(0.5);
+    settings({ awayHours: 0.25, wakeCooldownMinutes: 24 * 60 });
+    result = await wake();
+    expect(result.detail).toContain("too soon");
+  });
+
+  test("no API key, no wake-ups", async () => {
+    const keyless = new Wakeups(app.store, app.kinwriter, false, () => now);
+    youWrote(6);
+    expect((await keyless.event("opened")).outcome).toBeNull();
+  });
+});
+
+describe("a scene ending", () => {
+  test("your kinwriter hears how it went, with its summary", async () => {
+    app.store.addMessage({ channelId: story.id, author: "user", content: "Kestrel knocks.", createdAt: new Date(now.getTime() - 60_000).toISOString() });
+    const { sceneBreak } = app.store.addSceneBreak(story.id, "user", "The Storm");
+    app.store.summaries.save(story.id, "scene", sceneBreak.id, "Kestrel found the lighthouse in a storm.", 99);
+    youWrote(0.2, ooc);
+    fake.replies.push({ content: "That storm scene was great." });
+    const result = await wake("scene-ended", { channelId: story.id, breakId: sceneBreak.id });
+    expect(result).toMatchObject({ outcome: "posted", reason: "scene-ended" });
+    expect(JSON.stringify(writerRequests()[0]!.messages)).toContain("Kestrel found the lighthouse");
+  });
+
+  test("describeWake explains a scene with no summary yet", () => {
+    const context: WakeContext = { reason: "scene-ended", sinceUser: "3 minutes", waiting: [], scene: { channel: "story", title: "The Storm", summary: null } };
+    const text = describeWake(context, false);
+    expect(text).toContain("#story");
+    expect(text).toContain("The Storm");
+  });
+});
+
+describe("reviews", () => {
+  test("a suggestion for your kinwriter wakes them, even in quiet hours", async () => {
+    settings({ quietStart: 10, quietEnd: 14 });
+    const ilse = app.store.notebook.createEntry("friend", { kind: "character", name: "Ilse", editing: "suggest" });
+    app.store.notebook.editEntry("user", ilse.id, { name: "Ilse Marrow" });
+    youWrote(0.1);
+    fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: {} }] });
+    const result = await wake("review");
+    expect(result.reason).toBe("review");
+    // Jev never decides whether they wake; it only reads their draft for their own reflexes (src/reflexes.ts).
+    expect(jevRequests().every((r) => JSON.stringify(r.messages).includes("draft reply"))).toBe(true);
+    expect(JSON.stringify(writerRequests()[0]!.messages)).toContain("Ilse");
+  });
+});
+
+describe("reviews answer right away", () => {
+  test("whatever the chattiness or cooldown; and only when something's waiting", async () => {
+    settings({ wakeups: "off", wakeCooldownMinutes: 600 });
+    expect((await wake("review")).detail).toBe("Nothing is waiting for their review.");
+    const ilse = app.store.notebook.createEntry("friend", { kind: "character", name: "Ilse", editing: "suggest" });
+    app.store.notebook.editEntry("user", ilse.id, { name: "Ilse Marrow" });
+    fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: {} }] }, { toolCalls: [{ name: "do_nothing", arguments: {} }] });
+    expect((await wake("review")).reason).toBe("review");
+    // A second one straight after isn't held back by a cooldown.
+    expect((await wake("review")).reason).toBe("review");
+  });
+
+  test("busy when you suggest: they answer as soon as they're free", async () => {
+    const ilse = app.store.notebook.createEntry("friend", { kind: "character", name: "Ilse", editing: "suggest" });
+    app.store.notebook.editEntry("user", ilse.id, { name: "Ilse Marrow" });
+    fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: {} }] });
+    (wakeups as any).running = true; // another wake-up, still going
+    wakeups.requestReview();
+    await Bun.sleep(50);
+    expect(writerRequests()).toHaveLength(0);
+    (wakeups as any).running = false;
+    for (let i = 0; i < 60 && writerRequests().length === 0; i++) await Bun.sleep(100);
+    expect(JSON.stringify(writerRequests()[0]!.messages)).toContain("Ilse");
+    wakeups.stopReviews();
+  });
+});
+
+describe("the prompt", () => {
+  test("a wake-up turn's prompt says why, and allows doing nothing", () => {
+    youWrote(6);
+    const stack = promptForChannel(app.store, ooc.id, {
+      wake: { reason: "away", sinceUser: "6 hours", waiting: ["Your proposal to delete #old is waiting for the user."] },
+    });
+    const text = JSON.stringify(stack);
+    expect(text).toContain("6 hours");
+    expect(text).toContain("#old");
+    expect(text).toContain("[nothing]");
+  });
+});
+
+describe("the API", () => {
+  test("POST /api/wake answers straight away", async () => {
+    const { status, data } = await call("POST", "/api/wake", { event: "opened" });
+    expect(status).toBe(200);
+    expect(data).toMatchObject({ ok: true });
+  });
+
+  test("GET /api/wakeups lists the log", async () => {
+    youWrote(6);
+    fake.replies.push({ content: "[nothing]" });
+    await wake();
+    const { data } = await call("GET", "/api/wakeups");
+    expect(data.wakeups).toHaveLength(1);
+    expect(data.wakeups[0]).toMatchObject({ reason: "away", outcome: "quiet" });
+  });
+
+  test("POST /api/jev/test", async () => {
+    fake.replies.push({ content: JSON.stringify({ answers: { pet: { choice: "yes", probabilities: { yes: 0.97, no: 0.03 } } } }) });
+    const { data } = await call("POST", "/api/jev/test", {});
+    expect(data.ok).toBe(true);
+    expect(data.report).toMatchObject({ answeredBy: "jev" });
+  });
+
+  test("GET /api/state has a revision that moves with messages, and each channel's latest", async () => {
+    const before = (await call("GET", "/api/state")).data;
+    youWrote(0);
+    const after = (await call("GET", "/api/state")).data;
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.activity[ooc.id]).toMatchObject({ author: "user" });
+  });
+
+  test("settings are checked", async () => {
+    expect((await call("PUT", "/api/settings", { wakeups: "loud" })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { quietStart: 25 })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { decisionConfidence: 2 })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { decisionFallback: "profile:nope" })).status).toBe(404);
+    const ok = await call("PUT", "/api/settings", { wakeups: "chatty", quietStart: 22, quietEnd: 7 });
+    expect(ok.status).toBe(200);
+    expect(ok.data.settings ?? ok.data).toMatchObject({ wakeups: "chatty", quietStart: 22 });
+  });
+});
+
+describe("after a story post (an aside)", () => {
+  test("a moment in OOC about the story they just posted in; doing nothing is the normal choice", async () => {
+    youWrote(0.02, story, "*Kestrel knocks.*");
+    app.store.addMessage({ channelId: story.id, author: "friend", content: "*Ilse opens the door.* You're late.", createdAt: new Date(now.getTime() - 60_000).toISOString() });
+    fake.replies.push({ content: "ok I love that Kestrel knocked" });
+    const result = await wake("aside", { channelId: story.id });
+    expect(result).toMatchObject({ outcome: "posted", reason: "aside" });
+    const system = writerRequests()[0]!.messages[0]!.content;
+    expect(system).toContain(`You just posted in #${story.name}`);
+    expect(system).toContain("You: *Ilse opens the door.* You're late.");
+    expect(system).toContain("doing nothing is the normal choice");
+    expect(system).not.toContain("You're taking a turn on your own");
+    expect(app.store.getMessages(ooc.id).at(-1)!.content).toBe("ok I love that Kestrel knocked");
+  });
+
+  test("its own limit, apart from the cooldown; off at 0; not mid-conversation-blocked", async () => {
+    youWrote(0.01, story);
+    settings({ asideMinutes: 30, wakeCooldownMinutes: 600 });
+    fake.replies.push({ content: "[nothing]" });
+    expect((await wake("aside", { channelId: story.id })).outcome).toBe("quiet");
+    // Too soon for another aside...
+    expect((await wake("aside", { channelId: story.id })).outcome).toBeNull();
+    now = new Date(now.getTime() + 31 * 60_000);
+    youWrote(0.01, story);
+    fake.replies.push({ content: "[nothing]" });
+    // ...but 31 minutes on, it comes again, though the general cooldown is 10 hours.
+    expect((await wake("aside", { channelId: story.id })).outcome).toBe("quiet");
+    // No limit of its own: right after one, another.
+    settings({ asideMinutes: 0 });
+    fake.replies.push({ content: "[nothing]" }, { content: "[nothing]" });
+    expect((await wake("aside", { channelId: story.id })).outcome).toBe("quiet");
+    expect((await wake("aside", { channelId: story.id })).outcome).toBe("quiet");
+    settings({ asideMinutes: -1 });
+    now = new Date(now.getTime() + 60 * 60_000);
+    expect((await wake("aside", { channelId: story.id })).detail).toContain("turned off");
+    settings({ asideMinutes: 30, wakeups: "off" });
+    expect((await wake("aside", { channelId: story.id })).outcome).toBeNull();
+  });
+
+  test("a reply in a story offers it; a reply in OOC doesn't", async () => {
+    const live = createApp(testConfig(dir.path + "-live", fake.baseUrl, { autoWake: true }));
+    live.store.appState.set("orientation.pending", null);
+    const [liveStory, liveOoc] = live.store.listChannels() as [Channel, Channel];
+    const post = (channel: Channel, content: string) =>
+      live.fetch(new Request(`http://localhost/api/channels/${channel.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) }));
+    try {
+      fake.replies.push({ content: "*Ilse laughs.*" }, { content: "that scene is so good" });
+      await post(liveStory, "*Kestrel trips.*");
+      for (let i = 0; i < 50 && fake.requests.length < 2; i++) await Bun.sleep(10);
+      expect(fake.requests).toHaveLength(2);
+      expect(fake.requests[1]!.messages[0]!.content).toContain(`You just posted in #${liveStory.name}`);
+      await Bun.sleep(20);
+      expect(live.store.getMessages(liveOoc.id).at(-1)!.content).toBe("that scene is so good");
+      expect(live.store.wakeLog.recent(5)[0]).toMatchObject({ reason: "aside", outcome: "posted" });
+
+      // In OOC, nothing follows.
+      const before = fake.requests.length;
+      fake.replies.push({ content: "hi" });
+      await post(liveOoc, "hey");
+      await Bun.sleep(50);
+      expect(fake.requests).toHaveLength(before + 1);
+    } finally {
+      live.summarizer.stop();
+      live.store.close();
+    }
+  });
+});

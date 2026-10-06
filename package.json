@@ -1,0 +1,20 @@
+{
+  "name": "kinaera",
+  "version": "0.1.0",
+  "description": "A Discord-style space for writing stories with AI kinwriters who have real tools and lives of their own.",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun --watch run src/server.ts",
+    "fresh": "bun run src/fresh.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "fetch-example": "bun run scripts/fetch-library-example.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  }
+}
