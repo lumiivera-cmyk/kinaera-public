@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { nudges, oocFraming } from "../src/prompt.ts";
+import { nudges, oocFraming, paceNote } from "../src/prompt.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appVersion, createApp, matchRoute, type App } from "../src/server.ts";
@@ -87,7 +87,8 @@ describe("sending a message", () => {
     expect(request.max_tokens).toBe(321);
     // The cast's notebook entry is in the prompt.
     expect(request.messages[0]!.content).toContain("### Ilse Marrow (you play this character)");
-    expect(request.messages.at(-1)).toEqual({ role: "user", content: "Hello" });
+    // Matching the user's pace (on by default): the note follows their post.
+    expect(request.messages.at(-1)).toEqual({ role: "user", content: `Hello\n\n${paceNote("Hello")}` });
   });
 
   test("in OOC, the kinwriter speaks as themselves and sees the channel list", async () => {
@@ -137,6 +138,42 @@ describe("sending a message", () => {
   });
 });
 
+describe("a thinking model's reasoning", () => {
+  test("is kept with the turn, round by round, and comes back with the channel", async () => {
+    fake.replies.push(
+      { toolCalls: [{ name: "set_status", arguments: { status: "plotting" } }], reasoning: "First I'll set a status." },
+      { content: "The storm breaks.", reasoning: "Now the reply: keep it short." },
+    );
+    const { data } = await call("POST", `/api/channels/${story.id}/messages`, { content: "Go on." });
+    expect(data.kinwriterMessages[0].content).toBe("The storm breaks.");
+    expect(data.reasoning.map((r: any) => [r.round, r.text])).toEqual([
+      [0, "First I'll set a status."],
+      [1, "Now the reply: keep it short."],
+    ]);
+    expect(data.reasoning[0].turnId).toBe(data.kinwriterMessages[0].turnId);
+
+    const channel = await call("GET", `/api/channels/${story.id}/messages`);
+    expect(channel.data.reasoning.map((r: any) => r.text)).toEqual(["First I'll set a status.", "Now the reply: keep it short."]);
+  });
+
+  test("written in <think> tags is kept too, and left out of the post", async () => {
+    fake.replies.push({ content: "<think>They want drama.</think>\n\nThe storm breaks." });
+    const { data } = await call("POST", `/api/channels/${story.id}/messages`, { content: "Go on." });
+    expect(data.kinwriterMessages[0].content).toBe("The storm breaks.");
+    expect(data.reasoning.map((r: any) => r.text)).toEqual(["They want drama."]);
+  });
+
+  test("a model without any keeps nothing", async () => {
+    const { data } = await call("POST", `/api/channels/${story.id}/messages`, { content: "Go on." });
+    expect(data.reasoning).toEqual([]);
+  });
+
+  test("the kinwriter is told it's kept and shown", async () => {
+    await call("POST", `/api/channels/${story.id}/messages`, { content: "Go on." });
+    expect(JSON.stringify(fake.requests[0]!.messages)).toContain("that reasoning is saved with the turn");
+  });
+});
+
 describe("kinwriter turns without a user message", () => {
   test("the kinwriter can open an empty channel", async () => {
     const { status, data } = await call("POST", `/api/channels/${story.id}/turn`, {});
@@ -151,7 +188,7 @@ describe("kinwriter turns without a user message", () => {
 
     await call("POST", `/api/channels/${story.id}/turn`, {});
 
-    expect(fake.requests[0]!.messages.at(-1)).toEqual({ role: "user", content: nudges("rp").continue });
+    expect(fake.requests[0]!.messages.at(-1)).toEqual({ role: "user", content: `${nudges("rp").continue}\n\n${paceNote("Hi")}` });
     expect(app.store.getMessages(story.id).map((m) => m.author)).toEqual(["user", "friend", "friend"]);
   });
 

@@ -816,6 +816,89 @@ export const MIGRATIONS: Migration[] = [
   // What a channel is for, in a line ("anything but the stories"): in its
   // header, and in your kinwriter's prompt. Empty for existing channels.
   `ALTER TABLE channels ADD COLUMN about TEXT NOT NULL DEFAULT '';`,
+
+  // --------------------------------------------------------------- 12
+  // Kinwriter generation (design/kinwriter-generation/spec.md). The seed
+  // they were made from, kept read-only (src/seeds.ts); the one profile
+  // used for creating kinwriters; and a new kind of proposal, asking you to
+  // approve a new name (the inbox is rebuilt for its CHECK rule).
+  {
+    rebuild: `
+  CREATE TABLE seed (
+    -- One row at most: a kinwriter has one seed.
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    -- The whole seed.md, header and body, as it was on Accept.
+    content  TEXT NOT NULL,
+    saved_at TEXT NOT NULL
+  );
+
+  -- 1: this profile writes new kinwriters' seeds (one at most).
+  ALTER TABLE profiles ADD COLUMN kinwriter_maker INTEGER NOT NULL DEFAULT 0;
+
+  CREATE TABLE inbox_new (
+    id           TEXT PRIMARY KEY,
+    -- 'ask', or a proposal: 'delete_channel', or 'rename' (a new name for them).
+    kind         TEXT NOT NULL CHECK (kind IN ('ask', 'delete_channel', 'rename')),
+    ask_kind     TEXT,
+    text         TEXT NOT NULL DEFAULT '',
+    -- For a proposal: what it's about, and its name at the time (for a
+    -- rename: the name they'd like).
+    target_id    TEXT,
+    target_name  TEXT,
+    channel_id   TEXT,
+    status       TEXT NOT NULL DEFAULT 'open'
+                 CHECK (status IN ('open', 'answered', 'dismissed', 'approved', 'denied')),
+    answer       TEXT,
+    created_at   TEXT NOT NULL,
+    resolved_at  TEXT,
+    delivered_at TEXT,
+    orientation  INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO inbox_new (id, kind, ask_kind, text, target_id, target_name, channel_id, status, answer, created_at, resolved_at, delivered_at, orientation)
+    SELECT id, kind, ask_kind, text, target_id, target_name, channel_id, status, answer, created_at, resolved_at, delivered_at, orientation FROM inbox;
+  DROP TABLE inbox;
+  ALTER TABLE inbox_new RENAME TO inbox;
+  CREATE INDEX inbox_by_status ON inbox (status, created_at);
+  `,
+  },
+
+  // --------------------------------------------------------------- 13
+  // Self-notes are private now, unless your kinwriter shares them
+  // (src/selfnotes.ts). A kinwriter who already existed starts shared,
+  // since you could always read theirs, and is told once that they can
+  // stop. A brand-new database has no identity yet, so it starts private.
+  (db) => {
+    const existing = db.query("SELECT 1 FROM identity_versions LIMIT 1").get();
+    if (!existing) return;
+    const set = db.query("INSERT OR REPLACE INTO app_state (key, value) VALUES ($key, $value)");
+    set.run({ key: "self.shared", value: "true" });
+    set.run({ key: "self.shared-notice", value: "1" });
+  },
+
+  // --------------------------------------------------------------- 14
+  // A wake-up can run one of your kinwriter's scripts instead of a turn
+  // (src/scripts.ts): its name, or null for an ordinary wake-up.
+  `ALTER TABLE schedule ADD COLUMN script TEXT;`,
+
+  // --------------------------------------------------------------- 15
+  // A thinking model's reasoning, one row per round of a turn that had any
+  // (src/activity.ts). Shown with the turn's messages and in the developer
+  // panel; the kinwriter is told (`reasoning` in defaults/standing.md).
+  `
+  CREATE TABLE reasoning (
+    id         TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    -- The turn it belongs to: the same id as the messages it wrote.
+    turn_id    TEXT NOT NULL,
+    round      INTEGER NOT NULL,
+    text       TEXT NOT NULL,
+    profile    TEXT,
+    model      TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX reasoning_by_channel ON reasoning (channel_id, created_at);
+  CREATE INDEX reasoning_by_turn ON reasoning (turn_id);
+  `,
 ];
 
 /**

@@ -34,14 +34,29 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { Config } from "./config.ts";
 import { listWording, setWording, setWordingOverrides } from "./wording.ts";
 import { keepAwake } from "./notify.ts";
+import { acceptedSeed, beginFromSeed, type Seed } from "./seeds.ts";
 import { createApp, type App } from "./server.ts";
 import { Groups, type HubGroup } from "./groups.ts";
 import { isShared, validateSettings } from "./store.ts";
+import {
+  browseKinwriter,
+  browseMessages,
+  closeBrowsing,
+  describeFolder,
+  exportKinwriter,
+  folderPath,
+  kinwriterDir,
+  oldFolderNames,
+  readBundle,
+  startFresh,
+  writeKinwriter,
+  type KinwriterBundle,
+} from "./datafolders.ts";
 import { orientationRunning } from "./orientation.ts";
 import type { Settings } from "./types.ts";
 
@@ -86,6 +101,7 @@ export const KINWRITER_KEYS: (keyof Settings)[] = [
   "oocPrompt",
   "friendAvatar",
   "friendColor",
+  "friendPronouns",
 ];
 
 /** A kinwriter as the rail and sidebar show them, with their channels. */
@@ -164,7 +180,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       dataDir: resolve(root, kinwriter.dir),
       userThemesDir: join(root, "themes"),
       kinwriterId: kinwriter.id,
-      example: kinwriter.id === "home",
+      example: kinwriter.id === "home" ? "generate" : false,
       // Who else is on their server (names only), only with kinwriters together.
       peers: () => {
         if (!registry.together) return [];
@@ -196,6 +212,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     app.summarizer.scheduleAll(15_000);
     app.heartbeat.start();
     app.rhythms.start();
+    app.started();
     if (app.store.getSettings().heartbeatHours > 0) keepAwake();
   }
 
@@ -204,7 +221,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     app.rhythms.stop();
     app.wakeups.stopReviews();
     app.summarizer.stop();
-    app.store.close();
+    app.stop();
   }
 
   const defaultApp = () => apps.get(registry.servers[0]!.friends[0]!)!;
@@ -279,6 +296,17 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
   /** Make a kinwriter, copying profiles and preferences from another. */
   function makeKinwriter(input: Record<string, unknown>): string {
     const source = kinwriterApp(typeof input.copyFrom === "string" ? input.copyFrom : registry.servers[0]!.friends[0]!);
+    // From a seed (src/seeds.ts): checked before anything is made.
+    let seed: Seed | null = null;
+    if (input.seed !== undefined) {
+      try {
+        seed = acceptedSeed(input.seed);
+      } catch (error) {
+        throw new HubError(400, (error as Error).message);
+      }
+      input = { ...input, name: seed.header.name };
+      delete input.prompt;
+    }
     const identity = validateSettings({
       friendName: input.name ?? "New kinwriter",
       ...(input.prompt !== undefined ? { friendPrompt: input.prompt } : {}),
@@ -296,7 +324,8 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     // Who they were made as is the first version of their identity, which
     // is theirs from now on (src/identity.ts). Their first turn is the
     // orientation their store queued (src/orientation.ts).
-    app.store.identity.begin(identity.friendPrompt ?? app.store.getSettings().friendPrompt, typeof input.tastes === "string" ? input.tastes : "");
+    if (seed) beginFromSeed(app.store, seed, id);
+    else app.store.identity.begin(identity.friendPrompt ?? app.store.getSettings().friendPrompt, typeof input.tastes === "string" ? input.tastes : "");
     if (started) void app.rhythms.tick();
     registry.friends.push(kinwriter);
     return id;
@@ -315,6 +344,99 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     } catch {
       throw new HubError(400, "The request body must be a JSON object.");
     }
+  }
+
+  // ------------------------------------------------------ data folders
+
+  /** A kinwriter from an exported file, or an old folder: a new kinwriter, on a server of their own. */
+  function importKinwriter(bundle: KinwriterBundle): string {
+    const id = `p-${crypto.randomUUID().slice(0, 8)}`;
+    const entry: HubKinwriter = { id, dir: join("friends", id) };
+    writeKinwriter(resolve(root, entry.dir), bundle);
+    // Opening upgrades their database to the current layout.
+    open(entry);
+    registry.friends.push(entry);
+    registry.servers.push({ id: crypto.randomUUID(), name: "", friends: [id] });
+    save();
+    return id;
+  }
+
+  /** Set everything aside and start over, from inside the app (what `bun run fresh` does). */
+  function freshFromApp(): { aside: string; profiles: number } {
+    closeBrowsing();
+    groups.stop();
+    for (const app of apps.values()) stopApp(app);
+    apps.clear();
+    const result = startFresh(root, { kinwriterKeys: KINWRITER_KEYS, copyProfiles });
+    // A new hub: one kinwriter to make, on one server, kept apart.
+    registry.friends = [{ id: "home", dir: "." }];
+    registry.servers = [{ id: crypto.randomUUID(), name: "", friends: ["home"] }];
+    registry.groups = [];
+    delete registry.together;
+    save();
+    setWordingOverrides(join(root, "prompts.json"));
+    open(registry.friends[0]!);
+    return result;
+  }
+
+  async function devRoute(request: Request, parts: string[]): Promise<Response> {
+    const method = request.method;
+    const plain = (fn: () => unknown) => {
+      try {
+        return fn();
+      } catch (error) {
+        if (error instanceof HubError) throw error;
+        throw new HubError(400, error instanceof Error ? error.message : String(error));
+      }
+    };
+    if (method === "GET" && parts.length === 1 && parts[0] === "folders") {
+      // The current kinwriters by the names the app gives them (a name never saved is the default one).
+      const current = plain(() => describeFolder(root, "current")) as ReturnType<typeof describeFolder>;
+      for (const k of current.kinwriters) {
+        const live = apps.get(k.id)?.store.getSettings();
+        if (live) Object.assign(k, { name: live.friendName, avatar: live.friendAvatar });
+      }
+      return json({ current, old: oldFolderNames(root).map((name) => plain(() => describeFolder(root, name))) });
+    }
+    if (method === "POST" && parts.length === 1 && parts[0] === "fresh") {
+      const { aside, profiles } = plain(() => freshFromApp()) as { aside: string; profiles: number };
+      console.log(`[hub] started fresh; the old folder is ${aside}`);
+      return json({ aside: basename(aside), profiles, ...view() });
+    }
+    if (method === "POST" && parts.length === 1 && parts[0] === "import") {
+      // An exported kinwriter file, sent as it is.
+      const input = await body(request);
+      const kinwriterId = plain(() => importKinwriter(readBundle(input))) as string;
+      return json({ kinwriterId, ...view() });
+    }
+    if (parts[0] === "folders" && parts[2] === "kinwriters" && parts[3]) {
+      const folder = decodeURIComponent(parts[1]!);
+      const id = decodeURIComponent(parts[3]);
+      const path = plain(() => folderPath(root, folder)) as string;
+      const dir = plain(() => kinwriterDir(path, id)) as string;
+      if (method === "GET" && parts.length === 4) return json(plain(() => browseKinwriter(root, folder, id)));
+      if (method === "GET" && parts.length === 6 && parts[4] === "channels") {
+        const before = new URL(request.url).searchParams.get("before") ?? undefined;
+        return json(plain(() => browseMessages(root, folder, id, decodeURIComponent(parts[5]!), before)));
+      }
+      if (method === "GET" && parts.length === 5 && parts[4] === "export") {
+        // The current kinwriter's database is open: a snapshot of it, as it is now.
+        const live = folder === "current" ? apps.get(id) : undefined;
+        const name = live ? live.store.getSettings().friendName : (describeFolder(root, folder).kinwriters.find((k) => k.id === id)?.name ?? id);
+        const bundle = plain(() => exportKinwriter(dir, name, live?.store.db)) as KinwriterBundle;
+        const file = `${name.replace(/[^\w-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "kinwriter"}.kinwriter.json`;
+        return new Response(JSON.stringify(bundle), {
+          headers: { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="${file}"` },
+        });
+      }
+      if (method === "POST" && parts.length === 5 && parts[4] === "import") {
+        if (folder === "current") throw new HubError(400, "They're already here.");
+        const name = describeFolder(root, folder).kinwriters.find((k) => k.id === id)?.name ?? id;
+        const kinwriterId = plain(() => importKinwriter(exportKinwriter(dir, name))) as string;
+        return json({ kinwriterId, ...view() });
+      }
+    }
+    throw new HubError(404, "No such API route.");
   }
 
   function removeKinwriterFiles(kinwriter: HubKinwriter): void {
@@ -371,6 +493,12 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
         }
         return json({ files: listWording() });
       }
+    }
+
+    // Data folders (developer panel only, for now): start fresh, and the old folders' kinwriters.
+    if (parts[0] === "dev") {
+      if (!config.developerPanel) throw new HubError(404, "No such API route.");
+      return await devRoute(request, parts.slice(1));
     }
 
     if (parts[0] === "servers") {
@@ -560,16 +688,13 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     },
     close: () => {
       groups.stop();
+      closeBrowsing();
       for (const app of apps.values()) stopApp(app);
     },
     groups,
   };
 }
 
-/**
- * Give a new kinwriter the same connection profiles and roulettes as another
- * (same ids, so assignments carry over), replacing the default one.
- */
 /** Copy connection profiles and roulettes from one kinwriter's database to another's (same ids, so assignments carry over). */
 export function copyProfiles(source: Database, target: Database): void {
   const rows = (table: string) => source.query(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];

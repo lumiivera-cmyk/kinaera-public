@@ -15,7 +15,6 @@
  *
  *   POST   /api/wake                           You opened the app: your kinwriter may wake up (stage 8)
  *   GET    /api/wakeups                        Recent wake-ups, and what came of them
- *   POST   /api/kinwriter/random                 "Surprise me": a new kinwriter's name and prompt, from random ingredients
  *   POST   /api/presence                       The app is (or isn't) on screen: {visible}
  *   POST   /api/heartbeat                      Beat now: a free moment for your kinwriter, if the rules allow
  *   POST   /api/jev/test                      Ask Jev one tiny question, to see if it's reachable and understood
@@ -55,7 +54,11 @@
  *   DELETE /api/channels/:id/messages          Delete every message in a channel
  *   POST   /api/channels/:id/turn              Kinwriter takes a turn without a new message from you
  *   POST   /api/channels/:id/regenerate        Replace the kinwriter's last reply with a new one (optionally
- *                                              with a given profile)
+ *                                              with a given profile, or an earlier reply: what came after it
+ *                                              becomes a branch)
+ *   POST   /api/channels/:id/branches/switch   Go to another branch of the conversation
+ *   POST   /api/messages/:id/branch            Go back to a message: everything after it becomes a branch
+ *   POST   /api/messages/:id/use               Bring back an earlier version of a regenerated reply
  *   POST   /api/channels/:id/cancel            Stop the kinwriter's turn in progress (the Stop button)
  *   GET    /api/channels/:id/prompt            The exact prompt stack the next turn would send
  *   GET    /api/health                         The health view: tools and notes by shape, never content
@@ -70,6 +73,10 @@
  *   POST   /api/channels/:id/summaries/scenes/:sceneId/regenerate  Rewrite one scene's summary
  *   PUT    /api/channels/:id/cast/:entryId     Pin a notebook entry to a channel (add it to the cast)
  *   DELETE /api/channels/:id/cast/:entryId     Unpin it
+ *   GET    /api/channels/:id/scratchpads       A story channel's scratchpads: shared, and yours
+ *   PUT    /api/channels/:id/scratchpads/:pad  Write one ("shared" or "mine"), merged with changes since you opened it
+ *   POST   /api/channels/:id/scratchpads/:pad/undo  Put back the version before its last change
+ *   POST   /api/channels/:id/scratchpads/:pad/to-notebook  Save a passage to the notebook (and take it out of the pad)
  *
  *   PATCH  /api/messages/:id                   Edit a message's text (every version is kept)
  *   DELETE /api/messages/:id                   Delete one message (it's kept in history, as a tombstone)
@@ -123,7 +130,7 @@ import { readFileSync } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { loadConfig, type Config } from "./config.ts";
 import { ApiError, CancelledError, listModels, type ApiOptions } from "./nanogpt.ts";
-import { BusyError, Kinwriter, pickProfile, promptForChannel, testToolCalling, type TurnResult } from "./kinwriter.ts";
+import { BusyError, Kinwriter, pickProfile, profileRequest, promptForChannel, testToolCalling, type TurnResult } from "./kinwriter.ts";
 import { parseSceneBreak, postToMessages } from "./posts.ts";
 import { Summarizer } from "./summarizer.ts";
 import { Decider, testJev } from "./jev.ts";
@@ -131,15 +138,22 @@ import { FRESH_SCENE_MINUTES, inQuietHours, wakeContext, Wakeups } from "./wakeu
 import { toolSpecs } from "./tools.ts";
 import { healthReport } from "./health.ts";
 import { developerView } from "./developer.ts";
+import { acceptedSeed, beginFromSeed, checkHeadings, loadDefaultSeeds, parseSeed, writeSeed } from "./seeds.ts";
+import { requestSelfNotes, selfFile, selfShared, selfWordCount, shareRequest, SELF_WORDS_CAP, withdrawRequest } from "./selfnotes.ts";
+import { stillSeedDraft } from "./handoff.ts";
+import { buildSeedPrompt, generateSeed, ideaTags, SeedError, type Generation, type SeedSelection } from "./generator.ts";
+import { allAvoidTerms, CATEGORIES, loadTags, pickerView, readTagFiles, TAGS_DIR, type CategoryId } from "./tags.ts";
+import { validateSeed } from "./seeds.ts";
 import type { WakeContext, WakeReason } from "./prompt.ts";
 import { Heartbeat } from "./heartbeat.ts";
-import { describeSeeds, randomKinwriter, rollSeeds } from "./rng.ts";
+import { addExampleCharacter, exampleCharacterPending, freshWorld, type PracticeWorld } from "./practiceworld.ts";
 import { keepAwake, Presence, TermuxNotifier, type Notifier } from "./notify.ts";
 import { DEFAULT_THEME, ThemeLibrary } from "./themes.ts";
 import { ENTRY_TEMPLATES } from "./notebook.ts";
 import { rollCommand } from "./dice.ts";
 import { applyRewrite } from "./rewrites.ts";
 import { toolMap } from "./toolmap.ts";
+import { listScripts, scriptsOn } from "./scripts.ts";
 import { wording } from "./wording.ts";
 import { permissionViews, setGrant } from "./standing.ts";
 import {
@@ -175,6 +189,7 @@ import {
 } from "./orientation.ts";
 import type { CastMember, Channel, Message, Settings } from "./types.ts";
 import { PermissionError } from "./errors.ts";
+import { getPad, hasScratchpads, mergeText, PAD_LIMIT, PadChangedError, toNotebook, undoPad, writePad, type PadName } from "./scratchpads.ts";
 import {
   isShared,
   SETUP_PENDING,
@@ -199,6 +214,7 @@ const SETTINGS_THEY_SEE: Partial<Record<keyof Settings, string>> = {
   friendAvatar: "your avatar",
   friendColor: "your colour",
   oocBubbles: "whether you text in short bubbles out of character",
+  matchPace: "whether you match the length of the user's posts in literary scenes",
 };
 
 /** Longest message you can send, in characters. A generous guard against accidents. */
@@ -239,6 +255,10 @@ export interface App {
   /** Whether the app is on screen, as it last said (for notifications). */
   presence: Presence;
   notifier: Notifier;
+  /** Once it's running: anything it was waiting to do (a brand-new server's example character). */
+  started: () => void;
+  /** Stop: every turn running, then the store. What's still in the background ends on its own. */
+  stop: () => void;
 }
 
 /**
@@ -322,6 +342,28 @@ export function createApp(config: Config): App {
   if (config.groups) kinwriter.groups = config.groups;
 
   /** A DM you chose not to see: no screen, no messages. */
+
+  /** A story channel's scratchpads, as you see them (src/scratchpads.ts). */
+  function scratchpadsView(channelId: string) {
+    if (!hasScratchpads(store.getChannel(channelId))) throw new HttpError(400, "Only story channels have scratchpads.");
+    const theirs = getPad(store, channelId, "kinwriter");
+    return {
+      shared: getPad(store, channelId, "shared"),
+      mine: getPad(store, channelId, "user"),
+      // Theirs is private: only that it's there.
+      theirs: { written: theirs.text !== "" },
+      limit: PAD_LIMIT,
+    };
+  }
+
+  /** "shared" or "mine" in an address, as a pad (yours is "user"). */
+  function padName(channelId: string, pad: string): PadName {
+    if (!hasScratchpads(store.getChannel(channelId))) throw new HttpError(400, "Only story channels have scratchpads.");
+    if (pad === "shared") return "shared";
+    if (pad === "mine") return "user";
+    throw new HttpError(404, 'A scratchpad is "shared" or "mine".');
+  }
+
   function hiddenDm(channelId: string): boolean {
     const channel = store.hasChannel(channelId) ? store.getChannel(channelId) : null;
     // With kinwriters kept apart, every group channel and DM is out of sight.
@@ -458,9 +500,12 @@ export function createApp(config: Config): App {
 
   /** Everything on the kinwriter page (the journal only as counts: it's private). */
   function kinwriterPage() {
+    // Their self-notes are private unless they share them (src/selfnotes.ts).
+    const shared = selfShared(store);
     return {
-      identity: store.identity.current(),
-      history: store.identity.history(),
+      identity: shared ? store.identity.current() : null,
+      history: shared ? store.identity.history() : [],
+      selfNotes: selfNotesView(),
       selfPage: store.selfPage.view(),
       journal: store.journal.counts(),
       // Drafts are private too: only how many.
@@ -479,6 +524,11 @@ export function createApp(config: Config): App {
       orientation: orientationState(),
       // Their tool map: "I'd reach for this when…", one line per tool (src/toolmap.ts).
       toolMap: Object.entries(toolMap(store)).map(([tool, entry]) => ({ tool, when: entry.when })),
+      // Their scripts (src/scripts.ts): the tools in order, not the arguments (those can quote private things).
+      scripts: {
+        on: scriptsOn(store),
+        list: listScripts(store).map((s) => ({ name: s.name, about: s.about, steps: s.steps.map((step) => step.tool), lastRun: s.lastRun ?? null })),
+      },
       // How proactive they'd like to be, beside your chattiness (the ceiling).
       proactivity: { preference: proactivityPreference(store), chattiness: store.getSettings().wakeups },
       // Their note on you is private: only whether there is one.
@@ -486,6 +536,111 @@ export function createApp(config: Config): App {
       waiting: waitingOnKinwriter(),
       permissions: permissionViews(store),
     };
+  }
+
+  /** Where their self-notes stand, for the app: never their text unless shared. */
+  function selfNotesView() {
+    const shared = selfShared(store);
+    const seed = store.seeds.get();
+    return {
+      shared,
+      request: shareRequest(store),
+      // From a seed, and whether they've rewritten it yet.
+      fromSeed: seed !== null,
+      draft: stillSeedDraft(store),
+      words: shared ? selfWordCount(store) : null,
+      cap: SELF_WORDS_CAP,
+      file: shared ? selfFile(store, config.kinwriterId ?? null) : null,
+      pronouns: store.getSettings().friendPronouns,
+    };
+  }
+
+  // ----------------------------------------------------- making seeds
+
+  /** The last seed generation, for dev mode's Show prompt and Raw output. Kept in memory only. */
+  let lastGeneration: Generation | null = null;
+
+  /** Dev mode's tools exist only with DEVELOPER_PANEL=1. */
+  function developerOnly(): void {
+    if (!config.developerPanel) throw new HttpError(404, "Not found.");
+  }
+
+  /** The tag files as they are now. In dev mode, one that doesn't load stops here, so it gets fixed. */
+  function currentTags() {
+    try {
+      return loadTags({ strict: config.developerPanel === true });
+    } catch (error) {
+      throw new HttpError(500, (error as Error).message);
+    }
+  }
+
+  /** What the tags screen asked for, checked. */
+  function readSelection(body: Record<string, unknown>): SeedSelection {
+    const tags: SeedSelection["tags"] = {};
+    const given = (body.tags ?? {}) as Record<string, unknown>;
+    if (typeof given !== "object" || given === null) throw new HttpError(400, '"tags" must be an object.');
+    for (const c of CATEGORIES) {
+      const value = given[c.id];
+      if (value !== undefined && value !== null && typeof value !== "string") throw new HttpError(400, `"tags.${c.id}" must be a tag id or null.`);
+      tags[c.id as CategoryId] = (value as string | null | undefined) || null;
+    }
+    const strings = (value: unknown, field: string): string[] => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) throw new HttpError(400, `"${field}" must be a list of ids.`);
+      return value as string[];
+    };
+    const pockets = (body.pockets ?? {}) as Record<string, unknown>;
+    if (typeof pockets !== "object" || pockets === null || Object.values(pockets).some((v) => typeof v !== "string")) throw new HttpError(400, '"pockets" must map tag ids to pockets.');
+    return { tags, rolledTags: strings(body.rolledTags, "rolledTags"), pockets: pockets as Record<string, string> };
+  }
+
+  /** One seed from an assembled prompt, with the generator profile. A failure twice over is a readable 422. */
+  async function makeSeed(prompt: ReturnType<typeof buildSeedPrompt>, source: "generated" | "prompted", tags: ReturnType<typeof loadTags>) {
+    const profile = store.profiles.kinwriterMaker(store.getSettings().oocAssignment);
+    try {
+      const seed = await generateSeed(api, profile, prompt, {
+        source,
+        avoidTerms: allAvoidTerms(tags),
+        record: (g) => (lastGeneration = g),
+      });
+      console.log(`[seeds] made ${seed.header.name} with "${profile.name}" (${seed.header.tags.join(", ") || "no tags"})`);
+      return seed;
+    } catch (error) {
+      if (error instanceof SeedError) {
+        console.log(`[seeds] couldn't make a seed with "${profile.name}": ${error.message}`);
+        throw new HttpError(422, error.message);
+      }
+      throw error;
+    }
+  }
+
+  /** Check files: every tag file (header, sections, pockets) and every default seed (the seed checks). */
+  function checkFiles() {
+    const { tags, problems } = readTagFiles();
+    const all = [...problems];
+    const avoid = allAvoidTerms(tags);
+    const defaults = loadDefaultSeeds();
+    for (const d of defaults) {
+      for (const p of validateSeed(d.seed, { avoidTerms: avoid })) all.push({ file: `kinwriter-defaults/${d.slug}.md`, message: p.message });
+      if (!d.seed.header.tagline) all.push({ file: `kinwriter-defaults/${d.slug}.md`, message: "A default needs a tagline for its card." });
+      const known = new Set(tags.map((t) => t.id));
+      for (const t of d.seed.header.tags) if (!known.has(t)) all.push({ file: `kinwriter-defaults/${d.slug}.md`, message: `Its tag ${t} has no tag file.` });
+    }
+    return { problems: all, checked: new Set([...tags.map((t) => t.file), ...problems.map((p) => p.file)]).size + defaults.length };
+  }
+
+  /** Dev mode's test seed (the Margo example from the spec), or null if it's missing. */
+  function testSeedText(): string | null {
+    try {
+      return readFileSync(join(import.meta.dir, "..", "kinwriter-generator", "test-seed.md"), "utf8");
+    } catch {
+      return null;
+    }
+  }
+
+  /** Settings as the app gets them: who they are only if they share it. */
+  function clientSettings(settings = store.getSettings()) {
+    return selfShared(store) ? settings : { ...settings, friendPrompt: "" };
   }
 
   /** In the interview, how many messages each of you has written in #practice since it began. */
@@ -545,11 +700,25 @@ export function createApp(config: Config): App {
   }
 
   /**
+   * Run something in the background. If it fails, that's logged, never
+   * thrown: an error nobody waits for would stop the whole server (every
+   * kinwriter's). Once this kinwriter has stopped (deleted, archived, a
+   * fresh start), whatever was still running just ends.
+   */
+  function background(what: string, work: Promise<unknown>): void {
+    work.catch((error) => {
+      if (store.closed) console.log(`[${what}] stopped along with their kinwriter`);
+      else console.error(`[${what}] failed`, error);
+    });
+  }
+
+  /**
    * One turn of an orientation, at once: no hard rules, no timer. It
    * carries the current step's part for them as "Why you're up"
    * (`followup`: the step's second turn, after a first that wrote).
    */
   async function orientationTurn(followup = false): Promise<TurnResult | null> {
+    if (store.closed) return null;
     const session = orientationRunning(store);
     if (!session) return null;
     const step = currentStep(session);
@@ -563,6 +732,8 @@ export function createApp(config: Config): App {
       store.wakeLog.add({ at: new Date().toISOString(), reason: "orientation", outcome: wrote ? "posted" : "quiet", channelId: channel.id, detail: `${session.version === "full" ? "Together" : "On their own"}, ${step?.title ?? "a step"}: ${wrote ? "they wrote in their practice channel." : "they tried things and didn't write."}` });
       return result;
     } catch (error) {
+      // Stopped along with their kinwriter: there's nothing left to log it in.
+      if (store.closed) return null;
       const message = error instanceof Error ? error.message : String(error);
       store.wakeLog.add({ at: new Date().toISOString(), reason: "orientation", outcome: "failed", channelId: channel.id, detail: message });
       console.warn(`[orientation] a turn failed: ${message}`);
@@ -599,6 +770,36 @@ export function createApp(config: Config): App {
   }
 
   /**
+   * A practice world written for them (src/practiceworld.ts), by the
+   * profile that writes summaries: the practice notes, the practice scene,
+   * and on a brand-new server, #story's example character. One at a time:
+   * asked again while one is being written, it's that one.
+   */
+  let worldInFlight: Promise<PracticeWorld> | null = null;
+  function writeWorld(): Promise<PracticeWorld> {
+    worldInFlight ??= (async () => {
+      const profile = pickProfile(store, store.ensurePractice(), undefined, "summary");
+      const { world, error } = await freshWorld(store, api, profileRequest(profile));
+      if (store.closed) return world;
+      if (error) {
+        console.warn(`[practice world] couldn't write one, so the built-in one is in use: ${error}`);
+      } else {
+        console.log(`[practice world] wrote one with "${profile.model}": ${world.notes.map((n) => n.name).join(", ")}`);
+        addExampleCharacter(store, world);
+      }
+      return world;
+    })().finally(() => {
+      worldInFlight = null;
+    });
+    return worldInFlight;
+  }
+
+  /** A brand-new server's #story is waiting for its example character: write it, once a model can be asked and they've been made. */
+  function writeExampleCharacter(): void {
+    if (exampleCharacterPending(store) && api.apiKey && store.appState.get(SETUP_PENDING) === null) background("practice world", writeWorld());
+  }
+
+  /**
    * Run an orientation you picked. Together, the first step begins now,
    * and you move on with Next. On their own, their parts run back to back,
    * step after step, then wait for your choices.
@@ -607,9 +808,12 @@ export function createApp(config: Config): App {
     const session = orientationRunning(store);
     if (!session) return;
     console.log(`[orientation] started (${session.version === "full" ? "together" : "on their own"})`);
+    // A world of their own to practise in, fresh each time.
+    await writeWorld();
+    if (store.closed || !orientationRunning(store)) return;
     await enterStep();
     if (session.version === "returning") {
-      while (orientationRunning(store)) {
+      while (!store.closed && orientationRunning(store)) {
         const step = advanceOrientation(store);
         if (!step) break;
         // Their part is done; your choices end it.
@@ -619,6 +823,7 @@ export function createApp(config: Config): App {
         }
         await enterStep();
       }
+      if (store.closed) return;
       finishOrientation(store);
       console.log("[orientation] finished (on their own)");
     }
@@ -693,6 +898,36 @@ export function createApp(config: Config): App {
     }
   }
 
+  /**
+   * Going back, or between branches: not while they're writing, in an
+   * orientation, or in a group channel or DM (the others have seen it all).
+   */
+  function ensureCanBranch(channelId: string): void {
+    ensureIdle(channelId);
+    ensureNotOrienting(channelId);
+    if (isShared(store.getChannel(channelId))) {
+      throw new HttpError(400, "A group channel or DM can't branch: the others have already seen what's there.");
+    }
+  }
+
+  /** A channel's messages and branches, after going back or between branches. */
+  function branchesView(channelId: string) {
+    return { messages: store.getMessages(channelId), branches: store.branches(channelId) };
+  }
+
+  /**
+   * Regenerating an earlier reply: set aside what came after its turn (every
+   * bubble of it) as a branch. Returns the branch, or `null` if it was already last.
+   */
+  function branchAfterTurn(channelId: string, messageId: string) {
+    const reply = store.getLiveMessage(messageId);
+    if (reply.channelId !== channelId || reply.author !== "friend" || reply.kind !== "post") {
+      throw new HttpError(400, '"messageId" must be one of your kinwriter\'s replies in this channel.');
+    }
+    const turn = reply.turnId ? store.getMessages(channelId).filter((m) => m.turnId === reply.turnId) : [reply];
+    return store.branchFrom(turn.at(-1)!.id);
+  }
+
   /** Refuse to change a channel's messages while the kinwriter is writing there. */
   function ensureIdle(channelId: string): void {
     if (kinwriter.isBusy(channelId)) throw new BusyError();
@@ -708,7 +943,8 @@ export function createApp(config: Config): App {
       pattern: "/api/state",
       handler: () =>
         json({
-          settings: store.getSettings(),
+          settings: clientSettings(),
+          selfNotes: selfNotesView(),
           channels: channelViews(),
           // Your kinwriter's own practice channel, shown apart (src/orientation.ts).
           practice: practiceView(),
@@ -801,23 +1037,6 @@ export function createApp(config: Config): App {
       },
     },
     {
-      // Settings → "Surprise me": a new kinwriter from random ingredients (not saved).
-      method: "POST",
-      pattern: "/api/friend/random",
-      handler: async () => {
-        if (!config.apiKey) throw new HttpError(400, "Add your nanoGPT API key first.");
-        const seeds = rollSeeds();
-        const ooc = store.listChannels().find((c) => c.kind === "ooc") ?? store.listChannels()[0]!;
-        try {
-          const made = await randomKinwriter(api, pickProfile(store, ooc), seeds);
-          return json({ ...made, seeds: describeSeeds(seeds) });
-        } catch (error) {
-          if (error instanceof ApiError) throw error;
-          throw new HttpError(502, error instanceof Error ? error.message : String(error));
-        }
-      },
-    },
-    {
       // The app is (or isn't) on screen: no notifications while it is.
       method: "POST",
       pattern: "/api/presence",
@@ -855,14 +1074,13 @@ export function createApp(config: Config): App {
       handler: async (request) => {
         const update = validateSettings(await readJson(request));
         ensureTheme(update.appTheme);
-        // Their identity is theirs (src/identity.ts): a change you make to it
-        // is a suggestion they accept or decline, never saved over it.
-        let suggestion = null;
+        // Their self-notes are theirs (src/selfnotes.ts): you can read them
+        // if they share them, never change them.
+        const suggestion = null;
         if (update.friendPrompt !== undefined) {
           const current = store.identity.current();
-          if (update.friendPrompt.trim() !== (current?.identity ?? "")) {
-            suggestion = store.identity.suggest({ identity: update.friendPrompt });
-            store.interventions.add({ kind: "settings", summary: "The user suggested a change to your identity." });
+          if (selfShared(store) && update.friendPrompt.trim() !== (current?.identity ?? "").trim()) {
+            throw new HttpError(400, "Who they are is their self-notes: theirs to write. You can read them while they share them, not change them.");
           }
           delete update.friendPrompt;
         }
@@ -879,8 +1097,7 @@ export function createApp(config: Config): App {
           heartbeat.reset();
           if (update.heartbeatHours > 0) keepAwake();
         }
-        if (suggestion) suggested();
-        return json({ settings, suggestion });
+        return json({ settings: clientSettings(settings), suggestion });
       },
     },
     {
@@ -957,6 +1174,8 @@ export function createApp(config: Config): App {
           messages: store.getMessages(id!),
           // Your kinwriter's actions (shown under their messages), and comments.
           toolCalls: store.toolLog.forChannel(id!),
+          // A thinking model's reasoning, per turn (shown folded with its messages).
+          reasoning: store.reasoning.forChannel(id!),
           threads: store.comments.forChannel(id!),
           // Rewrites you suggested for parts of their messages (src/rewrites.ts).
           rewrites: store.rewrites.forChannel(id!),
@@ -964,7 +1183,74 @@ export function createApp(config: Config): App {
           summaries: summarizer.view(id!),
           // Posts your kinwriter marked as sounding like them, or flagged "not me" (src/continuity.ts).
           flags: channelFlags(id!),
+          // Branches you can go back to, shown at the message each follows.
+          branches: store.branches(id!),
         });
+      },
+    },
+
+    // ------------------------------------------------------- scratchpads
+    // A story channel's loose notes (src/scratchpads.ts): the shared one and
+    // yours. Theirs is private: only whether it has anything in it.
+    {
+      method: "GET",
+      pattern: "/api/channels/:id/scratchpads",
+      handler: (_request, { id }) => json(scratchpadsView(id!)),
+    },
+    {
+      method: "PUT",
+      pattern: "/api/channels/:id/scratchpads/:pad",
+      handler: async (request, { id, pad }) => {
+        const name = padName(id!, pad!);
+        const body = (await readJson(request)) as { text?: unknown; base?: unknown; baseText?: unknown } | null;
+        if (typeof body?.text !== "string") throw new HttpError(400, '"text" must be text.');
+        if (body.base !== undefined && !Number.isInteger(body.base)) throw new HttpError(400, '"base" must be the rev you opened.');
+        if (body.baseText !== undefined && typeof body.baseText !== "string") throw new HttpError(400, '"baseText" must be text.');
+        try {
+          // With the text you started from, your changes and any made since
+          // (theirs) are merged, like a shared document. With only a rev, a
+          // pad that changed since is refused.
+          const text = typeof body.baseText === "string" ? mergeText(body.baseText, body.text, getPad(store, id!, name).text) : body.text;
+          writePad(store, id!, name, text, "user", typeof body.baseText === "string" ? undefined : (body.base as number | undefined));
+        } catch (error) {
+          if (error instanceof PadChangedError) {
+            const by = error.pad.by === "friend" ? store.getSettings().friendName : "you";
+            throw new HttpError(409, `${by === "you" ? "You" : by} changed this scratchpad since you opened it. Your text is still in the box: copy what you need, then reload.`);
+          }
+          throw error;
+        }
+        return json(scratchpadsView(id!));
+      },
+    },
+    {
+      // A passage of a pad, into the notebook: a new entry, or added to one.
+      method: "POST",
+      pattern: "/api/channels/:id/scratchpads/:pad/to-notebook",
+      handler: async (request, { id, pad }) => {
+        const name = padName(id!, pad!);
+        const body = ((await readJson(request)) ?? {}) as Record<string, unknown>;
+        const text = (key: string) => (typeof body[key] === "string" ? (body[key] as string) : undefined);
+        if (typeof body.passage !== "string") throw new HttpError(400, '"passage" must be text.');
+        if (body.kind !== undefined && body.kind !== "lore" && body.kind !== "character") throw new HttpError(400, '"kind" must be "lore" or "character".');
+        const saved = toNotebook(store, id!, name, "user", {
+          passage: body.passage,
+          index: Number.isInteger(body.index) ? (body.index as number) : undefined,
+          entryId: text("entryId"),
+          name: text("name"),
+          kind: body.kind as "lore" | "character" | undefined,
+          field: text("field"),
+          pin: body.pin === true,
+          keep: body.keep === true,
+        });
+        return json({ ...scratchpadsView(id!), saved: { entry: saved.entry, created: saved.created, suggested: saved.suggested, pinned: saved.pinned } });
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/api/channels/:id/scratchpads/:pad/undo",
+      handler: (_request, { id, pad }) => {
+        undoPad(store, id!, padName(id!, pad!), "user");
+        return json(scratchpadsView(id!));
       },
     },
 
@@ -1150,17 +1436,27 @@ export function createApp(config: Config): App {
         if (isShared(store.getChannel(id!))) throw new HttpError(400, "Replies in a group channel or DM can't be regenerated: the others have already seen them.");
         // Optional: the profile to write with ("Regenerate with..."). Without
         // one, the channel's profile or roulette picks again.
-        const body = (await readJson(request)) as { profileId?: unknown } | null;
+        const body = (await readJson(request)) as { profileId?: unknown; messageId?: unknown } | null;
         const profileId = typeof body?.profileId === "string" && body.profileId ? body.profileId : undefined;
         if (profileId) store.profiles.get(profileId); // 404 for an unknown profile
+        // Optional: an earlier reply of theirs to regenerate. What came after
+        // it is set aside as a branch first, so it's the last reply.
+        const branch = typeof body?.messageId === "string" ? branchAfterTurn(id!, body.messageId) : null;
         // The whole last reply: one post, or every bubble of a casual reply.
         const replacedIds = store.lastKinwriterTurn(id!).map((m) => m.id);
         if (replacedIds.length === 0) {
           throw new HttpError(400, "The last message isn't from your kinwriter, so there's nothing to regenerate.");
         }
         // Generate first, and only delete the old reply once the new one exists.
-        // If generation fails you keep the reply you had.
-        const result = await kinwriter.takeTurn(id!, "regenerate", { replacing: replacedIds, profileId });
+        // If generation fails you keep the reply you had, and what followed it.
+        let result: Awaited<ReturnType<typeof kinwriter.takeTurn>>;
+        try {
+          result = await kinwriter.takeTurn(id!, "regenerate", { replacing: replacedIds, profileId });
+        } catch (error) {
+          if (branch) store.switchBranch(branch.id);
+          throw error;
+        }
+        if (branch && result.replaced.length === 0) store.switchBranch(branch.id);
         // If the new turn wrote nothing, the old reply stays.
         if (result.replaced.length > 0) {
           const how = profileId ? ` with ${store.profiles.get(profileId).name}` : "";
@@ -1171,7 +1467,19 @@ export function createApp(config: Config): App {
             messageId: result.messages[0]?.id ?? null,
           });
         }
-        return json({ ...turnResult(result), replacedIds: result.replaced, channels: channelViews() });
+        return json({ ...turnResult(result), replacedIds: result.replaced, branched: branch !== null, channels: channelViews() });
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/api/channels/:id/branches/switch",
+      handler: async (request, { id }) => {
+        ensureCanBranch(id!);
+        const body = (await readJson(request)) as { branchId?: unknown } | null;
+        if (typeof body?.branchId !== "string") throw new HttpError(400, '"branchId" must be a branch of this channel.');
+        if (store.branch(body.branchId).channelId !== id) throw new HttpError(400, '"branchId" must be a branch of this channel.');
+        store.switchBranch(body.branchId);
+        return json(branchesView(id!));
       },
     },
     {
@@ -1211,7 +1519,7 @@ export function createApp(config: Config): App {
       pattern: "/api/developer",
       handler: () => {
         if (!config.developerPanel) throw new HttpError(404, "Not found.");
-        return json(developerView(store, config.groups));
+        return json(developerView(store, config.groups, config.kinwriterId ?? null));
       },
     },
     {
@@ -1303,6 +1611,26 @@ export function createApp(config: Config): App {
         ensureIdle(store.getLiveMessage(id!).channelId);
         store.deleteMessage(id!);
         return json({ ok: true });
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/api/messages/:id/branch",
+      handler: (_request, { id }) => {
+        const message = store.getLiveMessage(id!);
+        ensureCanBranch(message.channelId);
+        store.branchFrom(message.id);
+        return json(branchesView(message.channelId));
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/api/messages/:id/use",
+      handler: (_request, { id }) => {
+        const message = store.getMessage(id!);
+        ensureCanBranch(message.channelId);
+        store.useAlternate(message.id);
+        return json(branchesView(message.channelId));
       },
     },
     {
@@ -1459,6 +1787,26 @@ export function createApp(config: Config): App {
       handler: async (request) => {
         if (store.appState.get(SETUP_PENDING) === null) throw new HttpError(400, "Your kinwriter is already made.");
         const body = await readObject(request);
+        // From a seed (a default, generated, or from an idea): their name, pronouns and self-notes come from it.
+        if (body.seed !== undefined) {
+          let seed;
+          try {
+            seed = acceptedSeed(body.seed);
+          } catch (error) {
+            throw new HttpError(400, (error as Error).message);
+          }
+          store.updateSettings(
+            validateSettings({
+              ...(body.avatar !== undefined ? { friendAvatar: body.avatar } : {}),
+              ...(body.color !== undefined ? { friendColor: body.color } : {}),
+            }),
+          );
+          beginFromSeed(store, seed, config.kinwriterId ?? "home");
+          store.appState.set(SETUP_PENDING, null);
+          console.log(`[setup] made ${seed.header.name} from a seed`);
+          writeExampleCharacter();
+          return json({ settings: clientSettings() });
+        }
         const tastes = body.tastes === undefined ? "" : body.tastes;
         if (typeof tastes !== "string") throw new HttpError(400, '"tastes" must be text.');
         const update = validateSettings({
@@ -1474,7 +1822,125 @@ export function createApp(config: Config): App {
         store.appState.set(SETUP_PENDING, null);
         // The app offers their orientation next (together, on their own, or skip).
         console.log(`[setup] made ${update.friendName}`);
-        return json({ settings: store.getSettings() });
+        writeExampleCharacter();
+        return json({ settings: clientSettings() });
+      },
+    },
+
+    // ------------------------------------------------------------- seeds
+    {
+      // The default kinwriters (kinwriter-defaults/, src/seeds.ts): cards for
+      // the picker. The folder may be empty. In dev mode, the test seed too.
+      method: "GET",
+      pattern: "/api/seeds/defaults",
+      handler: () =>
+        json({
+          defaults: loadDefaultSeeds().map((d) => ({ slug: d.slug, header: d.seed.header, body: d.seed.body, text: writeSeed(d.seed) })),
+          test: config.developerPanel ? testSeedText() : null,
+        }),
+    },
+    {
+      // The tag picker: every category's options, labels, blurbs and
+      // corners, read from the tag files now (never the fragments).
+      method: "GET",
+      pattern: "/api/seeds/tags",
+      handler: () => json({ categories: pickerView(currentTags()) }),
+    },
+    {
+      // A seed from tags (src/generator.ts): random fill, one call, checked, once more if it fails.
+      method: "POST",
+      pattern: "/api/seeds/generate",
+      handler: async (request) => {
+        const selection = readSelection(await readObject(request));
+        const tags = currentTags();
+        return json(await makeSeed(buildSeedPrompt(tags, selection), "generated", tags));
+      },
+    },
+    {
+      // Generate from idea: your words as the guidance, with the tags Jev
+      // finds obvious in them (or one to three rolled), and nothing else.
+      method: "POST",
+      pattern: "/api/seeds/idea",
+      handler: async (request) => {
+        const body = await readObject(request);
+        if (typeof body.text !== "string" || !body.text.trim()) throw new HttpError(400, "Write a little about who they are first.");
+        const idea = body.text.trim().slice(0, 4000);
+        const tags = currentTags();
+        const { selection } = await ideaTags(tags, idea, decider.enabled() ? decider : null, store.getSettings().decisionConfidence);
+        return json(await makeSeed(buildSeedPrompt(tags, selection, idea, { fill: false }), "prompted", tags));
+      },
+    },
+    {
+      // A seed file, read (the dev-only test seed goes through the same preview this way).
+      method: "POST",
+      pattern: "/api/seeds/parse",
+      handler: async (request) => {
+        const body = await readObject(request);
+        if (typeof body.text !== "string") throw new HttpError(400, '"text" must be the seed.');
+        const seed = parseSeed(body.text);
+        return json({ text: writeSeed(seed), header: seed.header, body: seed.body });
+      },
+    },
+    {
+      // Dev mode: Show prompt and Raw output, for the last generation.
+      method: "GET",
+      pattern: "/api/seeds/last",
+      handler: () => {
+        developerOnly();
+        return json({ generation: lastGeneration });
+      },
+    },
+    {
+      // Dev mode: Roll 5. Five seeds from the same selection, side by side. Nothing is saved.
+      method: "POST",
+      pattern: "/api/seeds/roll5",
+      handler: async (request) => {
+        developerOnly();
+        const selection = readSelection(await readObject(request));
+        const tags = currentTags();
+        const seeds = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            makeSeed(buildSeedPrompt(tags, selection), "generated", tags).catch((error: Error) => ({ error: error instanceof HttpError ? error.message : String(error.message) })),
+          ),
+        );
+        return json({ seeds });
+      },
+    },
+    {
+      // Dev mode: Check files. Every tag file and default seed, checked.
+      method: "GET",
+      pattern: "/api/seeds/check-files",
+      handler: () => {
+        developerOnly();
+        return json(checkFiles());
+      },
+    },
+    {
+      // Dev mode: a tag file as it is, for Trace.
+      method: "GET",
+      pattern: "/api/seeds/tag-file",
+      handler: (request) => {
+        developerOnly();
+        const id = new URL(request.url).searchParams.get("id") ?? "";
+        const tag = readTagFiles().tags.find((t) => t.id === id);
+        if (!tag) throw new HttpError(404, `There's no tag file for ${id} any more.`);
+        return json({ file: tag.file, text: readFileSync(join(TAGS_DIR, "..", tag.file), "utf8") });
+      },
+    },
+    {
+      // Saving an edit in the preview: the seven headings checked again (not the length).
+      method: "POST",
+      pattern: "/api/seeds/check",
+      handler: async (request) => {
+        const body = await readObject(request);
+        if (typeof body.text !== "string") throw new HttpError(400, '"text" must be the seed.');
+        const seed = parseSeed(body.text);
+        const problems = [
+          ...(seed.header.name.trim() ? [] : ["Give them a name."]),
+          ...(seed.header.pronouns.trim() ? [] : ["Give them pronouns."]),
+          ...[checkHeadings(seed.body)].filter((p): p is string => p !== null),
+        ];
+        return json({ ok: problems.length === 0, problems });
       },
     },
 
@@ -1485,21 +1951,13 @@ export function createApp(config: Config): App {
       handler: () => json(kinwriterPage()),
     },
     {
-      // Suggest a change to their identity or tastes: they accept or decline it.
+      // Suggesting a change to who they are is gone: their self-notes are
+      // theirs (src/selfnotes.ts), readable if they share them, never changed
+      // by you. Suggestions made before stay theirs to answer, and yours to withdraw.
       method: "POST",
       pattern: "/api/identity/suggestions",
-      handler: async (request) => {
-        const body = await readObject(request);
-        const change: { identity?: string; tastes?: string; note?: string } = {};
-        for (const key of ["identity", "tastes", "note"] as const) {
-          if (body[key] === undefined) continue;
-          if (typeof body[key] !== "string") throw new HttpError(400, `"${key}" must be text.`);
-          change[key] = body[key] as string;
-        }
-        store.identity.suggest(change);
-        store.interventions.add({ kind: "settings", summary: "The user suggested a change to your identity." });
-        suggested();
-        return json(kinwriterPage());
+      handler: () => {
+        throw new HttpError(400, "Who they are is their self-notes: theirs to write. You can ask to read them, not change them.");
       },
     },
     {
@@ -1507,6 +1965,26 @@ export function createApp(config: Config): App {
       pattern: "/api/identity/suggestions/:id/withdraw",
       handler: (_request, { id }) => {
         store.identity.withdraw(Number(id));
+        return json(kinwriterPage());
+      },
+    },
+    {
+      // Ask to read their self-notes: they decide, on their next turn (src/selfnotes.ts).
+      method: "POST",
+      pattern: "/api/self-notes/request",
+      handler: () => {
+        requestSelfNotes(store);
+        store.interventions.add({ kind: "settings", summary: "The user asked to read your self-notes. It's up to you (share_self_notes)." });
+        suggested();
+        return json(kinwriterPage());
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/api/self-notes/request/withdraw",
+      handler: () => {
+        withdrawRequest(store);
+        store.interventions.add({ kind: "settings", summary: "The user took back their request to read your self-notes." });
         return json(kinwriterPage());
       },
     },
@@ -1556,7 +2034,7 @@ export function createApp(config: Config): App {
         } catch (error) {
           throw new HttpError(409, error instanceof Error ? error.message : String(error));
         }
-        void runOrientation();
+        background("orientation", runOrientation());
         return json({ orientation: orientationState(), page: kinwriterPage() });
       },
     },
@@ -1569,7 +2047,7 @@ export function createApp(config: Config): App {
         if (orientationRunning(store)?.version !== "full") throw new HttpError(409, "There's no orientation together running.");
         if (kinwriter.isBusy(orientationRunning(store)!.channelId)) throw new HttpError(409, `${store.getSettings().friendName} is still writing. Next, when they're done.`);
         const step = advanceOrientation(store);
-        if (step) void enterStep();
+        if (step) background("orientation", enterStep());
         else console.log("[orientation] finished (the last step)");
         return json({ orientation: orientationState(), page: kinwriterPage() });
       },
@@ -1603,7 +2081,7 @@ export function createApp(config: Config): App {
         if (!waitingForYou(session)) throw new HttpError(409, "This step is already theirs.");
         if (kinwriter.isBusy(session.channelId)) throw new HttpError(409, `${store.getSettings().friendName} is still writing.`);
         handOver(store);
-        void handedOver();
+        background("orientation", handedOver());
         return json({ orientation: orientationState(), page: kinwriterPage() });
       },
     },
@@ -1757,7 +2235,7 @@ export function createApp(config: Config): App {
       pattern: "/api/profiles/:id",
       handler: (_request, { id }) => {
         store.profiles.delete(id!);
-        return json({ settings: store.getSettings(), channels: channelViews() });
+        return json({ settings: clientSettings(), channels: channelViews() });
       },
     },
     {
@@ -1787,7 +2265,7 @@ export function createApp(config: Config): App {
       pattern: "/api/roulettes/:id",
       handler: (_request, { id }) => {
         store.profiles.deleteRoulette(id!);
-        return json({ settings: store.getSettings(), channels: channelViews() });
+        return json({ settings: clientSettings(), channels: channelViews() });
       },
     },
 
@@ -1917,7 +2395,7 @@ export function createApp(config: Config): App {
         themes.remove(id!);
         // Anything using the theme goes back to the default.
         store.forgetTheme(id!);
-        return json({ settings: store.getSettings(), channels: channelViews() });
+        return json({ settings: clientSettings(), channels: channelViews() });
       },
     },
     {
@@ -2007,7 +2485,18 @@ export function createApp(config: Config): App {
     }
   }
 
-  return { fetch, store, kinwriter, themes, summarizer, decider, wakeups, heartbeat, rhythms, presence, notifier, farewell };
+  const stop = () => {
+    kinwriter.cancelAll();
+    store.close();
+  };
+  // Dev mode: Check files runs as the app starts, so a typo in a tag file or a
+  // hand-written default shows up before a user meets it.
+  if (config.developerPanel) {
+    const { problems, checked } = checkFiles();
+    for (const p of problems) console.warn(`[check files] ✗ ${p.file}: ${p.message} (of ${checked} files)`);
+  }
+
+  return { fetch, store, kinwriter, themes, summarizer, decider, wakeups, heartbeat, rhythms, presence, notifier, farewell, started: writeExampleCharacter, stop };
 }
 
 /**
@@ -2032,6 +2521,7 @@ function turnResult(result: TurnResult) {
   return {
     kinwriterMessages: result.messages,
     toolCalls: result.toolCalls,
+    reasoning: result.reasoning,
     skipped: result.skipped,
     ...(result.thread ? { thread: result.thread } : {}),
   };
@@ -2146,6 +2636,10 @@ async function serveStatic(publicDir: string, pathname: string): Promise<Respons
 /** Start listening. Only runs when this file is executed directly. */
 async function main(): Promise<void> {
   const config = loadConfig();
+  // The last line of defence: something in the background that fails with
+  // nobody waiting for it is logged, and the server keeps running for
+  // everyone else, instead of exiting.
+  process.on("unhandledRejection", (reason) => console.error("[server] something in the background failed", reason));
   // One app per kinwriter, grouped into servers (src/hub.ts).
   const { createHub } = await import("./hub.ts");
   const hub = createHub(config);

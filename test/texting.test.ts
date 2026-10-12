@@ -1,12 +1,10 @@
 /**
- * Tests for texting in OOC (src/texting.ts) and RNG kinwriter creation
- * (src/rng.ts).
+ * Tests for texting in OOC (src/texting.ts).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { promptForChannel } from "../src/kinwriter.ts";
 import { toChatHistory } from "../src/prompt.ts";
-import { describeSeeds, rollSeeds } from "../src/rng.ts";
 import { createApp, type App } from "../src/server.ts";
 import { validateSettings } from "../src/store.ts";
 import { BUBBLE_MARKER, splitTexts, textingStyle } from "../src/texting.ts";
@@ -111,31 +109,5 @@ describe("sending without a reply", () => {
     expect(() => validateSettings({ replyDelayMs: -1 })).toThrow();
     expect(() => validateSettings({ typingPerCharMs: 5000 })).toThrow();
     expect(validateSettings({ oocBubbles: false, replyDelayMs: 0, typingBaseMs: 300 })).toEqual({ oocBubbles: false, replyDelayMs: 0, typingBaseMs: 300 });
-  });
-});
-
-describe("RNG kinwriter creation", () => {
-  test("seeds are random picks, two different interests", () => {
-    let n = 0;
-    const seeds = rollSeeds(() => ((n += 0.37) % 1));
-    expect(seeds.interests).toHaveLength(2);
-    expect(seeds.interests[0]).not.toBe(seeds.interests[1]);
-    expect(describeSeeds(seeds)).toContain("into");
-  });
-
-  test("the model turns them into a kinwriter (not saved)", async () => {
-    fake.replies.push({ content: '{"name": "Wren", "prompt": "You are Wren, a dry-witted cartographer..."}' });
-    const { status, data } = await call("POST", "/api/friend/random", {});
-    expect(status).toBe(200);
-    expect(data).toMatchObject({ name: "Wren", prompt: "You are Wren, a dry-witted cartographer..." });
-    expect(typeof data.seeds).toBe("string");
-    // The ingredients were in the request.
-    expect(fake.requests[0]!.messages[0]!.content).toContain("Temperament:");
-    expect(app.store.getSettings().friendName).toBe("Arlo");
-  });
-
-  test("a messy answer is an error you can retry", async () => {
-    fake.replies.push({ content: "Sure! Here's someone fun." });
-    expect((await call("POST", "/api/friend/random", {})).status).toBe(502);
   });
 });

@@ -70,6 +70,28 @@ describe("reflexes", () => {
     expect(app.store.toolLog.forChannel(ooc.id).map((c) => c.name)).toEqual(["reflex", "schedule_wakeup"]);
   });
 
+  test("\"give me a sec\" and then stopping: reminded that the turn ends, and they do it now", async () => {
+    const [post] = app.store.addTurn([{ channelId: ooc.id, author: "friend", content: "He says it gently." }]);
+    fake.replies.push(
+      { content: "i'll rewrite the post. give me a sec." },
+      { toolCalls: [{ name: "edit_my_message", arguments: { quote: "He says it gently.", new_text: "He stops being gentle about it." } }] },
+      { content: "Done: he stops being gentle about it." },
+    );
+    jevSays(["now"]);
+    await say("make him harsher");
+    expect(JSON.stringify(fake.requests[1]!.messages)).toContain("there's no \\\"in a sec\\\" for you");
+    expect(app.store.getMessages(ooc.id).find((m) => m.id === post!.id)!.content).toBe("He stops being gentle about it.");
+    expect(app.store.toolLog.forChannel(ooc.id).map((c) => c.name)).toEqual(["reflex", "edit_my_message"]);
+  });
+
+  test("the right-now check is for talk, not stories, and is skipped once it's done", async () => {
+    const { applicableReflexes } = await import("../src/reflexes.ts");
+    const ids = (kind: Parameters<typeof applicableReflexes>[1], used: string[] = []) => applicableReflexes(app.store, kind, used).map((r) => r.id);
+    expect(ids("ooc")).toContain("now");
+    expect(ids("rp")).not.toContain("now");
+    expect(ids("ooc", ["edit_my_message"])).not.toContain("now");
+  });
+
   test("nothing came up: the draft is posted, with no extra round", async () => {
     fake.replies.push({ content: "Sounds fun." });
     jevSays([]);

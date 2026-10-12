@@ -19,7 +19,7 @@ import { openDatabase } from "./db.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
 import { Notebook } from "./notebook.ts";
 import { Profiles } from "./profiles.ts";
-import { Comments, ToolLog } from "./activity.ts";
+import { Comments, ReasoningLog, ToolLog } from "./activity.ts";
 import { Inbox } from "./inbox.ts";
 import { CheckLog } from "./check.ts";
 import { Summaries } from "./summaries.ts";
@@ -29,6 +29,7 @@ import { Reactions } from "./reactions.ts";
 import { AppState } from "./appstate.ts";
 import { Interventions } from "./interventions.ts";
 import { Identity } from "./identity.ts";
+import { SeedArchive } from "./seeds.ts";
 import { Journal } from "./journal.ts";
 import { SelfPage } from "./selfpage.ts";
 import { Verbatim } from "./verbatim.ts";
@@ -38,10 +39,13 @@ import { Continuity } from "./continuity.ts";
 import { Wellbeing } from "./wellbeing.ts";
 import { Relationships } from "./relationships.ts";
 import { granted } from "./standing.ts";
-import { parseSections } from "./wording.ts";
+import { awaitExampleCharacter, builtInWorld } from "./practiceworld.ts";
+import { deletePads } from "./scratchpads.ts";
 import type {
   Category,
   Author,
+  Branch,
+  BranchSummary,
   MessageAuthor,
   Channel,
   ChannelKind,
@@ -98,13 +102,16 @@ export function defaultSettings(): Settings {
     awayHours: 4,
     wakeCooldownMinutes: 60,
     asideMinutes: 30,
+    scripts: false,
     hardLimits: "",
     quietStart: -1,
     quietEnd: 8,
     heartbeatHours: 0,
     friendAvatar: "",
+    friendPronouns: "",
     friendColor: -1,
     oocBubbles: true,
+    matchPace: true,
     typingBaseMs: 600,
     typingPerCharMs: 40,
     replyDelayMs: 2500,
@@ -113,9 +120,10 @@ export function defaultSettings(): Settings {
 }
 
 /**
- * The example character a brand-new server's first RP channel starts with,
- * from `defaults/character.md`: one `Label: text` line per field, and a
- * `Name:` line for their name. Blank lines are skipped.
+ * The fixed example character, for tests (a real server writes one for its
+ * kinwriter: see src/practiceworld.ts), from `defaults/character.md`: one
+ * `Label: text` line per field, and a `Name:` line for their name. Blank
+ * lines are skipped.
  */
 export function defaultCharacter(): { name: string; fields: EntryField[] } {
   const fields: EntryField[] = [];
@@ -212,6 +220,10 @@ export function validateSettings(input: unknown): Partial<Settings> {
   }
   if (raw.awayHours !== undefined) clean.awayHours = numberInRange(raw.awayHours, "awayHours", LIMITS.awayHours, false);
   if (raw.asideMinutes !== undefined) clean.asideMinutes = numberInRange(raw.asideMinutes, "asideMinutes", LIMITS.asideMinutes, true);
+  if (raw.scripts !== undefined) {
+    if (typeof raw.scripts !== "boolean") throw new ValidationError("scripts must be true or false");
+    clean.scripts = raw.scripts;
+  }
   if (raw.wakeCooldownMinutes !== undefined) {
     clean.wakeCooldownMinutes = numberInRange(raw.wakeCooldownMinutes, "wakeCooldownMinutes", LIMITS.wakeCooldownMinutes, true);
   }
@@ -229,10 +241,18 @@ export function validateSettings(input: unknown): Partial<Settings> {
     }
     clean.friendAvatar = raw.friendAvatar.trim();
   }
+  if (raw.friendPronouns !== undefined) {
+    if (typeof raw.friendPronouns !== "string" || raw.friendPronouns.trim().length > 40) throw new ValidationError("friendPronouns must be text, 40 characters at most");
+    clean.friendPronouns = raw.friendPronouns.trim();
+  }
   if (raw.friendColor !== undefined) clean.friendColor = numberInRange(raw.friendColor, "friendColor", { min: -1, max: 359 }, true);
   if (raw.oocBubbles !== undefined) {
     if (typeof raw.oocBubbles !== "boolean") throw new ValidationError("oocBubbles must be true or false");
     clean.oocBubbles = raw.oocBubbles;
+  }
+  if (raw.matchPace !== undefined) {
+    if (typeof raw.matchPace !== "boolean") throw new ValidationError("matchPace must be true or false");
+    clean.matchPace = raw.matchPace;
   }
   for (const key of ["typingBaseMs", "typingPerCharMs", "replyDelayMs"] as const) {
     if (raw[key] !== undefined) clean[key] = numberInRange(raw[key], key, LIMITS[key], true);
@@ -522,6 +542,16 @@ const SELECT_MESSAGES = `
  */
 const LIVE = "m.deleted_at IS NULL AND m.superseded_by IS NULL";
 
+/** How `superseded_by` marks a message set aside in a branch (see `Store.branchFrom`). */
+const BRANCH = "branch:";
+
+/** A branch's fork message id, or `null` if `mark` isn't a branch's (a regeneration's turn id). */
+function forkOf(mark: string): string | null {
+  if (!mark.startsWith(BRANCH)) return null;
+  const end = mark.lastIndexOf(":");
+  return end > BRANCH.length ? mark.slice(BRANCH.length, end) : null;
+}
+
 // ----------------------------------------------------------------- store
 
 /** The fields you give when adding a message. */
@@ -553,6 +583,8 @@ export class Store {
   readonly profiles: Profiles;
   /** Every tool call your kinwriter makes (see `src/activity.ts`). */
   readonly toolLog: ToolLog;
+  /** A thinking model's reasoning, per round of a turn (src/activity.ts). */
+  readonly reasoning: ReasoningLog;
   /** Your suggested rewrites of parts of their messages (src/rewrites.ts). */
   readonly rewrites: Rewrites;
   /** Comment threads on messages. */
@@ -573,6 +605,8 @@ export class Store {
   readonly interventions: Interventions;
   /** Your kinwriter's identity and tastes, every version kept (see `src/identity.ts`). */
   readonly identity: Identity;
+  /** The seed they were made from, kept read-only (src/seeds.ts). */
+  readonly seeds: SeedArchive;
   /** Your kinwriter's self-page (see `src/selfpage.ts`). */
   readonly selfPage: SelfPage;
   /** Your kinwriter's private journal (see `src/journal.ts`). */
@@ -661,7 +695,7 @@ export class Store {
    * @param dataDir  Folder for the database. Created if it doesn't exist.
    *                 Pass `":memory:"` for a throwaway database (for tests).
    */
-  constructor(dataDir: string, options: { example?: boolean } = {}) {
+  constructor(dataDir: string, options: { example?: boolean | "generate" } = {}) {
     const inMemory = dataDir === ":memory:";
     if (!inMemory) mkdirSync(dataDir, { recursive: true });
     const path = inMemory ? ":memory:" : join(dataDir, "kinaera.db");
@@ -671,6 +705,7 @@ export class Store {
     this.notebook = new Notebook(this.db);
     this.profiles = new Profiles(this.db);
     this.toolLog = new ToolLog(this.db);
+    this.reasoning = new ReasoningLog(this.db);
     this.rewrites = new Rewrites(this.db);
     this.comments = new Comments(this.db);
     this.inbox = new Inbox(this.db);
@@ -683,6 +718,7 @@ export class Store {
     this.appState = new AppState(this.db);
     this.interventions = new Interventions(this.db);
     this.identity = new Identity(this.db, (identity) => this.updateSettings({ friendPrompt: identity }));
+    this.seeds = new SeedArchive(this.db);
     this.selfPage = new SelfPage(this.db);
     this.journal = new Journal(this.db);
     this.verbatim = new Verbatim(this.db);
@@ -703,23 +739,17 @@ export class Store {
 
   /**
    * Orientation's practice channel and Practice folder (src/orientation.ts),
-   * made if they aren't there yet: the channel, and a few sample notes
-   * (defaults/practice.md) pinned only to it.
+   * made if they aren't there yet: the channel, and the built-in practice
+   * notes (defaults/practice.md) pinned only to it, until an orientation
+   * writes a world of their own (src/practiceworld.ts).
    */
   ensurePractice(): Channel {
     let channel = this.practiceChannel();
     if (!channel) channel = this.createChannel({ name: "practice", kind: "practice" });
     if (!this.notebook.practiceFolder()) {
       const folder = this.notebook.createPracticeFolder();
-      for (const [heading, body] of Object.entries(parseSections(readDefault("practice.md")))) {
-        const match = heading.match(/^(.+?)\s*\((character|lore)\)\s*$/);
-        if (!match) continue;
-        const fields = body
-          .split("\n")
-          .map((line) => line.match(/^\s*([^:\n]{1,30}):\s*(.+)$/))
-          .filter((m): m is RegExpMatchArray => m !== null)
-          .map((m) => ({ label: m[1]!.trim(), value: m[2]!.trim() }));
-        const entry = this.notebook.createEntry("friend", { kind: match[2], name: match[1]!.trim(), fields });
+      for (const note of builtInWorld().notes) {
+        const entry = this.notebook.createEntry("friend", { kind: note.kind, name: note.name, fields: note.fields });
         this.notebook.updateEntrySettings("friend", entry.id, { folderId: folder.id });
         this.notebook.pin("friend", channel.id, entry.id);
       }
@@ -729,12 +759,19 @@ export class Store {
 
   /**
    * Starting content for a brand-new kinwriter: a #story and an #ooc channel,
-   * and (for the very first kinwriter) the example character in #story.
+   * and (for the very first kinwriter) an example character in #story. With
+   * `"generate"`, the character is written for them once a model can be
+   * reached (src/practiceworld.ts); with `true`, it's the fixed one in
+   * `defaults/character.md` (for tests).
    */
-  private seed(example: boolean): void {
+  private seed(example: boolean | "generate"): void {
     const story = this.createChannel({ name: "story", kind: "rp" });
     this.createChannel({ name: "ooc", kind: "ooc" });
     if (!example) return;
+    if (example === "generate") {
+      awaitExampleCharacter(this, story.id);
+      return;
+    }
     const character = defaultCharacter();
     const entry = this.notebook.createEntry("user", {
       kind: "character",
@@ -745,8 +782,24 @@ export class Store {
     this.notebook.pin("user", story.id, entry.id);
   }
 
-  /** Close the database. Only needed in tests, which open many. */
+  /** Whether it's been closed (its kinwriter deleted, archived or set aside): background work stops then. */
+  get closed(): boolean {
+    return this.isClosed;
+  }
+  private isClosed = false;
+
+  /** Close the database: when its kinwriter stops, and in tests, which open many. */
   close(): void {
+    if (this.isClosed) return;
+    this.isClosed = true;
+    // Everything into the main file first: Bun can keep a closed connection
+    // around until it's collected, so its write-ahead log may stay behind.
+    // Then a copy of the folder (or a renamed one) is complete on its own.
+    try {
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch {
+      // In memory, or already closed: nothing to fold in.
+    }
     this.db.close();
   }
 
@@ -1021,6 +1074,7 @@ export class Store {
     const result = this.db.query("DELETE FROM channels WHERE id = $id").run({ id });
     if (result.changes === 0) throw new NotFoundError("channel");
     this.library.channelDeleted(id);
+    deletePads(this.db, id);
   }
 
   // -------------------------------------------------------------- messages
@@ -1208,6 +1262,7 @@ export class Store {
     if (by === "friend" && message.author !== "friend") throw new ValidationError("You can only delete your own messages.");
     this.summaries.messageChanging(message, true);
     this.db.transaction(() => {
+      this.rehomeBranches(message);
       this.db.query("UPDATE messages SET deleted_at = $now, deleted_by = $by WHERE id = $id").run({ id, now: new Date().toISOString(), by });
       if (by === "user" && message.author === "friend") {
         this.interventions.add({
@@ -1245,8 +1300,13 @@ export class Store {
     const messages = ids.map((id) => this.getLiveMessage(id));
     for (const message of messages) this.summaries.messageChanging(message, true);
     const mark = this.db.query("UPDATE messages SET superseded_by = $turnId WHERE id = $id");
+    // The replies these replaced become alternates of the new one too.
+    const inherit = this.db.query("UPDATE messages SET superseded_by = $turnId WHERE channel_id = $channelId AND superseded_by = $old");
     this.db.transaction(() => {
       for (const message of messages) mark.run({ id: message.id, turnId });
+      for (const old of new Set(messages.map((m) => m.turnId).filter((t) => t !== null))) {
+        inherit.run({ turnId, channelId: messages[0]!.channelId, old });
+      }
     })();
     this.messagesChanged(messages[0]!.channelId);
   }
@@ -1284,6 +1344,186 @@ export class Store {
     return { message, revisions, alternates };
   }
 
+  // -------------------------------------------------------------- branches
+  //
+  // The chat is a tree, NovelAI-style. Going back to a message sets aside
+  // everything after it as a branch, which you can return to later. Nothing
+  // is copied or rewritten: a branch's messages are marked in
+  // `superseded_by` with `branch:<fork message id>:<random>`, so they leave
+  // the chat (and every prompt) the way a regenerated reply does, and come
+  // back by clearing the mark. A branch shows wherever its fork message is
+  // in the chat; when the fork itself is set aside (or regenerated), so are
+  // the branches after it, until it comes back.
+
+  /**
+   * Set aside every message after `messageId` as a branch. Returns the
+   * branch, or `null` if nothing came after it.
+   */
+  branchFrom(messageId: string): Branch | null {
+    const fork = this.getLiveMessage(messageId);
+    const after = this.liveAfter(fork);
+    if (after.length === 0) return null;
+    const id = `${BRANCH}${fork.id}:${crypto.randomUUID()}`;
+    this.db.transaction(() => {
+      this.shelve(after, id);
+      if (after.some((m) => m.author === "friend")) {
+        this.interventions.add({
+          kind: "branch",
+          summary: `The user went back to an earlier point in #${this.getChannel(fork.channelId).name}. The ${after.length} message${after.length === 1 ? "" : "s"} after it are kept as a branch they can return to.`,
+          channelId: fork.channelId,
+          messageId: fork.id,
+        });
+      }
+    })();
+    this.messagesChanged(fork.channelId);
+    return this.branch(id);
+  }
+
+  /**
+   * Go to a branch: what comes after its fork now is set aside as a branch
+   * in turn, and the branch's messages come back. Returns the branch that
+   * was set aside, if anything came after the fork.
+   */
+  switchBranch(branchId: string): Branch | null {
+    const target = this.branch(branchId); // throws NotFoundError
+    const fork = this.getMessage(target.forkId);
+    if (fork.deletedAt || fork.supersededBy) {
+      throw new ValidationError("That branch starts from a message that isn't in the chat now.");
+    }
+    const after = this.liveAfter(fork);
+    const shelvedId = after.length > 0 ? `${BRANCH}${fork.id}:${crypto.randomUUID()}` : null;
+    this.db.transaction(() => {
+      if (shelvedId) this.shelve(after, shelvedId);
+      this.db.query("UPDATE messages SET superseded_by = NULL WHERE superseded_by = $id").run({ id: branchId });
+      if (after.some((m) => m.author === "friend") || target.messages.some((m) => m.author === "friend")) {
+        this.interventions.add({
+          kind: "branch",
+          summary: `The user switched #${this.getChannel(fork.channelId).name} to another branch of the conversation: ${target.count} message${target.count === 1 ? "" : "s"} came back${after.length > 0 ? `, and the ${after.length} that were there are kept as a branch` : ""}.`,
+          channelId: fork.channelId,
+          messageId: fork.id,
+        });
+      }
+    })();
+    this.messagesChanged(fork.channelId);
+    return shelvedId ? this.branch(shelvedId) : null;
+  }
+
+  /** One branch, with its messages, oldest first. Throws `NotFoundError` if there's no such branch. */
+  branch(branchId: string): Branch {
+    const forkId = forkOf(branchId);
+    const rows = forkId
+      ? (this.db.query(`${SELECT_MESSAGES} WHERE m.superseded_by = $branchId ORDER BY m.seq`).all({ branchId }) as MessageRow[])
+      : [];
+    if (rows.length === 0) throw new NotFoundError("branch");
+    const messages = rows.map(toMessage);
+    return { id: branchId, forkId: forkId!, channelId: messages[0]!.channelId, count: messages.length, messages };
+  }
+
+  /**
+   * The branches you can go to in a channel: those whose fork message is in
+   * the chat, oldest first (by their first message). Without their messages,
+   * apart from the first and last.
+   */
+  branches(channelId: string): BranchSummary[] {
+    const rows = this.db
+      .query(
+        `SELECT superseded_by AS id, COUNT(*) AS n, MIN(seq) AS first, MAX(seq) AS last FROM messages
+          WHERE channel_id = $channelId AND superseded_by LIKE '${BRANCH}%' AND deleted_at IS NULL
+          GROUP BY superseded_by ORDER BY first`,
+      )
+      .all({ channelId }) as { id: string; n: number; first: number; last: number }[];
+    const live = new Set(this.getMessages(channelId).map((m) => m.id));
+    const at = (seq: number) => toMessage(this.db.query(`${SELECT_MESSAGES} WHERE m.seq = $seq`).get({ seq }) as MessageRow);
+    return rows
+      .filter((r) => live.has(forkOf(r.id) ?? ""))
+      .map((r) => ({ id: r.id, forkId: forkOf(r.id)!, count: r.n, first: at(r.first), last: at(r.last) }));
+  }
+
+  /**
+   * Go back to an earlier version of a reply (one a regeneration replaced):
+   * it comes back, and the reply that's there now joins its alternates.
+   * Anything written after that reply is set aside as a branch first, and
+   * returns if you go back to the reply it followed.
+   */
+  useAlternate(id: string): Message[] {
+    const chosen = this.getMessage(id);
+    const replacedBy = chosen.supersededBy;
+    if (chosen.deletedAt || !replacedBy || forkOf(replacedBy)) {
+      throw new ValidationError("Only a reply that a regeneration replaced can be brought back.");
+    }
+    // The reply in the chat now: follow the regenerations to it.
+    let live: Message[] = [];
+    const seen = new Set<string>();
+    for (let turnId: string | undefined = replacedBy; turnId && !seen.has(turnId); ) {
+      seen.add(turnId);
+      const rows: Message[] = (
+        this.db.query(`${SELECT_MESSAGES} WHERE m.channel_id = $channelId AND m.turn_id = $turnId ORDER BY m.seq`).all({
+          channelId: chosen.channelId,
+          turnId,
+        }) as MessageRow[]
+      ).map(toMessage);
+      live = rows.filter((m) => !m.deletedAt && !m.supersededBy);
+      if (live.length > 0) break;
+      const next: string | undefined = rows.find((m) => !m.deletedAt)?.supersededBy;
+      turnId = next && !forkOf(next) ? next : undefined;
+    }
+    if (live.length === 0) throw new ValidationError("The reply that replaced this one isn't in the chat now.");
+    this.branchFrom(live.at(-1)!.id);
+    // A reply from before turn ids: give it one, so the others can point at it.
+    const turnId = chosen.turnId ?? crypto.randomUUID();
+    if (!chosen.turnId) this.db.query("UPDATE messages SET turn_id = $turnId WHERE id = $id").run({ id, turnId });
+    const group = [...live, ...this.history(live[0]!.id).alternates];
+    for (const message of live) this.summaries.messageChanging(message, true);
+    this.db.transaction(() => {
+      const mark = this.db.query("UPDATE messages SET superseded_by = $to WHERE id = $id");
+      for (const message of group) {
+        const ours = message.id === id || (chosen.turnId !== null && message.turnId === chosen.turnId);
+        mark.run({ id: message.id, to: ours ? null : turnId });
+      }
+      this.interventions.add({
+        kind: "regenerate",
+        summary: `The user went back to an earlier version of your reply in #${this.getChannel(chosen.channelId).name}. The one that replaced it is kept as an alternate.`,
+        channelId: chosen.channelId,
+        messageId: id,
+      });
+    })();
+    this.messagesChanged(chosen.channelId);
+    return group.filter((m) => m.id === id || (chosen.turnId !== null && m.turnId === chosen.turnId)).map((m) => this.getMessage(m.id));
+  }
+
+  /** The messages in the chat after one, oldest first. */
+  private liveAfter(message: Message): Message[] {
+    const rows = this.db
+      .query(
+        `${SELECT_MESSAGES} WHERE m.channel_id = $channelId AND ${LIVE}
+           AND m.seq > (SELECT seq FROM messages WHERE id = $id) ORDER BY m.seq`,
+      )
+      .all({ channelId: message.channelId, id: message.id }) as MessageRow[];
+    return rows.map(toMessage);
+  }
+
+  /**
+   * A message leaving the chat for good: the branches after it now follow
+   * the message before it, so they can still be reached.
+   */
+  private rehomeBranches(message: Message): void {
+    const previous = this.db
+      .query(`SELECT m.id FROM messages m WHERE m.channel_id = $channelId AND ${LIVE} AND m.seq < (SELECT seq FROM messages WHERE id = $id) ORDER BY m.seq DESC LIMIT 1`)
+      .get({ channelId: message.channelId, id: message.id }) as { id: string } | null;
+    if (!previous) return;
+    const from = `${BRANCH}${message.id}:`;
+    this.db
+      .query("UPDATE messages SET superseded_by = $to || substr(superseded_by, $cut) WHERE channel_id = $channelId AND substr(superseded_by, 1, $len) = $from")
+      .run({ to: `${BRANCH}${previous.id}:`, cut: from.length + 1, len: from.length, from, channelId: message.channelId });
+  }
+
+  /** Mark messages as part of a branch (in a transaction of the caller's). */
+  private shelve(messages: Message[], branchId: string): void {
+    for (const message of messages) this.summaries.messageChanging(message, true);
+    const mark = this.db.query("UPDATE messages SET superseded_by = $branchId WHERE id = $id");
+    for (const message of messages) mark.run({ id: message.id, branchId });
+  }
+
   /**
    * Attach notebook entries to a message, so they're sent to your kinwriter
    * with it. Entries already attached are skipped.
@@ -1307,6 +1547,10 @@ export class Store {
       const proposal = this.inbox.resolveProposal(id, approve ? "approved" : "denied");
       if (approve && proposal.kind === "delete_channel") {
         this.db.query("DELETE FROM channels WHERE id = $id").run({ id: proposal.targetId! });
+      }
+      // A new name they asked for: their display name, and their self-notes' header, which is built from it.
+      if (approve && proposal.kind === "rename" && proposal.targetName) {
+        this.updateSettings({ friendName: proposal.targetName });
       }
     })();
   }

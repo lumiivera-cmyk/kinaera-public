@@ -1,8 +1,10 @@
 # The practice scene
 
-For the orientation your kinwriter does on their own (KINAERA_ORIENTATION.md):
-a short scene that ships with Kinaera, with a canned partner standing in for
-you, so the lessons have something real to edit, check and look up against.
+The built-in practice scene for the orientation your kinwriter does on their
+own (KINAERA_ORIENTATION.md), used only when a practice world can't be
+written for them (see defaults/practice-world.md): a short scene with a
+canned partner standing in for you, so the lessons have something real to
+edit, check and look up against.
 
 The partner's posts were written ahead of time: your kinwriter is told so
 plainly. If you keep the scene at the end, it opens as a real story
@@ -20,24 +22,22 @@ practice-scene
 
 ## partner-name
 
-Ines Corrow
+Tomasz Rhee
 
 ## partner-about
 
-A ferry mechanic, new to the harbour town, with grease under her nails and a habit of fixing things nobody asked her to. She's looking for the man who sold her a boat that doesn't exist.
+A bicycle courier, new to the city, who never loses a parcel. He's been paid to deliver one to a stall in the Ninth Arcade that closed ten years ago.
 
 ## post-1
 
-*The last ferry of the night bumps against the pier, and Ines Corrow is the only one to step off it. She has a canvas toolbag over one shoulder and a folded bill of sale in her fist, already soft from being read too many times. The harbour bell rings three times, which a fisherman coiling rope tells her means a wedding, not a storm.*
+*The 6:40 freight shakes dust from the viaduct arches, and Tomasz Rhee waits it out with one foot on a pedal and a brown-paper parcel under his arm. The string is knotted in a way he's never seen. The address label is in fountain pen, faded nearly to nothing: Stall 41, Ninth Arcade.*
 
-*She ignores the lanterns strung along the quay and makes straight for the only lit window: a bakery, its door propped open with a brick.*
+*Stall 41 has a padlocked shutter and somebody else's name chalked across it. He wheels the bike to the nearest lit stall instead.*
 
-"I'm looking for a man called Aubrey Pell," she says to whoever's inside. "Sold me a boat called the *Marigold*. Paid in full. The harbour master says there's no such boat."
+"Sorry. You'll know this better than me," he says to whoever's behind the counter. "Who had forty-one? I've been paid to put this in their hands, and only theirs."
 
 ## post-2
 
-*Ines sets the bill of sale flat on the counter and smooths it out with the heel of her hand. Pell's signature slopes hard to the left, and the ink has run where she held it in the rain.*
+*Tomasz sets the parcel on the counter, careful, the way you'd set down something that might tick. It doesn't. He turns it so the label faces up and taps the postmark with one finger: ten years old, near enough to the day.*
 
-"Forty crowns," she says. "Everything I had after my father's workshop sold. If Pell's a liar, fine. But somebody in this town took my money, and I'm not getting back on that ferry until I know who."
-
-*She glances at the window, where the wedding lanterns are being lit one by one along the quay.* "Who's getting married, anyway?"
+"Paid in cash this morning. Old woman, wouldn't give her name, said I'd know the recipient when I saw them." *He glances along the arcade, where the stallholders are setting out candles and ledgers.* "What's all that for, anyway?"

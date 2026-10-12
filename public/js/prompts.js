@@ -226,6 +226,7 @@ function renderResult(data) {
   parts.push(head);
 
   if (data.reply) {
+    if (data.reply.reasoning) parts.push(block("Their reasoning", data.reply.reasoning));
     parts.push(block("What they'd write", data.reply.content || "(nothing: no text)"));
     if (data.reply.toolCalls.length) {
       parts.push(

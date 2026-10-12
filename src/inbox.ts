@@ -20,7 +20,10 @@
  *     (src/wakeups.ts).
  *
  *   - **Proposals**: things your kinwriter can't do alone, which you approve
- *     or deny. For now that's deleting a channel.
+ *     or deny: deleting a channel, and a new name for themselves (`rename`,
+ *     with the name they'd like as its target name, and their reason).
+ *     A new name is theirs to ask for at any time, and applied once you
+ *     approve.
  *
  * Notebook suggestions are shown in the same inbox in the app, but are
  * stored with the notebook (src/notebook.ts), because they belong to their
@@ -47,11 +50,13 @@ export const ASK_KIND_NAMES: Record<AskKind, string> = {
   other: "other: anything else",
 };
 
+export type ProposalKind = "delete_channel" | "rename";
+
 export type InboxStatus = "open" | "answered" | "dismissed" | "approved" | "denied";
 
 export interface InboxItem {
   id: string;
-  kind: "ask" | "delete_channel";
+  kind: "ask" | ProposalKind;
   /** For asks. */
   askKind: AskKind | null;
   /** What they asked, or why they propose it. */
@@ -178,10 +183,15 @@ export class Inbox {
    * Your kinwriter proposes deleting a channel. Proposing the same thing twice
    * while the first is still waiting returns the first.
    */
-  propose(kind: "delete_channel", targetId: string, targetName: string, reason: string): InboxItem {
+  propose(kind: ProposalKind, targetId: string, targetName: string, reason: string): InboxItem {
     const existing = this.db
       .query("SELECT * FROM inbox WHERE kind = $kind AND target_id = $targetId AND status = 'open'")
       .get({ kind, targetId }) as InboxRow | null;
+    // Asking for a different name while one is waiting changes the request.
+    if (existing && kind === "rename") {
+      this.db.query("UPDATE inbox SET target_name = $targetName, text = $reason WHERE id = $id").run({ id: existing.id, targetName, reason: reason.slice(0, 1000) });
+      return this.get(existing.id);
+    }
     if (existing) return toItem(existing);
     const id = crypto.randomUUID();
     this.db

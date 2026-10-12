@@ -17,7 +17,7 @@
 
 import type { Database } from "bun:sqlite";
 import { NotFoundError, PermissionError, ValidationError } from "./errors.ts";
-import type { Author, Comment, CommentThread, ToolCallRecord } from "./types.ts";
+import type { Author, Comment, CommentThread, ReasoningRecord, ToolCallRecord } from "./types.ts";
 
 // ---------------------------------------------------------------- tool log
 
@@ -103,6 +103,76 @@ export class ToolLog {
       .query("SELECT * FROM tool_calls WHERE turn_id = $turnId ORDER BY created_at, rowid")
       .all({ turnId }) as ToolCallRow[];
     return rows.map(toToolCall);
+  }
+}
+
+// --------------------------------------------------------------- reasoning
+
+interface ReasoningRow {
+  id: string;
+  channel_id: string;
+  turn_id: string;
+  round: number;
+  text: string;
+  profile: string | null;
+  model: string | null;
+  created_at: string;
+}
+
+function toReasoning(row: ReasoningRow): ReasoningRecord {
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    turnId: row.turn_id,
+    round: row.round,
+    text: row.text,
+    profile: row.profile,
+    model: row.model,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * A thinking model's reasoning, kept per round of a turn: shown with the
+ * messages the turn wrote (or on its own, for a turn that only acted), and
+ * in the developer panel. Only turns whose model returned any have rows.
+ */
+export class ReasoningLog {
+  constructor(private readonly db: Database) {}
+
+  add(record: Omit<ReasoningRecord, "id" | "createdAt">): ReasoningRecord {
+    const full: ReasoningRecord = { ...record, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
+    this.db
+      .query(
+        `INSERT INTO reasoning (id, channel_id, turn_id, round, text, profile, model, created_at)
+         VALUES ($id, $channelId, $turnId, $round, $text, $profile, $model, $createdAt)`,
+      )
+      .run({ ...full });
+    return full;
+  }
+
+  /** A channel's reasoning, oldest first (the newest `limit`). */
+  forChannel(channelId: string, limit = 300): ReasoningRecord[] {
+    const rows = this.db
+      .query(
+        `SELECT * FROM (SELECT *, rowid AS seq FROM reasoning WHERE channel_id = $channelId
+                         ORDER BY created_at DESC, rowid DESC LIMIT $limit)
+          ORDER BY created_at, seq`,
+      )
+      .all({ channelId, limit }) as ReasoningRow[];
+    return rows.map(toReasoning);
+  }
+
+  /** One turn's reasoning, round by round. */
+  forTurn(turnId: string): ReasoningRecord[] {
+    const rows = this.db.query("SELECT * FROM reasoning WHERE turn_id = $turnId ORDER BY created_at, rowid").all({ turnId }) as ReasoningRow[];
+    return rows.map(toReasoning);
+  }
+
+  /** The newest reasoning in every channel, newest first. */
+  recent(limit = 50): ReasoningRecord[] {
+    const rows = this.db.query("SELECT * FROM reasoning ORDER BY created_at DESC, rowid DESC LIMIT $limit").all({ limit }) as ReasoningRow[];
+    return rows.map(toReasoning);
   }
 }
 

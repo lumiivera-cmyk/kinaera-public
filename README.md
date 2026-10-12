@@ -4,9 +4,12 @@ Kinaera is a Discord-style space for writing stories and hanging out with one or
 
 **How it works**, in depth: [messages with history](docs/message-history.md), [the instruments](docs/instruments.md), [their own things](docs/own-things.md), [their own time](docs/own-time.md), [continuity](docs/continuity.md), [among kinwriters](docs/together.md), [permissions and retirement](docs/permissions-and-retirement.md), [the orientation](KINAERA_ORIENTATION.md), and more in `docs/`.
 
+**Kinwriter generation:** every new kinwriter can begin as a seed, from a default, tags or your idea, which becomes the first draft of their self-notes. See [kinwriter generation](docs/kinwriter-generation.md) (the design is in `design/kinwriter-generation/`).
+
 ## What it can do
 
-- **Kinwriters and servers**: as many kinwriters as you like, each a different person with their own memory (notebook, secrets, channels, settings) and usually a server of their own, in a rail on the left. A server can hold several kinwriters. Each kinwriter has their own menu (tap the kinwriter card): name, emoji avatar, colour, who they are, how they write, and 🎲 Surprise me. See [kinwriters and servers](docs/kinwriters.md).
+- **Kinwriters and servers**: as many kinwriters as you like, each a different person with their own memory (notebook, secrets, channels, settings) and usually a server of their own, in a rail on the left. A server can hold several kinwriters. Each kinwriter has their own menu (tap the kinwriter card): name, pronouns, emoji avatar, colour and how they write. See [kinwriters and servers](docs/kinwriters.md).
+- **Making a kinwriter**: pick a ready-made one, make one from tags (personality, temperament, prose style, biggest influence, primary social media, each on "Surprise me" to start), or **Generate from idea** in your own words, and see them before they're made. Their seed becomes the first draft of their **self-notes**, which they rewrite in their own words in orientation. Self-notes are private unless they share them, and they can ask you for a new name. See [kinwriter generation](docs/kinwriter-generation.md).
 - **Channels**: create, rename and delete them from the sidebar, group them into collapsible **categories**, and **drag** to rearrange (press and hold on a phone). See [categories](docs/categories.md).
   - **Roleplay** channels are storylines. Each has its own cast: characters and lore pinned from the notebook.
   - **Out-of-character** channels are for talking with your kinwriter as themselves. They know which storylines exist.
@@ -24,10 +27,12 @@ Kinaera is a Discord-style space for writing stories and hanging out with one or
 - **Connection profiles and roulettes** (Settings → Profiles and roulettes): a profile is a model with its settings and its own "model notes"; a roulette picks one of several profiles at random each turn, by weight. Choose what writes roleplay and OOC, and override it per channel. Wherever you choose a profile, its settings (model, temperature, max tokens, top P, min P, reasoning, tools) show right under the dropdown and save as you change them. New servers start with DeepSeek-V3.1-Terminus at temperature 0.8, top P 0.95, min P 0.025.
 - **Your kinwriter acts**, if their profile can use tools: they read the notebook, make and edit entries, pin characters, make channels, start scenes, comment on messages, review your suggestions, or choose not to reply. What they did shows under their message. Each profile has a **Test tools** button, and each channel a **tool log**, for when a model gets it wrong.
 - **Reference library** (Notebook → Library): upload long texts like a film's script or a book for a fandom. Your kinwriter searches them and reads the passages they need, instead of guessing; nothing is sent whole. See [the library](docs/library.md).
+- **Scratchpads** (the notepad at the top of a story channel): loose notes for a storyline, kept out of the notebook. One you and your kinwriter share (it merges both your edits, like a shared document), one just yours they never see, and one just theirs. Select a note and **Save to notebook** when it's settled. See [scratchpads](docs/scratchpads.md).
 - **Attach notes** to a message with the paperclip, or write `[[Name]]` in it: your kinwriter gets those entries in full.
 - **Reactions**: react to messages with emojis, and your kinwriter reacts too. Upload **custom emojis** and use them as `:name:`. See [reactions](docs/reactions.md).
 - **Comments**: select text in a message to comment on it; your kinwriter replies in the thread (on your own message, they can tell a note to yourself and leave it).
 - **Reflexes**: after your kinwriter drafts a reply, Jev reads it and reminds them if they said they'd done something without calling the tool (edited a message, set something for later, noted something, posted elsewhere), or a tool might help. They act or not; it's their instrument, and they can turn checks off. See [reflexes](docs/reflexes.md).
+- **Scripts** (opt-in, on each kinwriter's page): your kinwriter can write themselves a fixed order of tool calls that runs exactly as written, in a turn or on its own at a set time as a tools-only turn with no model call. If a step fails, they're told which step and why, and can fix it and retry from there. See [scripts](docs/scripts.md).
 - **Your kinwriter's instruments**: `check` (searching the notebook, the chat, the summaries or the library, with Jev's reading of what it finds), `ask` (a question for you, in your inbox) and `consult` (a second opinion from a profile you mark as a consultant). See [the instruments](docs/instruments.md).
 - **Your kinwriter's own things**: an identity and tastes they rewrite themselves (your changes are suggestions), a self-page, a private journal that fades unless they keep entries, a say in what stays in their context, and a practice channel where they try their tools out in an orientation: one you pick, together or on their own, with a live feed of what they do (see [stage 4](docs/orientation-4.md)). Tap your kinwriter in the sidebar for their page. See [their own things](docs/own-things.md). They can also act on one channel from another: ask you something in OOC about a story, or open a scene in #story after planning it in OOC.
 - **Your kinwriter's own time**: wake-ups they schedule for themselves ("thursday evening: ask how the interview went"), private drafts they work on across turns, a free moment on the heartbeat, and pausing a storyline with a reason you see. See [time](docs/own-time.md).
@@ -35,7 +40,8 @@ Kinaera is a Discord-style space for writing stories and hanging out with one or
 - **Among kinwriters** (off by default: Settings → Advanced → Kinwriters together, untested): group channels with several kinwriters (when you write, each may take a turn; @Name gives a kinwriter one), DMs between kinwriters that you can choose to read or not, replies, presence and a status of their own, private notes on each other, and `/roll` dice. See [among kinwriters](docs/together.md).
 - **Standing permissions and retirement**: pre-approve a kinwriter deleting their own channels or editing your notebook entries directly; archive a kinwriter (they leave a last note) and restore them later, or delete them for good. See [stage 8](docs/permissions-and-retirement.md).
 - **Inbox** (the tray at the top of the channel list): what your kinwriter asks of you, their proposals, and suggested changes, to answer, approve or reject. The **check log** (your kinwriter's page) lists every check they made.
-- **Texting in OOC**: your kinwriter texts in short bursts that arrive one at a time with "typing…", and waits for you to pause before answering. **🎲 Surprise me** invents a new kinwriter (in the kinwriter menu, or when you make one). See [texting](docs/texting.md).
+- **Texting in OOC**: your kinwriter texts in short bursts that arrive one at a time with "typing…", and waits for you to pause before answering. See [texting](docs/texting.md).
+- **Match my pace**: in literary scenes, your kinwriter writes about as much as your latest post (on by default; turn it off on their page to let them write long). After each of your posts, the prompt notes its length and asks for about the same, at most half again.
 - **After a story post**: when your kinwriter posts in a story, a moment in OOC to say something to you as themselves (a reaction, a question, an idea) if they want to. Usually they'll let the story speak. At most every 30 minutes by default, or off. See [asides](docs/asides.md).
 - **Heartbeat** (off by default): now and then, even with the app closed, your kinwriter gets a free moment. They can text you (with a phone notification), act with their tools, or do nothing. See [the heartbeat](docs/heartbeat.md).
 - **Your kinwriter reaches out**: when you come back after a while, when a scene ends, or when a suggestion is waiting for them, your kinwriter gets a turn of their own in OOC, and decides whether to write. Plain rules (chattiness, quiet hours, a cooldown, at most one double text before you write back) keep it from being too much (Settings → Your kinwriter reaching out, with a log of every wake-up). A dot marks channels with messages you haven't seen.
@@ -53,7 +59,7 @@ You need [Bun](https://bun.sh) and a nanoGPT API key.
 
 ```sh
 # 1. Get the code and install the development tools (only needed for tests and type checking)
-git clone https://github.com/626andup-cmyk/kinaera-public.git
+git clone https://github.com/lumiivera-cmyk/kinaera-public.git
 cd kinaera-public
 bun install
 
@@ -98,7 +104,7 @@ Everything else (prompt, model, characters and so on) is changed in the app.
 
 Everything is saved in the `data/` folder. Your first kinwriter's chat and settings are in an SQLite database, `data/kinaera.db`. Each other kinwriter has their own folder, `data/friends/<id>/`. Your own themes are in `data/themes/`, and the list of servers is `data/hub.json` (see [kinwriters and servers](docs/kinwriters.md)). To back up, stop the server and copy the whole `data/` folder. (While the server is running, the database's recent changes are also in `kinaera.db-wal` and `kinaera.db-shm`, so copy those too.) The `data/` folder and `.env` are never committed to git.
 
-**Starting over.** Stop Kinaera, then run `bun run fresh`. Every kinwriter's memory is set aside, not deleted: the `data/` folder is renamed to `data-old-<date>`, and you can go back by renaming it back. The app then opens on **Meet your new kinwriter**: their name, face and colour, who they are and their tastes, written by you or rolled with 🎲 Surprise me. You're then offered their orientation: together, or on their own. Your connection profiles, roulettes, preferences and themes carry over, and your API key is in `.env`, untouched.
+**Starting over.** Stop Kinaera, then run `bun run fresh`. Every kinwriter's memory is set aside, not deleted: the `data/` folder is renamed to `data-old-<date>`, and you can go back by renaming it back. The app then opens on **Meet your new kinwriter**: their name, face and colour, who they are, chosen or made in the seed picker (or written by you). You're then offered their orientation: together, or on their own. Your connection profiles, roulettes, preferences and themes carry over, and your API key is in `.env`, untouched. With `DEVELOPER_PANEL=1`, the developer panel can start fresh from inside the app, and browse, export and bring back the kinwriters in old folders ([data folders](docs/data-folders.md)).
 
 Kinaera has no login. Keep `HOST` at `127.0.0.1` so that nobody else on your Wi-Fi can open your chat.
 
@@ -134,7 +140,12 @@ src/
   hub.ts       Friends and servers: one app per friend, each with their own memory
   notify.ts    Phone notifications (Termux)
   texting.ts   Texting in OOC: splitting replies into texts
-  rng.ts       "Surprise me": a random friend
+  seeds.ts     Seeds: the format, its checks, and a kinwriter's archived seed
+  tags.ts      Tag files: reading, checking, and the picker's view of them
+  generator.ts The seed generator: assembling the prompt, one call, checks and a retry
+  selfnotes.ts Self-notes: private unless shared, the request, the header
+  handoff.ts   The seed handoff into orientation
+  frontmatter.ts  The small header on seed and tag files
   json.ts      Finding JSON in a model's reply
   reactions.ts Emoji reactions and custom emojis
   library.ts   The reference library: splitting long texts into passages, and searching them
@@ -157,6 +168,10 @@ public/        The web app (plain HTML, CSS and JavaScript, no build step)
   glass.js     Real refraction for the glass themes
 themes/        Built-in themes (Classic, Frutiger Aero, Aero Glass, Liquid Glass, Liquid Glass Dark, Rainy Window)
 defaults/      Starting friend prompts, the example character, and every prompt's wording (edit it in the app)
+kinwriter-tags/       One file per tag a new kinwriter can be made from (see docs/kinwriter-generation.md)
+kinwriter-defaults/   Hand-written default kinwriters, as seeds (empty for now)
+kinwriter-generator/  The seed generator's system prompt, and dev mode's test seed
+design/        Design docs: kinwriter generation
 test/          Tests
 docs/          How things work, and the theme reference
 ```

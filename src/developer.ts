@@ -18,6 +18,9 @@
 
 import type { Store } from "./store.ts";
 import type { GroupDirectory } from "./config.ts";
+import { selfFile } from "./selfnotes.ts";
+import { getPad, hasScratchpads } from "./scratchpads.ts";
+import type { SeedHeader } from "./seeds.ts";
 
 export interface DeveloperView {
   journal: { id: string; createdAt: string; kept: boolean; content: string }[];
@@ -27,9 +30,18 @@ export interface DeveloperView {
   hiddenEntries: { name: string; kind: string; fields: { label: string; value: string }[]; notes: string }[];
   hiddenDms: { channel: string; messages: { from: string; content: string; createdAt: string }[] }[];
   invitationNote: string | null;
+  /** Their private scratchpads, one per story channel that has one (src/scratchpads.ts). */
+  privateScratchpads: { channel: string; updatedAt: string | null; text: string }[];
+  /** Their self-notes (self.md), shared or not, and the seed they began as: side by side (Seed vs. self). */
+  selfNotes: string;
+  seed: string | null;
+  /** The seed's header, for Trace. */
+  seedHeader: SeedHeader | null;
+  /** A thinking model's reasoning, newest turns first (src/activity.ts). */
+  reasoning: { channel: string | null; round: number; profile: string | null; model: string | null; createdAt: string; text: string }[];
 }
 
-export function developerView(store: Store, groups?: GroupDirectory | null): DeveloperView {
+export function developerView(store: Store, groups?: GroupDirectory | null, kinwriterId: string | null = null): DeveloperView {
   const channelName = (id: string | null) => (id && store.hasChannel(id) ? store.getChannel(id).name : null);
   const profiles = new Map(store.profiles.list().map((p) => [p.id, p.name]));
   const hiddenDms = store
@@ -54,5 +66,17 @@ export function developerView(store: Store, groups?: GroupDirectory | null): Dev
       .map(({ entry }) => ({ name: entry.name, kind: entry.kind, fields: entry.fields, notes: entry.systemPrompt })),
     hiddenDms,
     invitationNote: store.appState.get("orientation.invite-note"),
+    privateScratchpads: store
+      .listChannels()
+      .filter(hasScratchpads)
+      .map((c) => ({ channel: c.name, pad: getPad(store, c.id, "kinwriter") }))
+      .filter(({ pad }) => pad.text !== "")
+      .map(({ channel, pad }) => ({ channel, updatedAt: pad.at, text: pad.text })),
+    selfNotes: selfFile(store, kinwriterId),
+    seed: store.seeds.get()?.content ?? null,
+    seedHeader: store.seeds.get()?.seed.header ?? null,
+    reasoning: store.reasoning
+      .recent()
+      .map((r) => ({ channel: channelName(r.channelId), round: r.round, profile: r.profile, model: r.model, createdAt: r.createdAt, text: r.text })),
   };
 }

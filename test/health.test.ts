@@ -89,10 +89,12 @@ describe("the developer panel", () => {
     open(true);
     app.store.journal.write("A private thought.");
     app.store.drafts.create("A draft.", "Opening");
+    app.store.reasoning.add({ channelId: ooc.id, turnId: "t1", round: 0, text: "Thinking it over.", profile: "P", model: "m" });
     const { status, data } = await call("/api/developer");
     expect(status).toBe(200);
     expect(data.journal.map((e: any) => e.content)).toEqual(["A private thought."]);
     expect(data.drafts[0]).toMatchObject({ title: "Opening", content: "A draft." });
+    expect(data.reasoning[0]).toMatchObject({ channel: ooc.name, round: 0, text: "Thinking it over." });
     expect((await call("/api/state")).data.developerPanel).toBe(true);
   });
 

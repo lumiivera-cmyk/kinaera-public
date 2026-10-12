@@ -18,7 +18,7 @@ The files:
 | `continuity`, `wellbeing` | Staying themselves across models, and the weekly reading |
 | `friends`, `permissions`, `retirement` | Other kinwriters, standing permissions, archiving |
 | `summaries` | How summaries and channel digests are written |
-| `surprise` | 🎲 Surprise me |
+| `seeds` | Seeds and self-notes: the orientation handoff, sharing, the size cap (the seed generator's own prompt is `kinwriter-generator/system-prompt.md`) |
 | `jev` | The fallback when Jev, the decision model, is unavailable |
 | `practice` | The practice notes in the practice channel |
 
@@ -28,7 +28,7 @@ The files:
 
 **What isn't here:**
 
-- **Who your kinwriter is, and how they write** in literary, casual and OOC. Those are theirs, per kinwriter, in their menu (Kinwriter…). The files `defaults/friend.md`, `literary.md`, `casual.md`, `ooc.md`, `tastes.md` and `character.md` are only starting values for a new kinwriter and the example character, so they aren't on this screen.
+- **Who your kinwriter is, and how they write** in literary, casual and OOC. Those are theirs, per kinwriter, in their menu (Kinwriter…). The files `defaults/friend.md`, `literary.md`, `casual.md`, `ooc.md`, `tastes.md` and `character.md` are only starting values for a new kinwriter and (in tests) the example character, so they aren't on this screen. A real server's example character, the practice notes and the practice scene are written for each kinwriter from who they are (`practice-world.md`, by the profile that writes summaries); `practice.md` and `practice-scene.md` are only used when that can't be done.
 - **Tool descriptions.** They're part of the tools in `src/tools.ts`. The dry run shows them all.
 - **Small generated lines**, like how long ago something was, or a list of reactions.
 

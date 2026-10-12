@@ -11,7 +11,9 @@
  *   kinwriter made, with what was found.
  */
 
+import { bringBack } from "./branches.js";
 import { $, api, hideFormError, showFormError, state } from "./core.js";
+import { isShared } from "./groups.js";
 import { formatText, formatTime } from "./format.js";
 
 /** "You", or your kinwriter's name. */
@@ -19,8 +21,8 @@ function whoWrote(author) {
   return author === "user" ? "You" : state.settings.friendName;
 }
 
-/** One version, as a card: who and when, then the text. */
-function versionCard(heading, content, current = false) {
+/** One version, as a card: who and when, then the text (and a button, if given). */
+function versionCard(heading, content, current = false, button = null) {
   const item = document.createElement("li");
   item.className = "history-version";
   if (current) item.dataset.current = "";
@@ -31,6 +33,7 @@ function versionCard(heading, content, current = false) {
   text.className = "history-version-text";
   text.innerHTML = formatText(content);
   item.append(head, text);
+  if (button) item.append(button);
   return item;
 }
 
@@ -44,10 +47,28 @@ export async function openHistory(messageId) {
   try {
     const { message, revisions, alternates } = await api("GET", `/api/messages/${encodeURIComponent(messageId)}/history`);
     const cards = [];
+    // An earlier reply can come back, while this one's in the chat.
+    const channel = state.channels.find((c) => c.id === message.channelId);
+    const canBringBack = !message.deletedAt && !message.supersededBy && channel && !isShared(channel);
     if (alternates.length > 0) {
       for (const [i, old] of alternates.entries()) {
         const by = old.profile ? `, by ${old.profile}` : "";
-        cards.push(versionCard(`Reply ${i + 1}, ${formatTime(old.createdAt)}${by} (replaced by a regeneration)`, old.content));
+        let button = null;
+        if (canBringBack) {
+          button = document.createElement("button");
+          button.type = "button";
+          button.className = "link-button";
+          button.textContent = "Bring this one back";
+          button.addEventListener("click", async () => {
+            try {
+              await bringBack(old.id);
+              dialog.close();
+            } catch (error) {
+              showFormError(dialog, error.message);
+            }
+          });
+        }
+        cards.push(versionCard(`Reply ${i + 1}, ${formatTime(old.createdAt)}${by} (replaced by a regeneration)`, old.content, false, button));
       }
     }
     if (revisions.length > 0) {

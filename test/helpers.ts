@@ -15,7 +15,8 @@ import type { ChatMessage } from "../src/types.ts";
 
 /** What the fake server should do with the next request. */
 export type FakeReply =
-  | { content: string; finishReason?: string }
+  /** `reasoning`: a thinking model's reasoning, in the API's `reasoning` field. */
+  | { content: string; finishReason?: string; reasoning?: string }
   | { status: number; error: string }
   /** Wait this many ms before replying, for testing overlapping turns. */
   | { content: string; delayMs: number }
@@ -26,7 +27,7 @@ export type FakeReply =
    * text alongside. `arguments` can be JSON text or an object (some
    * providers send objects).
    */
-  | { toolCalls: { name: string; arguments: string | object }[]; content?: string | null };
+  | { toolCalls: { name: string; arguments: string | object }[]; content?: string | null; reasoning?: string };
 
 export interface FakeNanoGpt {
   baseUrl: string;
@@ -100,6 +101,7 @@ export function startFakeNanoGpt(): FakeNanoGpt {
                 message: {
                   role: "assistant",
                   content: reply.content ?? null,
+                  ...(reply.reasoning ? { reasoning: reply.reasoning } : {}),
                   tool_calls: reply.toolCalls.map((call, i) => ({
                     id: `call_${fake.requests.length}_${i}`,
                     type: "function",
@@ -116,7 +118,7 @@ export function startFakeNanoGpt(): FakeNanoGpt {
           model: body.model,
           choices: [
             {
-              message: { role: "assistant", content: reply.content },
+              message: { role: "assistant", content: reply.content, ...("reasoning" in reply && reply.reasoning ? { reasoning: reply.reasoning } : {}) },
               finish_reason: "finishReason" in reply ? reply.finishReason : "stop",
             },
           ],

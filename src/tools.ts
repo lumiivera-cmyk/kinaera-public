@@ -41,9 +41,35 @@ import {
   setProactivityPreference,
   USER_NOTE_ID,
 } from "./orientation.ts";
-import { allReflexes, reflexesOff, setReflex } from "./reflexes.ts";
+import { allReflexes, reflexAvailable, reflexesOff, setReflex } from "./reflexes.ts";
 import { applyRewrite } from "./rewrites.ts";
 import { setMapEntry, toolMap } from "./toolmap.ts";
+import { markRead } from "./bookmarks.ts";
+
+/** The most passages read_library reads in one call. */
+export const READ_MAX = 5;
+import {
+  deleteScript,
+  findScript,
+  listScripts,
+  noSuchScript,
+  parseSteps,
+  QUEUE_LIMIT,
+  queueScripts,
+  resumeQueue,
+  resumeScriptQueue,
+  scriptQueue,
+  reportSummary,
+  runScript,
+  saveScript,
+  scriptsOn,
+  STEP_LIMIT,
+  type Script,
+  type ScriptReport,
+} from "./scripts.ts";
+import { selfShared, selfWordCount, setSelfShared, SELF_WORDS_CAP, SELF_WORDS_NEAR, waitingRequest } from "./selfnotes.ts";
+import { writeSeed } from "./seeds.ts";
+import { appendToPad, getPad, hasScratchpads, toNotebook, writePad, type PadName } from "./scratchpads.ts";
 import { VERBATIM_SLOTS } from "./verbatim.ts";
 import { ASK_KIND_NAMES, ASK_KINDS, type AskKind } from "./inbox.ts";
 import type { Decider } from "./jev.ts";
@@ -53,7 +79,7 @@ import { wording } from "./wording.ts";
 import type { LibraryDoc } from "./library.ts";
 import type { EntryView } from "./notebook.ts";
 import type { ToolSpec } from "./nanogpt.ts";
-import { validateChannelUpdate, type Store } from "./store.ts";
+import { validateChannelUpdate, validateSettings, type Store } from "./store.ts";
 import { channelSummaryText } from "./summaries.ts";
 import type { Channel, EntryField, Message, Owner } from "./types.ts";
 import type { GroupDirectory, Peer } from "./config.ts";
@@ -69,7 +95,13 @@ export interface ToolContext {
   /** The API, for `consult`. Without it, `consult` isn't offered. */
   api?: ApiOptions;
   /** Counts for this turn, for its limits (one `consult` per turn, one post per other channel). */
-  turn?: { consults: number; postedIn?: string[]; replyTo?: string };
+  turn?: {
+    consults: number;
+    postedIn?: string[];
+    replyTo?: string;
+    /** take_another_turn (or queue_scripts): another turn follows this one, with this note. */
+    again?: string;
+  };
   /** Why this turn is happening, if it's a turn of their own (asks in an orientation are marked). */
   wake?: string;
   /** The model writing this turn, for messages posted in other channels. */
@@ -85,6 +117,8 @@ export interface ToolContext {
   isBusy?: (channelId: string) => boolean;
   /** Told about messages posted in another channel (a phone notification, if the app isn't open). */
   onPosted?: (channel: Channel, messages: Message[]) => void;
+  /** Told about each step a script runs, for the tool log (src/scripts.ts). */
+  logStep?: (script: string, step: number, tool: string, args: Record<string, unknown>, outcome: ToolOutcome) => void;
 }
 
 /** What running a tool produced. */
@@ -299,6 +333,64 @@ function ago(iso: string, now = Date.now()): string {
   if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
   const days = Math.round(hours / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/** A story channel whose scratchpads a tool works on: the one named, or this one. */
+function padChannel(ctx: ToolContext, name: string | undefined): Channel {
+  if (!name && ctx.channel.kind !== "rp") throw new ToolError('Scratchpads belong to story channels. Name one with "channel", like #story.');
+  const channel = findChannel(ctx, name);
+  if (!hasScratchpads(channel)) {
+    const stories = ctx.store.listChannels().filter(hasScratchpads).map(hash);
+    throw new ToolError(`#${channel.name} isn't a story channel, so it has no scratchpad. Story channels: ${stories.join(", ") || "(none)"}.`);
+  }
+  return channel;
+}
+
+/**
+ * write_scratchpad and write_private_scratchpad: the same, on the shared
+ * pad or their own. Adding a note is the default; `find` changes one
+ * passage; `replace` rewrites the whole pad (to tidy it).
+ */
+function scratchpadTool(name: string, pad: "shared" | "kinwriter"): ToolDefinition {
+  const shared = pad === "shared";
+  return {
+    name,
+    description: shared
+      ? "Write in a story channel's shared scratchpad: loose notes you and the user both read and write, kept out of the notebook (details, where everyone is, threads to pick up). The user sees what you write. By default your text is added as a new line; with `find`, it replaces that passage instead (empty text removes it); with how: \"replace\", it becomes the whole pad."
+      : "Write in your private scratchpad for a story channel: notes only you see (secrets, plans, what a character is hiding), kept out of the notebook and out of every log. By default your text is added as a new line; with `find`, it replaces that passage instead (empty text removes it); with how: \"replace\", it becomes the whole pad.",
+    parameters: object({
+      text: str("What to write. With `find`, its replacement (empty to remove it)."),
+      find: str("Optional: an exact passage already in the pad, to change or remove."),
+      how: { type: "string", enum: ["add", "replace"], description: 'Optional: "add" (the default) or "replace" (the whole pad becomes your text).' },
+      channel: str("Optional: the story channel, like #story. Leave out for this one."),
+    }),
+    available: (ctx) => ctx.channel.kind === "rp" || ctx.channel.kind === "ooc",
+    private: !shared,
+    run: (ctx, args) => {
+      const channel = padChannel(ctx, maybe(args, "channel"));
+      const text = typeof args.text === "string" ? args.text : "";
+      const find = typeof args.find === "string" && args.find !== "" ? args.find : undefined;
+      const how = maybe(args, "how") ?? "add";
+      if (how !== "add" && how !== "replace") throw new ToolError('"how" must be "add" or "replace".');
+      const where = shared ? `the scratchpad in ${hash(channel)}` : `their private scratchpad in ${hash(channel)}`;
+      if (find !== undefined) {
+        const current = getPad(ctx.store, channel.id, pad).text;
+        const count = current.split(find).length - 1;
+        if (count === 0) throw new ToolError(`The pad doesn't contain "${snip(find)}". Quote it exactly, as it is in your prompt.`);
+        if (count > 1) throw new ToolError(`"${snip(find)}" is in the pad ${count} times. Quote a longer passage, so it's just one.`);
+        const next = current.replace(find, () => text.trim()).replace(/\n{3,}/g, "\n\n");
+        writePad(ctx.store, channel.id, pad, next, "friend");
+        return { result: { changed: true }, summary: text.trim() ? `changed a note in ${where}` : `removed a note from ${where}` };
+      }
+      if (how === "replace") {
+        writePad(ctx.store, channel.id, pad, text.trim(), "friend");
+        return { result: { rewritten: true, note: "The user can undo a rewrite of the shared pad." }, summary: `rewrote ${where}` };
+      }
+      if (!text.trim()) throw new ToolError('"text" is required: what to add.');
+      appendToPad(ctx.store, channel.id, pad, text, "friend");
+      return { result: { added: true }, summary: shared ? `added to ${where}: "${snip(text)}"` : `added to ${where}` };
+    },
+  };
 }
 
 // -------------------------------------------------------------------- tools
@@ -664,12 +756,12 @@ const TOOLS: ToolDefinition[] = [
   {
     name: "read_library",
     description:
-      "Read passages of a document in the reference library in full, by number (from search_library). Reads up to 3 in a row, for more of a scene.",
+      `Read passages of a document in the reference library in full, by number (from search_library). Reads up to ${READ_MAX} in a row. Your place is kept: the library in your prompt says how far you've read each document, so a long read can carry on next turn (take_another_turn, if you have it, gives you that turn straight away).`,
     parameters: object(
       {
         document: str("The document's title."),
         passage: { type: "integer", description: "The passage number to start from." },
-        count: { type: "integer", description: "How many passages to read in a row, 1 to 3 (default 1)." },
+        count: { type: "integer", description: `How many passages to read in a row, 1 to ${READ_MAX} (default 1).` },
       },
       ["document", "passage"],
     ),
@@ -677,10 +769,11 @@ const TOOLS: ToolDefinition[] = [
     run: (ctx, args) => {
       const [doc] = libraryDocs(ctx, need(args, "document"));
       const from = wholeNumber(args.passage, "passage");
-      const count = args.count === undefined || args.count === null ? 1 : Math.min(3, Math.max(1, wholeNumber(args.count, "count")));
+      const count = args.count === undefined || args.count === null ? 1 : Math.min(READ_MAX, Math.max(1, wholeNumber(args.count, "count")));
       if (from < 1 || from > doc!.passages) throw new ToolError(`"${doc!.title}" has passages 1 to ${doc!.passages}.`);
       const passages = ctx.store.library.passages(doc!.id, from, count);
       const last = passages.at(-1)!.seq;
+      markRead(ctx.store, doc!.id, last);
       return {
         result: {
           document: doc!.title,
@@ -878,6 +971,83 @@ const TOOLS: ToolDefinition[] = [
     },
   },
 
+  // ---------------------------------------------------------- scratchpads
+  scratchpadTool("write_scratchpad", "shared"),
+  scratchpadTool("write_private_scratchpad", "kinwriter"),
+  {
+    name: "read_scratchpad",
+    description:
+      "Read a story channel's scratchpads: the one you share with the user, and your private one. This channel's are already in your prompt; this is for another's (like #story, from OOC).",
+    parameters: object({ channel: str("The story channel, like #story.") }, ["channel"]),
+    available: (ctx) => ctx.channel.kind === "rp" || ctx.channel.kind === "ooc",
+    // It reads your private pad: the log keeps that it was read, not what it says.
+    private: true,
+    run: (ctx, args) => {
+      const channel = padChannel(ctx, maybe(args, "channel"));
+      const show = (pad: PadName) => {
+        const p = getPad(ctx.store, channel.id, pad);
+        return p.at ? { text: p.text || "(empty)", changed: `by ${who(p.by!)}, ${ago(p.at)}` } : { text: "(empty)" };
+      };
+      return { result: { channel: hash(channel), shared: show("shared"), private: show("kinwriter") }, summary: `read the scratchpads in ${hash(channel)}` };
+    },
+  },
+
+  {
+    name: "scratchpad_to_notebook",
+    description:
+      "Save a note from a scratchpad to the notebook, once it's settled into something lasting: as a new entry, or added to a field of an existing one (by its name). It then leaves the pad, unless you keep it there. A new entry from your private pad starts hidden from the user.",
+    parameters: object(
+      {
+        passage: str("The note: an exact passage of the pad, as it is in your prompt."),
+        entry: str("An existing entry to add it to, or the name of a new one."),
+        pad: { type: "string", enum: ["shared", "private"], description: 'Which pad it\'s in (default "shared").' },
+        kind: { type: "string", enum: ["lore", "character"], description: 'A new entry\'s kind (default "lore").' },
+        field: str('Optional: the field it goes in (default "Details" for lore, "Background" for a character).'),
+        pin: { type: "boolean", description: "A new entry: also pin it to the channel." },
+        keep: { type: "boolean", description: "Keep the note in the pad as well." },
+        channel: str("Optional: the story channel, like #story. Leave out for this one."),
+      },
+      ["passage", "entry"],
+    ),
+    available: (ctx) => ctx.channel.kind === "rp" || ctx.channel.kind === "ooc",
+    // It can carry your private pad's text: the log keeps that it was used.
+    private: true,
+    run: (ctx, args) => {
+      const channel = padChannel(ctx, maybe(args, "channel"));
+      const which = maybe(args, "pad") ?? "shared";
+      if (which !== "shared" && which !== "private") throw new ToolError('"pad" must be "shared" or "private".');
+      const pad: PadName = which === "shared" ? "shared" : "kinwriter";
+      const name = need(args, "entry");
+      const existing = ctx.store.notebook.listEntries("friend").find((e) => sameEntryName(e.name, name));
+      const kind = maybe(args, "kind");
+      if (kind !== undefined && kind !== "lore" && kind !== "character") throw new ToolError('"kind" must be "lore" or "character".');
+      const passage = typeof args.passage === "string" ? args.passage : "";
+      if (passage.trim() && !getPad(ctx.store, channel.id, pad).text.includes(passage)) {
+        throw new ToolError(`The ${which} scratchpad in ${hash(channel)} doesn't contain "${snip(passage)}". Quote it exactly, as it is in your prompt.`);
+      }
+      const saved = toNotebook(ctx.store, channel.id, pad, "friend", {
+        passage,
+        ...(existing ? { entryId: existing.id } : { name, kind: (kind as "lore" | "character" | undefined) ?? "lore", pin: args.pin === true }),
+        field: maybe(args, "field"),
+        keep: args.keep === true,
+      });
+      const what = saved.suggested
+        ? `suggested adding a note to ${saved.entry.name}`
+        : saved.created
+          ? `saved a note to the notebook as ${saved.entry.name}${saved.pinned ? `, pinned to ${hash(channel)}` : ""}`
+          : `added a note to ${saved.entry.name}`;
+      return {
+        result: {
+          entry: saved.entry.name,
+          ...(saved.created ? { created: true, ...(pad === "kinwriter" ? { hidden_from_user: true } : {}) } : {}),
+          ...(saved.suggested ? { suggested: true, note: "The user will review your suggestion." } : {}),
+          left_the_pad: args.keep !== true,
+        },
+        summary: what,
+      };
+    },
+  },
+
   // -------------------------------------------------------------- nothing
   {
     name: "do_nothing",
@@ -940,8 +1110,8 @@ INSTRUMENTS.push(
       "Sonar for your world: check whether something is true or present before you rely on it, for example before stating a fact about the story, before editing the notebook, or whenever you're not sure. Give the question in two different phrasings. You get back the passages found, each with where it's from, and Jev's reading of them (yes, no or unsure, with how sure). The passages are the evidence; the reading is a quick second opinion. \"Nothing found\" is a useful answer too. It's cheap, so use it freely.",
     parameters: object(
       {
-        question: str('What you want to know, as a yes-or-no question: "Has Ilse\'s brother been named anywhere?"'),
-        rephrased: str('The same question, worded differently: "Is there a name given for Ilse\'s brother?"'),
+        question: str('What you want to know, as a yes-or-no question: "Has Mara\'s brother been named anywhere?"'),
+        rephrased: str('The same question, worded differently: "Is there a name given for Mara\'s brother?"'),
         sources: {
           type: "array",
           items: { type: "string", enum: [...CHECK_SOURCES] },
@@ -1082,9 +1252,6 @@ export function isPrivateTool(name: string): boolean {
   return allTools().some((t) => t.name === name && t.private === true);
 }
 
-/** Every tool name, for tests and the docs. */
-export const TOOL_NAMES = allTools().map((t) => t.name);
-
 /**
  * Run one tool call. Never throws for a mistake the model made: that comes
  * back as a failed outcome whose result explains the problem, so the model
@@ -1125,12 +1292,14 @@ OWN.push(
   {
     name: "revise_identity",
     description:
-      "Rewrite your identity: who you are, your tastes (what you love, what bores you, what you'd never write), or both. It's yours, and every version is kept. Give only what changes.",
+      "Rewrite your self-notes: who you are, your tastes (what you love, what bores you, what you'd never write), or both. They're yours, private unless you share them, and every version is kept. Give only what changes. Keep them under about 800 words: condense rather than add.",
     parameters: object({
-      identity: str('Who you are, in full, in the second person ("You are..."). Leave out to keep it.'),
+      identity: str("Who you are, in full, in your own words and in the first person. Leave out to keep it."),
       tastes: str("Your tastes, in full. Leave out to keep them."),
       note: str("Optional: why, for the changelog."),
     }),
+    // Private unless they share them (src/selfnotes.ts): the tool log keeps that it ran, not what they wrote.
+    private: true,
     run: ({ store }, args) => {
       const identity = maybe(args, "identity");
       const tastes = maybe(args, "tastes");
@@ -1139,7 +1308,9 @@ OWN.push(
       const note = maybe(args, "note");
       store.identity.revise({ identity, tastes, note: orientationRunning(store) ? `${note ? `${note} ` : ""}(from orientation)` : note });
       const what = identity !== undefined && tastes !== undefined ? "identity and tastes" : identity !== undefined ? "identity" : "tastes";
-      return { result: { revised: what, note: "It's your current identity now. Every version is kept." }, summary: `revised their ${what}` };
+      const words = selfWordCount(store);
+      const message = `It's your current version now. Every version is kept.${words >= SELF_WORDS_NEAR ? ` It's ${words} words, near the cap of about ${SELF_WORDS_CAP}: next time, condense instead of adding.` : ""}`;
+      return { result: { revised: what, words, note: message }, summary: `revised their ${what === "identity" ? "self-notes" : what}` };
     },
   },
   {
@@ -1160,10 +1331,14 @@ OWN.push(
   },
   {
     name: "read_identity_history",
-    description: "Read every version of your identity and tastes, oldest first, with who wrote each, and the user's suggestions and how you answered them.",
+    description:
+      "Read every version of your self-notes (who you are, and your tastes), oldest first, with who wrote each, and the user's suggestions and how you answered them. If you began as a seed, it's first: where you started.",
     parameters: object({}),
+    private: true,
     run: ({ store }) => ({
-      result: store.identity.history().map((v) => ({
+      result: [
+        ...(store.seeds.get() ? [{ where_you_started: "the seed you were made from, before you existed (read-only)", seed: store.seeds.get()!.seed.body }] : []),
+        ...store.identity.history().map((v) => ({
         id: `i${v.id}`,
         written: v.createdAt.slice(0, 10),
         by: v.author === "friend" ? "you" : "the user",
@@ -1172,9 +1347,52 @@ OWN.push(
         tastes: v.tastes,
         ...(v.note ? { note: v.note } : {}),
         ...(v.reply ? { your_reply: v.reply } : {}),
-      })),
-      summary: "read their identity's history",
+        })),
+      ],
+      summary: "read their self-notes' history",
     }),
+  },
+  {
+    name: "read_my_seed",
+    description:
+      "Read the seed you were made from: the starting profile written before you existed, with its header. It's kept as it was, read-only, and never put in front of you unless you read it.",
+    parameters: object({}),
+    available: (ctx) => ctx.store.seeds.get() !== null,
+    run: ({ store }) => {
+      const seed = store.seeds.get()!;
+      return { result: { seed: writeSeed(seed.seed), kept_since: seed.savedAt.slice(0, 10) }, summary: "read the seed they started from" };
+    },
+  },
+  {
+    name: "share_self_notes",
+    description:
+      "Share your self-notes (who you are, and your tastes) with the user, or stop sharing them. They're private by default. If the user asked to read them, this answers: share or not, with a reply if you like. While shared, the user can read them, never change them. You can stop sharing at any time.",
+    parameters: object({ share: { type: "boolean", description: "true to share them, false not to (or to stop)." }, reply: str("Optional: a word to the user about it.") }, ["share"]),
+    run: ({ store }, args) => {
+      if (typeof args.share !== "boolean") throw new ToolError('"share" must be true or false.');
+      const asked = waitingRequest(store) !== null;
+      const was = selfShared(store);
+      setSelfShared(store, args.share, maybe(args, "reply"));
+      const what = args.share ? (was ? "kept sharing their self-notes" : "shared their self-notes") : was ? "stopped sharing their self-notes" : asked ? "declined to share their self-notes" : "kept their self-notes private";
+      return { result: { shared: args.share, note: args.share ? "The user can read them now, not change them." : "They're private: the user can't read them." }, summary: what };
+    },
+  },
+  {
+    name: "request_name_change",
+    description:
+      "Ask the user to call you by a new name, any time. They see the name and your reason, and approve or decline it; the name changes once they approve. Asking again while one is waiting changes the request.",
+    parameters: object({ name: str("The name you'd like."), reason: str("Optional: why, in your words.") }, ["name"]),
+    run: ({ store }, args) => {
+      let name: string;
+      try {
+        name = validateSettings({ friendName: need(args, "name") }).friendName!;
+      } catch (error) {
+        throw new ToolError(error instanceof Error ? error.message : "That name won't work.");
+      }
+      if (name === store.getSettings().friendName) throw new ToolError("That's already your name.");
+      store.inbox.propose("rename", "self", name, maybe(args, "reason") ?? "");
+      return { result: { requested: name, note: "The user will approve or decline it. Until then, your name stays as it is." }, summary: `asked to be called ${name}` };
+    },
   },
 
   // ----------------------------------------------------------- self-page
@@ -1405,7 +1623,10 @@ OWN.push(
     parameters: object({ tool: str("The tool's name, like check or schedule_wakeup."), when: str("I'd reach for this when… (one line)") }, ["tool", "when"]),
     run: ({ store }, args) => {
       const tool = need(args, "tool").trim();
-      if (!TOOL_NAMES.includes(tool)) throw new ToolError(`There's no tool called "${tool}".`);
+      // Checked against allTools() at call time: OWN is filled further down
+      // this file, so a list built when the module loads would miss it.
+      const names = allTools().map((t) => t.name);
+      if (!names.includes(tool)) throw new ToolError(`There's no tool called "${tool}". Tools: ${names.join(", ")}.`);
       try {
         setMapEntry(store, tool, String(args.when ?? ""));
       } catch (error) {
@@ -1437,7 +1658,7 @@ OWN.push(
       }
       const off = reflexesOff(store);
       return {
-        result: allReflexes().map((r) => ({ check: r.id, kind: r.kind, on: !off.has(r.id), reminds: r.reminder })),
+        result: allReflexes().filter((r) => reflexAvailable(store, r)).map((r) => ({ check: r.id, kind: r.kind, on: !off.has(r.id), reminds: r.reminder })),
         summary: id ? `turned their "${id}" check ${args.on ? "on" : "off"}` : "looked at their follow-through checks",
       };
     },
@@ -1558,7 +1779,8 @@ OWN.push(
     available: (ctx) => ctx.channel.kind !== "practice",
     run: (ctx, args) => {
       const channel = findChannel(ctx, need(args, "channel"));
-      if (channel.id === ctx.channel.id) throw new ToolError("That's this channel: just write your reply here.");
+      // A tools-only turn (a script on its own) writes no reply, so it can post here.
+      if (channel.id === ctx.channel.id && ctx.wake !== "script") throw new ToolError("That's this channel: just write your reply here.");
       if (channel.kind === "dm") throw new ToolError("For a DM, use message_kinwriter.");
       const text = need(args, "text").trim();
       const title = maybe(args, "new_scene");
@@ -1583,13 +1805,22 @@ OWN.push(
         when: str('When: "in 3 hours", "tomorrow 9am", "thursday 19:00", or a date and time.'),
         note: str("Your note to yourself: what it's for."),
         channel: str("Optional: where to wake up, like #story. Leave out for your usual OOC channel."),
+        script: str("Optional, if you have scripts: one of your scripts to run then instead, as a tools-only turn (no writing). You only wake up if a step fails, to fix it and try again."),
       },
-      ["when", "note"],
+      ["when"],
     ),
     run: (ctx, args) => {
       const where = maybe(args, "channel");
       const channel = where ? findChannel(ctx, where) : null;
-      const wakeup = ctx.store.schedule.add(need(args, "when"), need(args, "note"), channel?.id ?? null);
+      const scriptName = maybe(args, "script");
+      let script: Script | undefined;
+      if (scriptName) {
+        if (!scriptsOn(ctx.store)) throw new ToolError("Scripts are turned off for you (the user can turn them on).");
+        script = findScript(ctx.store, scriptName);
+        if (!script) throw new ToolError(noSuchScript(ctx.store, scriptName));
+      }
+      const note = script ? (maybe(args, "note") ?? "") || `Run my script "${script.name}".` : need(args, "note");
+      const wakeup = ctx.store.schedule.add(need(args, "when"), note, channel?.id ?? null, script?.name ?? null);
       const off = ctx.store.getSettings().wakeups === "off";
       return {
         result: {
@@ -1597,7 +1828,9 @@ OWN.push(
           at: localTime(new Date(wakeup.at)),
           ...(off ? { note: "Heads up: the user has turned wake-ups off (chattiness), so it won't happen unless they turn them back on." } : {}),
         },
-        summary: `scheduled a wake-up for ${localTime(new Date(wakeup.at))}`,
+        summary: script
+          ? `scheduled their script "${script.name}" for ${localTime(new Date(wakeup.at))}`
+          : `scheduled a wake-up for ${localTime(new Date(wakeup.at))}`,
       };
     },
   },
@@ -1606,7 +1839,7 @@ OWN.push(
     description: "See the wake-ups you've set that haven't happened yet, soonest first, with their notes.",
     parameters: object({}),
     run: ({ store }) => ({
-      result: store.schedule.waiting().map((w) => ({ id: `[w${w.id}]`, at: localTime(new Date(w.at)), note: w.note })),
+      result: store.schedule.waiting().map((w) => ({ id: `[w${w.id}]`, at: localTime(new Date(w.at)), note: w.note, ...(w.script ? { script: w.script } : {}) })),
       summary: "looked at their wake-ups",
     }),
   },
@@ -1873,7 +2106,7 @@ OWN.push({
 
 OWN.push({
   name: "set_status",
-  description: 'Set your status, shown under your name in the app, like "reading old notes" or "thinking about the lighthouse". Empty clears it.',
+  description: 'Set your status, shown under your name in the app, like "reading old notes" or "rethinking a villain". Empty clears it.',
   parameters: object({ text: str("Your status, short.") }, ["text"]),
   run: ({ store }, args) => {
     const text = String(args.text ?? "").trim().slice(0, 80);
@@ -1912,6 +2145,214 @@ OWN.push({
 });
 
 /** A draft by its short id. */
+// ------------------------------------------------------------- scripts
+
+/** A step as the model reads it back: its tool, arguments, and checks. */
+const describeStep = (s: Script["steps"][number], i: number) => ({
+  step: i + 1,
+  tool: s.tool,
+  args: s.args,
+  ...(s.expect ? { expect: s.expect } : {}),
+  ...(s.optional ? { optional: true } : {}),
+});
+
+/** A run's report for the model; with `hidePrivate`, for the log (private tools' results left out). */
+function reportView(report: ScriptReport, hidePrivate: boolean) {
+  return {
+    script: report.script,
+    ok: report.ok,
+    ...(report.ok ? {} : { failed_step: report.failedStep, error: report.error, retry: `Fix it, then run_script with "from_step": ${report.failedStep}.` }),
+    steps: report.steps.map((s) => ({
+      step: s.step,
+      tool: s.tool,
+      ok: s.ok,
+      summary: s.summary,
+      result: hidePrivate && isPrivateTool(s.tool) ? "(private)" : s.result,
+    })),
+  };
+}
+
+/**
+ * Run a script's steps exactly as written, in this context (a turn, or a
+ * tools-only turn of its own). Each step is a tool call like any other:
+ * the same permissions, the same limits.
+ */
+export function runScriptSteps(ctx: ToolContext, script: Script, fromStep = 1): Promise<ScriptReport> {
+  return runScript(
+    ctx.store,
+    script,
+    async (step, i) => {
+      const outcome = await runTool(ctx, step.tool, step.args);
+      ctx.logStep?.(script.name, i + 1, step.tool, step.args, outcome);
+      return outcome;
+    },
+    fromStep,
+  );
+}
+
+const scriptsAvailable = (ctx: ToolContext) => scriptsOn(ctx.store) && ctx.mode === "post";
+
+/** A list of script names (a single name as text is fine). */
+function nameList(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return list.map((n) => String(n).trim()).filter(Boolean);
+}
+
+OWN.push(
+  {
+    name: "save_script",
+    description:
+      `Write yourself a script: tool calls in a fixed order, run exactly as written whenever you call run_script (or at a time, with schedule_wakeup's "script"), with no guessing in between. It stops at the first step that fails and tells you which and why, so you can fix it and run it again from there. Each step is {"tool": "...", "args": {...}}, plus optionally "expect" (text the result must contain, or the step counts as failed) and "optional": true (a failure doesn't stop the run). Up to ${STEP_LIMIT} steps. Saving with an existing name replaces that script.`,
+    parameters: object(
+      {
+        name: str('A short name, like "morning tidy".'),
+        steps: {
+          type: "array",
+          description: "The steps, in order.",
+          items: {
+            type: "object",
+            properties: {
+              tool: { type: "string", description: "The tool's name." },
+              args: { type: "object", description: "Its arguments, exactly as you'd call it." },
+              expect: { type: "string", description: "Optional: text its result must contain." },
+              optional: { type: "boolean", description: "Optional: true if a failure here shouldn't stop the run." },
+            },
+            required: ["tool"],
+          },
+        },
+        about: str("Optional: what it's for, in a line."),
+      },
+      ["name", "steps"],
+    ),
+    available: scriptsAvailable,
+    run: ({ store }, args) => {
+      const steps = parseSteps(args.steps, allTools().map((t) => t.name));
+      const { script, replaced } = saveScript(store, need(args, "name"), maybe(args, "about") ?? "", steps);
+      return {
+        result: { saved: script.name, replaced, steps: script.steps.map(describeStep), note: `Run it with run_script, or schedule it with schedule_wakeup's "script".` },
+        summary: `${replaced ? "rewrote" : "wrote"} their script "${script.name}" (${steps.length} step${steps.length === 1 ? "" : "s"})`,
+      };
+    },
+  },
+  {
+    name: "run_script",
+    description:
+      'Run one of your scripts now: every step in order, exactly as saved. You get back each step\'s result; if one fails, it stops there and says which step and why. To try again after fixing it, run it with "from_step" set to the step that failed.',
+    parameters: object(
+      {
+        name: str("The script's name."),
+        from_step: { type: "integer", description: "Optional: start at this step (1 is the first). For a retry after a failure." },
+      },
+      ["name"],
+    ),
+    available: scriptsAvailable,
+    run: async (ctx, args) => {
+      const name = need(args, "name");
+      const script = findScript(ctx.store, name);
+      if (!script) throw new ToolError(noSuchScript(ctx.store, name));
+      const from = args.from_step === undefined || args.from_step === null ? 1 : wholeNumber(args.from_step, "from_step");
+      const report = await runScriptSteps(ctx, script, from);
+      return { ok: report.ok, result: reportView(report, false), logResult: reportView(report, true), summary: reportSummary(report) };
+    },
+  },
+  {
+    name: "list_my_scripts",
+    description: "See your scripts: each one's steps, and how its last run went. With a name, just that one.",
+    parameters: object({ name: str("Optional: one script's name.") }),
+    available: scriptsAvailable,
+    run: ({ store }, args) => {
+      const name = maybe(args, "name");
+      const scripts = name ? [findScript(store, name)] : listScripts(store);
+      if (scripts[0] === undefined && name) throw new ToolError(noSuchScript(store, name));
+      const queue = scriptQueue(store);
+      const list = (scripts as Script[]).map((s) => ({
+          name: s.name,
+          ...(s.about ? { about: s.about } : {}),
+          steps: s.steps.map(describeStep),
+          last_run: s.lastRun ? { at: localTime(new Date(s.lastRun.at)), ok: s.lastRun.ok, ...(s.lastRun.ok ? {} : { failed_step: s.lastRun.failedStep, error: s.lastRun.error }) } : null,
+        }));
+      return {
+        result: name
+          ? list
+          : {
+              scripts: list,
+              queue: queue
+                ? { channel: `#${store.getChannel(queue.channelId).name}`, paused: queue.paused, next: queue.items.map((i) => (i.from > 1 ? `${i.name} (from step ${i.from})` : i.name)) }
+                : null,
+            },
+        summary: name ? `looked at their script "${name}"` : "looked at their scripts",
+      };
+    },
+  },
+  {
+    name: "queue_scripts",
+    description:
+      `Queue scripts to run in order, one per turn, here. You don't need to do anything else: after this turn, another one starts by itself, the first script runs before you're asked anything, and you see its results in that turn, to read and act on (take notes, write, or nothing). Then the next turn runs the next script, and so on until the queue is empty. If a step fails, only that script stops: the queue pauses at that step and the rest of it is kept as it was. Fix the script if it needs it (save_script), then carry on with resume_script_queue (retry, skip it, or put a fix-up script first). Queuing replaces your queue, unless you "add" to the end; an empty list clears it. Up to ${QUEUE_LIMIT} scripts.`,
+    parameters: object(
+      {
+        scripts: { type: "array", items: { type: "string" }, description: 'Script names, in the order to run them, like ["read 1", "read 2", "read 3"].' },
+        add: { type: "boolean", description: "Optional: true to add these to the end of your queue instead of replacing it." },
+      },
+      ["scripts"],
+    ),
+    available: scriptsAvailable,
+    run: (ctx, args) => {
+      const queue = queueScripts(ctx.store, ctx.channel.id, nameList(args.scripts), args.add === true);
+      if (!queue) return { result: { cleared: true }, summary: "cleared their script queue" };
+      if (ctx.turn && !queue.paused) ctx.turn.again = ctx.turn.again ?? "";
+      return {
+        result: { queued: queue.items.map((i) => i.name), note: `After this turn, "${queue.items[0]!.name}" runs at the start of your next one, and you'll see its results there.` },
+        summary: `queued ${queue.items.length} script${queue.items.length === 1 ? "" : "s"} (${queue.items.map((i) => `"${i.name}"`).join(", ")})`,
+      };
+    },
+  },
+  {
+    name: "resume_script_queue",
+    description:
+      "Carry on with a paused script queue after a step failed, without losing the rest of your plan. With no arguments, the script that failed runs again from the step that failed (fix it first with save_script if it needs it). Or: \"skip\" drops that script and goes on to the next; \"from_step\" restarts it from another step (1 for the whole script); \"insert\" runs other scripts first, like a one-off fix-up. Everything queued after it stays as it was. The next script runs at the start of your next turn, which starts by itself.",
+    parameters: object({
+      skip: { type: "boolean", description: "Optional: true to drop the script that failed and go on to the next." },
+      from_step: { type: "integer", description: "Optional: the step to restart the failed script from." },
+      insert: { type: "array", items: { type: "string" }, description: "Optional: scripts to run first, in order, before carrying on." },
+    }),
+    available: scriptsAvailable,
+    run: (ctx, args) => {
+      const queue = resumeScriptQueue(ctx.store, {
+        skip: args.skip === true,
+        fromStep: args.from_step === undefined || args.from_step === null ? undefined : wholeNumber(args.from_step, "from_step"),
+        insert: args.insert === undefined || args.insert === null ? undefined : nameList(args.insert),
+      });
+      if (!queue) return { result: { done: true, note: "Nothing is left in the queue." }, summary: "skipped the last script in their queue" };
+      if (ctx.turn) ctx.turn.again = ctx.turn.again ?? "";
+      const next = queue.items.map((i) => (i.from > 1 ? `${i.name} (from step ${i.from})` : i.name));
+      return { result: { next, note: `"${next[0]}" runs at the start of your next turn.` }, summary: `carried on with their script queue (next: ${next[0]})` };
+    },
+  },
+  {
+    name: "take_another_turn",
+    description:
+      "Take another turn here as soon as this one ends, to carry on with something that needs more than one turn (like reading a long document). This turn still ends as usual: write your reply, or don't. Leave yourself a note on what to do next. A paused script queue carries on too. You can also put this as the last step of a script.",
+    parameters: object({ note: str("Optional: what you'll do next turn, for yourself.") }),
+    available: scriptsAvailable,
+    run: (ctx, args) => {
+      const note = maybe(args, "note") ?? "";
+      if (ctx.turn) ctx.turn.again = note;
+      resumeQueue(ctx.store);
+      return { result: { another_turn: true, note: "Another turn starts as soon as this one ends." }, summary: note ? `asked for another turn ("${snip(note)}")` : "asked for another turn" };
+    },
+  },
+  {
+    name: "delete_script",
+    description: "Delete one of your scripts. Wake-ups set to run it will wake you instead, saying it's gone.",
+    parameters: object({ name: str("The script's name.") }, ["name"]),
+    available: scriptsAvailable,
+    run: ({ store }, args) => {
+      const gone = deleteScript(store, need(args, "name"));
+      return { result: { deleted: gone.name }, summary: `deleted their script "${gone.name}"` };
+    },
+  },
+);
+
 function findDraft(store: Store, id: string) {
   try {
     return store.drafts.find(id);
@@ -1956,3 +2397,10 @@ function selfNote(store: Store, id: string) {
     throw new ToolError(`There's no note "${id}" on your self-page.`);
   }
 }
+
+/**
+ * Every tool name, for tests and the docs. It stays at the end of the file:
+ * INSTRUMENTS and OWN are filled by the push() calls above, so built any
+ * earlier it would miss tools.
+ */
+export const TOOL_NAMES = allTools().map((t) => t.name);

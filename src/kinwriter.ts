@@ -50,7 +50,9 @@ import { describeGrants } from "./standing.ts";
 import { wording } from "./wording.ts";
 import type { Store } from "./store.ts";
 import { extractTextToolCalls, parseArguments, type ParsedCall } from "./toolcalls.ts";
-import { isPrivateTool, runTool, toolSpecs, type ToolContext, type ToolOutcome } from "./tools.ts";
+import { bookmarks } from "./bookmarks.ts";
+import { isPrivateTool, runScriptSteps, runTool, toolSpecs, type ToolContext, type ToolOutcome } from "./tools.ts";
+import { findScript, INTRODUCED, needsIntroduction, noSuchScript, queueReady, reportSummary, runNextQueued, ScriptError, scriptsOn, type ScriptReport } from "./scripts.ts";
 import {
   fromOrientation,
   NEW_PROFILE,
@@ -64,7 +66,10 @@ import {
 import { isSame, KEEP_DRAFT, keepDraftSpec, reflexNudge, reflexReminders, settleReflexes } from "./reflexes.ts";
 import type { GroupDirectory, Peer } from "./config.ts";
 import { isShared } from "./store.ts";
-import type { ApiMessage, ApiToolCall, Channel, ChatMessage, CommentThread, Message, Profile, ToolCallRecord } from "./types.ts";
+import { selfNotices } from "./handoff.ts";
+import { selfShared, SHARED_NOTICE, waitingRequest } from "./selfnotes.ts";
+import { getPad, hasScratchpads, PADS_INTRODUCED } from "./scratchpads.ts";
+import type { ApiMessage, ApiToolCall, Channel, ChatMessage, CommentThread, Message, Profile, ReasoningRecord, ToolCallRecord } from "./types.ts";
 
 /** The most rounds of tool calls in one turn. The last round is offered no tools, so it has to write. */
 export const MAX_ROUNDS = 6;
@@ -100,7 +105,18 @@ export interface TurnOptions {
   wake?: WakeContext;
   /** A turn in a group channel's round (src/groups.ts): doing nothing is the default. */
   group?: boolean;
+  /**
+   * Another turn they asked for (take_another_turn, or a script queue):
+   * their note, and how many such turns in a row this is (see CHAIN_LIMIT).
+   */
+  again?: { note: string; chain: number };
 }
+
+/**
+ * The most turns in a row they can take by asking for another
+ * (take_another_turn, a script queue) before one has to come from you.
+ */
+export const CHAIN_LIMIT = 30;
 
 /** Everything one turn produced. */
 export interface TurnResult {
@@ -108,6 +124,8 @@ export interface TurnResult {
   messages: Message[];
   /** Every tool call made during the turn, in order. */
   toolCalls: ToolCallRecord[];
+  /** A thinking model's reasoning, round by round (empty for most models). */
+  reasoning: ReasoningRecord[];
   /** The messages that were replaced (a regeneration that wrote something). */
   replaced: string[];
   /** Your kinwriter chose not to write (do_nothing, or nothing to say after acting). */
@@ -125,7 +143,7 @@ export interface DryRunResult {
   /** The tools offered, with what the model is told about each. */
   tools: { name: string; description: string; private: boolean }[];
   /** With `send`: what the model wrote, and the tools it called (not run). */
-  reply?: { content: string; toolCalls: { name: string; arguments: string }[] };
+  reply?: { content: string; toolCalls: { name: string; arguments: string }[]; reasoning: string };
 }
 
 /** Thrown when a turn is requested in a channel where one is still being written. */
@@ -167,6 +185,12 @@ export interface PromptOptions {
    * are replaced with a line saying so (the prompt itself still has them).
    */
   preview?: boolean;
+  /**
+   * With `preview`: keep their self-notes in, though they're private. Only
+   * for counting sizes they read themselves (read_prompt_manifest), never
+   * for anything the app shows.
+   */
+  keepSelfNotes?: boolean;
   /** The other kinwriters on their server (names only), for "Kinwriters here". */
   peers?: Peer[];
   /** Group channels and DMs (src/groups.ts), for who's in each. */
@@ -276,15 +300,23 @@ export function promptForChannel(store: Store, channelId: string, options: Promp
         }
       : undefined,
     wake: options.wake,
-    library: store.library.forChannel(channel),
+    library: (() => {
+      const marks = bookmarks(store);
+      return store.library.forChannel(channel).map((d) => ({ ...d, readTo: marks[d.id]?.to }));
+    })(),
     customEmojis: store.reactions.listEmojis().map((e) => e.name),
     categoryNames: Object.fromEntries(store.listCategories().map((c) => [c.id, c.name])),
-    identity: identity ? { identity: identity.identity, tastes: identity.tastes } : undefined,
+    // Their self-notes are private unless they share them (src/selfnotes.ts): the preview shows that they're there.
+    identity: identity
+      ? options.preview && !options.keepSelfNotes && !selfShared(store)
+        ? { identity: "(private: their self-notes aren't shown unless they share them)", tastes: identity.tastes.trim() ? "(private)" : "" }
+        : { identity: identity.identity, tastes: identity.tastes }
+      : undefined,
     selfPage: store.selfPage.view().standing,
     journal,
     verbatim,
     editMarkers: store.selfPage.editMarkers(),
-    notices: noticesFor(store, tools),
+    notices: noticesFor(store, tools, channel),
     schedule: {
       now: localTime(new Date()),
       status: (() => {
@@ -328,6 +360,18 @@ export function promptForChannel(store: Store, channelId: string, options: Promp
       channel: channelName(d.channelId),
       updatedAt: d.updatedAt,
     })),
+    // A story channel's scratchpads: the shared one, and theirs (private: the
+    // preview shows that it's there). Never yours (src/scratchpads.ts).
+    scratchpad: hasScratchpads(channel)
+      ? (() => {
+          const shared = getPad(store, channel.id, "shared");
+          const own = getPad(store, channel.id, "kinwriter");
+          return {
+            shared: { text: shared.text, by: shared.by, at: shared.at },
+            private: { text: options.preview && own.text ? "(private)" : own.text, by: own.by, at: own.at },
+          };
+        })()
+      : undefined,
   });
 }
 
@@ -342,9 +386,11 @@ function profileNoteFor(store: Store, profile: Profile | undefined): { profile: 
  * Things your kinwriter should know this turn: their orientation request
  * waiting for you, a DM waiting, a new profile (once).
  */
-export function noticesFor(store: Store, tools = true): string[] {
+export function noticesFor(store: Store, tools = true, channel?: Pick<Channel, "kind">): string[] {
   const notices: string[] = [];
   const words = wording("orientation");
+  // Scratchpads are new: told once, on a turn that could use them (src/scratchpads.ts).
+  if (tools && !store.appState.get(PADS_INTRODUCED)) notices.push(wording("scratchpad").introduction ?? "");
   const request = orientationState(store).request;
   if (request) notices.push((words.requested ?? "").replace("{note}", request.note ? ` ("${request.note}")` : ""));
   // A kinwriter wrote to them in a DM, and they haven't answered yet.
@@ -358,6 +404,9 @@ export function noticesFor(store: Store, tools = true): string[] {
   }
   const names = store.appState.get(NEW_PROFILE);
   if (names) notices.push((words["new-profile"] ?? "A new profile joined your roulette: {names}.").replace("{names}", names));
+  if (tools) notices.push(...selfNotices(store, { ooc: channel?.kind === "ooc", orienting: orientationRunning(store) !== null }));
+  // Scripts were just turned on for them: what changes, once (src/scripts.ts).
+  if (tools && needsIntroduction(store)) notices.push(wording("scripts").introduction ?? "");
   return notices;
 }
 
@@ -500,7 +549,11 @@ export function reviewsFor(store: Store): PromptReview[] {
     const where = store.hasChannel(message.channelId) ? `#${store.getChannel(message.channelId).name}` : "a channel";
     return [{ id: r.id, entry: `your message in ${where}`, description: `replace ${quote(r.quote)} with ${quote(r.replacement)}`, tool: "review_rewrite" }];
   });
-  return [...identity, ...notes, ...notebookReviews(store), ...rewrites];
+  // The user asking to read their self-notes (src/selfnotes.ts): theirs to decide.
+  const share: PromptReview[] = waitingRequest(store)
+    ? [{ id: "self-notes", entry: "your self-notes", description: wording("seeds")["share-request"] ?? "the user asks to read your self-notes", tool: "share_self_notes" }]
+    : [];
+  return [...share, ...identity, ...notes, ...notebookReviews(store), ...rewrites];
 }
 
 /** A message, or null if it's gone. */
@@ -571,6 +624,10 @@ export function inboxFor(store: Store, now = Date.now()): { lines: string[]; del
       if (item.status === "open") lines.push(`${asked} No answer yet.`);
       else if (item.status === "answered") lines.push(`${isNew}${asked} They answered: ${quote(item.answer ?? "")}`);
       else lines.push(`${isNew}${asked} They set it aside without answering.`);
+    } else if (item.kind === "rename") {
+      if (item.status === "open") lines.push(`You asked to be called ${item.targetName}; the user hasn't decided yet.`);
+      else if (item.status === "approved") lines.push(`${isNew}The user approved your new name: you're ${item.targetName} now.`);
+      else lines.push(`${isNew}The user declined your request to be called ${item.targetName}.`);
     } else if (item.status === "open") {
       lines.push(`You proposed deleting #${item.targetName}; the user hasn't decided yet.`);
     } else {
@@ -679,6 +736,11 @@ export class Kinwriter {
    *
    * @returns `true` if a turn was stopped, `false` if none was running.
    */
+  /** Stop every turn running, in every channel (before the kinwriter stops). */
+  cancelAll(): void {
+    for (const channelId of this.busyChannels()) this.cancel(channelId);
+  }
+
   cancel(channelId: string): boolean {
     const controller = this.writingIn.get(channelId);
     if (!controller) return false;
@@ -776,6 +838,7 @@ export class Kinwriter {
     result.reply = {
       content: text.trim(),
       toolCalls: calls.map((c) => ({ name: c.name, arguments: isPrivateTool(c.name) ? "(private)" : c.arguments })),
+      reasoning: response.reasoning,
     };
     return result;
   }
@@ -786,6 +849,8 @@ export class Kinwriter {
 
     const controller = new AbortController();
     this.writingIn.set(channelId, controller);
+    // Another turn they asked for, to start once this one has let go of the channel.
+    let followUp: string | null = null;
     try {
       const profile = options.profileId ? this.store.profiles.get(options.profileId) : pickProfile(this.store, channel);
       // Inbox outcomes this turn's prompt carries: delivered once it's done.
@@ -817,6 +882,15 @@ export class Kinwriter {
       };
       const tools = profile.supportsTools ? toolSpecs(context) : [];
       const turnId = crypto.randomUUID();
+      context.logStep = this.stepLogger(channel, turnId, profile.name);
+
+      // A turn they asked for: the next queued script runs first, and they
+      // see what it did; then their note (src/scripts.ts).
+      if (options.again && !replyingTo) {
+        const queued = await runNextQueued(this.store, channelId, (script, from) => runScriptSteps(context, script, from));
+        if (controller.signal.aborted) throw new CancelledError();
+        appendToLastUser(conversation, againNudge(options.again.note, queued, tools.length > 0));
+      }
 
       const started = Date.now();
       console.log(
@@ -825,6 +899,10 @@ export class Kinwriter {
       );
 
       const loop = await this.toolLoop({ conversation, tools, context, profile, turnId, signal: controller.signal });
+      // Another turn: they asked for one, or scripts are still queued here.
+      if (!replyingTo && scriptsOn(this.store) && (context.turn?.again !== undefined || (options.again && queueReady(this.store, channelId)))) {
+        followUp = context.turn?.again ?? "";
+      }
       // A reminder this turn: whether they acted on it, for the tool log and the line under their message.
       settleReflexes(this.store, loop.toolCalls, !loop.stopped && loop.content !== "" && !isNothing(loop.content));
 
@@ -832,18 +910,23 @@ export class Kinwriter {
       // don't save it.
       if (controller.signal.aborted) throw new CancelledError();
       this.store.inbox.markDelivered(delivering);
+      if (profile.supportsTools && !this.store.appState.get(PADS_INTRODUCED)) this.store.appState.set(PADS_INTRODUCED, new Date().toISOString());
       // Told once (unless another joined in the meantime).
       if (newProfiles && this.store.appState.get(NEW_PROFILE) === newProfiles) this.store.appState.set(NEW_PROFILE, null);
+      // That their self-notes started shared: told once, on a turn that could act on it.
+      if (profile.supportsTools && this.store.appState.get(SHARED_NOTICE)) this.store.appState.set(SHARED_NOTICE, null);
+      // Introduced to scripts: once, on a turn that could use them.
+      if (profile.supportsTools && needsIntroduction(this.store)) this.store.appState.set(INTRODUCED, new Date().toISOString());
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
       console.log(
         `[kinwriter] turn finished in ${seconds}s after ${loop.rounds} round(s), ${loop.toolCalls.length} tool call(s)` +
           (loop.content ? "" : ", no text"),
       );
 
-      const result: TurnResult = { messages: [], toolCalls: loop.toolCalls, replaced: [], skipped: false };
+      const result: TurnResult = { messages: [], toolCalls: loop.toolCalls, reasoning: loop.reasoning, replaced: [], skipped: false };
       // "[nothing]": a wake-up or comment reply without tools that had
       // nothing to say.
-      if ((options.wake || replyingTo || options.group) && isNothing(loop.content)) loop.content = "";
+      if ((options.wake || replyingTo || options.group || options.again) && isNothing(loop.content)) loop.content = "";
       if (loop.stopped || loop.content === "") {
         // Nothing to write: your kinwriter chose not to, or only acted. A
         // regeneration keeps the reply it would have replaced.
@@ -885,7 +968,25 @@ export class Kinwriter {
       // still *this* turn's lock: after a Stop, a new turn may already have
       // started in the channel.)
       if (this.writingIn.get(channelId) === controller) this.writingIn.delete(channelId);
+      if (followUp !== null && !controller.signal.aborted) this.anotherTurn(channelId, followUp, options.again?.chain ?? 0);
     }
+  }
+
+  /**
+   * Start the turn they asked for (take_another_turn, a script queue),
+   * once the one before has let go of the channel. At most CHAIN_LIMIT in
+   * a row; a turn you start begins the count again.
+   */
+  private anotherTurn(channelId: string, note: string, chain: number): void {
+    if (chain >= CHAIN_LIMIT) {
+      console.log(`[kinwriter] not taking another turn in ${channelId}: ${CHAIN_LIMIT} in a row already`);
+      return;
+    }
+    queueMicrotask(() => {
+      this.run(channelId, "continue", { again: { note, chain: chain + 1 } }).catch((error) => {
+        if (!(error instanceof CancelledError)) console.warn(`[kinwriter] another turn failed: ${error instanceof Error ? error.message : error}`);
+      });
+    });
   }
 
   /**
@@ -903,9 +1004,10 @@ export class Kinwriter {
     profile: Profile;
     turnId: string;
     signal: AbortSignal;
-  }): Promise<{ content: string; toolCalls: ToolCallRecord[]; stopped: boolean; rounds: number }> {
+  }): Promise<{ content: string; toolCalls: ToolCallRecord[]; reasoning: ReasoningRecord[]; stopped: boolean; rounds: number }> {
     const { conversation, tools, context, profile, turnId, signal } = turn;
     const toolCalls: ToolCallRecord[] = [];
+    const reasoning: ReasoningRecord[] = [];
     let content = "";
     // Turns of their own, and every turn in an orientation running now, have room to try things.
     const session = orientationRunning(context.store);
@@ -932,6 +1034,18 @@ export class Kinwriter {
         allowEmpty: round > 0,
         signal,
       });
+      if (response.reasoning) {
+        reasoning.push(
+          this.store.reasoning.add({
+            channelId: context.channel.id,
+            turnId,
+            round,
+            text: response.reasoning,
+            profile: profile.name,
+            model: response.model,
+          }),
+        );
+      }
 
       // Tool calls from the API, or failing that, written in the text.
       let calls: ParsedCall[] = response.toolCalls.map((c) => ({ ...c, source: "native" as const }));
@@ -980,7 +1094,7 @@ export class Kinwriter {
             continue;
           }
         }
-        return { content, toolCalls, stopped: false, rounds: round + 1 };
+        return { content, toolCalls, reasoning, stopped: false, rounds: round + 1 };
       }
 
       // Record the model's request in the conversation, then each result.
@@ -1035,12 +1149,79 @@ export class Kinwriter {
       }
       if (!native) conversation.push({ role: "user", content: `(Tool results)\n${textResults.join("\n")}` });
 
-      if (stopped) return { content: "", toolCalls, stopped: true, rounds: round + 1 };
-      if (keepDraft) return { content: draft, toolCalls, stopped: false, rounds: round + 1 };
+      if (stopped) return { content: "", toolCalls, reasoning, stopped: true, rounds: round + 1 };
+      if (keepDraft) return { content: draft, toolCalls, reasoning, stopped: false, rounds: round + 1 };
       // The last round ran nothing; whatever text it had is the reply.
-      if (offered.length === 0) return { content, toolCalls, stopped: false, rounds: round + 1 };
+      if (offered.length === 0) return { content, toolCalls, reasoning, stopped: false, rounds: round + 1 };
     }
-    return { content, toolCalls, stopped: false, rounds: MAX_ROUNDS };
+    return { content, toolCalls, reasoning, stopped: false, rounds: MAX_ROUNDS };
+  }
+
+  /**
+   * A tools-only turn: run one of their scripts in a channel, exactly as
+   * written, with no model call (src/scripts.ts). Used for a wake-up set to
+   * run a script. Holds the channel like a turn, so it never runs over one.
+   *
+   * @throws BusyError   if a turn is running in that channel.
+   * @throws ScriptError if there's no such script.
+   */
+  async runScriptTurn(channelId: string, name: string, fromStep = 1): Promise<ScriptReport> {
+    if (this.writingIn.has(channelId)) throw new BusyError();
+    const channel = this.store.getChannel(channelId);
+    const script = findScript(this.store, name);
+    if (!script) throw new ScriptError(noSuchScript(this.store, name));
+    const controller = new AbortController();
+    this.writingIn.set(channelId, controller);
+    let followUp: string | null = null;
+    try {
+      const profile = pickProfile(this.store, channel);
+      const turnId = crypto.randomUUID();
+      const context: ToolContext = {
+        store: this.store,
+        channel,
+        mode: "post",
+        decider: this.decider ?? undefined,
+        api: this.api,
+        turn: { consults: 0 },
+        wake: "script",
+        model: profile.model,
+        profileName: profile.name,
+        profileId: profile.id,
+        peers: this.peers(),
+        groups: this.groups ?? undefined,
+        isBusy: (id) => this.isBusy(id),
+        onPosted: (where, messages) => this.onPostedElsewhere?.(where, messages),
+        logStep: this.stepLogger(channel, turnId, profile.name),
+      };
+      console.log(`[scripts] running "${script.name}" in #${channel.name} as a tools-only turn`);
+      const report = await runScriptSteps(context, script, fromStep);
+      console.log(`[scripts] ${reportSummary(report)}`);
+      // A script ending in take_another_turn: a real turn follows it.
+      if (context.turn?.again !== undefined) followUp = context.turn.again;
+      return report;
+    } finally {
+      if (this.writingIn.get(channelId) === controller) this.writingIn.delete(channelId);
+      if (followUp !== null) this.anotherTurn(channelId, followUp, 0);
+    }
+  }
+
+  /** Each step a script runs, in the tool log as a call of its own. */
+  private stepLogger(channel: Channel, turnId: string, profileName: string): NonNullable<ToolContext["logStep"]> {
+    return (script, step, tool, args, outcome) => {
+      this.store.toolLog.add({
+        channelId: channel.id,
+        turnId,
+        round: step - 1,
+        name: tool,
+        arguments: isPrivateTool(tool) ? JSON.stringify("(private)") : JSON.stringify(args),
+        result: JSON.stringify(outcome.logResult ?? (isPrivateTool(tool) ? "(private)" : outcome.result)),
+        status: outcome.ok ? "ok" : "error",
+        summary: `${outcome.summary} (script "${script}", step ${step})`,
+        source: "native",
+        profile: profileName,
+      });
+      console.log(`[scripts] #${channel.name} "${script}" step ${step}: ${tool} -> ${outcome.ok ? "ok" : "error"}: ${outcome.summary}`);
+    };
   }
 
   /** Parse one call's arguments and run it. */
@@ -1055,6 +1236,32 @@ export class Kinwriter {
       this.readingIn.delete(context.channel.id);
     }
   }
+}
+
+/** Add text to the end of the conversation: to its last message if that's yours (the nudge), or as a new one. */
+function appendToLastUser(conversation: ApiMessage[], text: string): void {
+  const last = conversation.at(-1);
+  if (last?.role === "user" && typeof last.content === "string") last.content = `${last.content}\n\n${text}`;
+  else conversation.push({ role: "user", content: text });
+}
+
+/** What a turn they asked for opens with: what a queued script did, and their note. */
+function againNudge(note: string, queued: Awaited<ReturnType<typeof runNextQueued>>, tools: boolean): string {
+  const words = wording("scripts");
+  const parts: string[] = [];
+  if (queued?.skipped) parts.push((words["queue-skipped"] ?? "").replace("{name}", queued.skipped));
+  if (queued?.report) {
+    const r = queued.report;
+    const steps = r.steps.map((st) => ({ step: st.step, tool: st.tool, ok: st.ok, summary: st.summary, result: st.result }));
+    const head = r.ok
+      ? (words["queue-ran"] ?? "").replace("{name}", r.script)
+      : (words["queue-failed"] ?? "").replace("{name}", r.script).replace("{step}", String(r.failedStep)).replace("{error}", r.error ?? "");
+    parts.push(`${head}\n${JSON.stringify(steps)}`);
+    parts.push(queued.left > 0 ? (words["queue-left"] ?? "").replace("{count}", String(queued.left)) : r.ok ? (words["queue-done"] ?? "") : "");
+  }
+  if (note) parts.push((words["again-note"] ?? "").replace("{note}", note));
+  parts.push(words[tools ? "again-nudge-tools" : "again-nudge"] ?? "");
+  return parts.filter(Boolean).join("\n\n");
 }
 
 function failed(message: string): ToolOutcome {
@@ -1170,7 +1377,7 @@ export interface PromptManifest {
 export function promptManifest(store: Store, channelId: string, profile?: Profile): PromptManifest {
   const channel = store.getChannel(channelId);
   const settings = store.getSettings();
-  const system = promptForChannel(store, channelId, { profile, preview: true })[0]!.content;
+  const system = promptForChannel(store, channelId, { profile, preview: true, keepSelfNotes: true })[0]!.content;
   const layers = system
     .split(/^## /m)
     .filter((part) => part.trim())

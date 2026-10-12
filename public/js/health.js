@@ -10,6 +10,7 @@
  */
 
 import { $, api, state } from "./core.js";
+import "./datafolders.js";
 
 const details = $("self-health");
 const body = $("self-health-body");
@@ -110,6 +111,10 @@ async function openDeveloper() {
         [`${e.name} (${e.kind})`, ...e.fields.filter((f) => f.value).map((f) => `${f.label}: ${f.value}`), e.notes ? `Notes: ${e.notes}` : ""].filter(Boolean).join("\n"),
       ),
       section("Hidden DMs", data.hiddenDms, (d) => `#${d.channel}\n${d.messages.map((m) => `${m.from}: ${m.content}`).join("\n")}`),
+      section("Private scratchpads", data.privateScratchpads ?? [], (p) => `#${p.channel}${p.updatedAt ? ` (${p.updatedAt.slice(0, 16)})` : ""}\n${p.text}`),
+      section("Reasoning (newest first)", data.reasoning ?? [], (r) =>
+        `${r.createdAt.slice(0, 16)}${r.channel ? ` #${r.channel}` : ""} · round ${r.round + 1}${r.model ? ` · ${r.model}` : ""}\n${r.text}`,
+      ),
       section("Orientation invite note", data.invitationNote ? [data.invitationNote] : [], (n) => n),
     );
   } catch (error) {

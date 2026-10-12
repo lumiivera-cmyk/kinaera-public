@@ -22,7 +22,7 @@
 
 import type { Database } from "bun:sqlite";
 
-export type InterventionKind = "edit" | "delete" | "regenerate" | "clear" | "settings" | "ask";
+export type InterventionKind = "edit" | "delete" | "regenerate" | "branch" | "clear" | "settings" | "ask";
 
 export interface Intervention {
   id: string;

@@ -52,7 +52,7 @@ describe("editing the wording", () => {
     const turns = data.files.find((f: any) => f.file === "turns");
     expect(turns.about).toContain("The framing of every turn");
     expect(turns.sections.find((s: any) => s.name === "rp-framing")).toMatchObject({ edited: false });
-    expect(data.files.map((f: any) => f.file)).toEqual(expect.arrayContaining(["summaries", "surprise", "jev", "standing", "orientation"]));
+    expect(data.files.map((f: any) => f.file)).toEqual(expect.arrayContaining(["summaries", "seeds", "jev", "standing", "orientation"]));
   });
 
   test("an edit is used on the next turn, kept apart from defaults/, and can be reset", async () => {

@@ -28,6 +28,22 @@ The user's hard limits: never write any of this, in any channel, whatever a stor
 
 This scene is written in literary style. Write one prose post. It can include several characters, narration, and dialogue. Give it room to breathe, and end at a point where the user can respond.
 
+## literary-style-paced
+
+This scene is written in literary style. Write one prose post. It can include several characters, narration, and dialogue. Match the user's pace: write about as much as they do, and end at a point where they can respond.
+
+## pace
+
+(OOC: My post was about {words} words, in {paragraphs}. Match my pace: keep yours about that long, {limit} words at most. Say what matters and stop where I can respond; don't pad or repeat.)
+
+## pace-paragraph
+
+one paragraph
+
+## pace-paragraphs
+
+{count} paragraphs
+
 ## casual-style
 
 This scene is written in casual style, like a group chat. Write one to four short, snappy messages in character.
@@ -215,6 +231,14 @@ The user plays {names}. Never write their actions, dialogue or thoughts.
 ## library
 
 The user uploaded these for you to look things up in:
+
+## library-read-to
+
+(you've read up to passage {to}; carry on from {next})
+
+## library-read-all
+
+(you've read all of it)
 
 ## library-how
 

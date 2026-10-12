@@ -107,7 +107,7 @@ describe("regenerating keeps the old reply as an alternate", () => {
     const { data } = await call("POST", `/api/channels/${story.id}/regenerate`, {});
     expect(app.store.getMessages(story.id).map((m) => m.content)).toEqual(["I knock.", "Third reply."]);
     const newest = data.kinwriterMessages[0];
-    expect(newest.alternates).toBe(1);
+    expect(newest.alternates).toBe(2);
     const history = app.store.history(newest.id);
     expect(history.alternates.map((m) => m.content)).toEqual(["First reply.", "Second reply."]);
     // The prompt for the regeneration never saw the reply it replaced.
@@ -135,11 +135,9 @@ describe("the intervention log", () => {
   test("records changes to who your kinwriter is and how they write, not other settings", async () => {
     await call("PUT", "/api/settings", { friendPrompt: "You are Arlo, a lighthouse romantic.", literaryPrompt: "Write long.", historyLimit: 30 });
     const { data } = await call("GET", "/api/interventions");
-    // Their identity is theirs: your change is a suggestion (src/identity.ts).
-    expect(data.interventions.map((e: { summary: string }) => e.summary)).toEqual([
-      "The user changed how you write in literary scenes.",
-      "The user suggested a change to your identity.",
-    ]);
+    // Their self-notes are theirs (src/selfnotes.ts): private, so a change to them from here is ignored.
+    expect(data.interventions.map((e: { summary: string }) => e.summary)).toEqual(["The user changed how you write in literary scenes."]);
+    expect(app.store.identity.current()!.identity).not.toContain("lighthouse");
   });
 
   test("clearing a channel with your kinwriter's messages in it", async () => {

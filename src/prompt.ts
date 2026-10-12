@@ -172,10 +172,16 @@ export function describeReactions(messages: Message[], customEmojis: string[]): 
  * What's in the reference library: titles and descriptions only. The texts
  * themselves are read with tools, when a detail is worth looking up.
  */
-export function describeLibrary(docs: { title: string; description: string; passages: number }[]): string | null {
+export function describeLibrary(docs: { title: string; description: string; passages: number; readTo?: number }[]): string | null {
   if (docs.length === 0) return null;
-  const lines = docs.map((d) => `- "${d.title}"${d.description ? `: ${d.description}` : ""} (${d.passages} passage${d.passages === 1 ? "" : "s"})`);
   const words = turns();
+  const lines = docs.map((d) => {
+    const line = `- "${d.title}"${d.description ? `: ${d.description}` : ""} (${d.passages} passage${d.passages === 1 ? "" : "s"})`;
+    // Their bookmark (src/bookmarks.ts): where a long read carries on.
+    if (!d.readTo) return line;
+    const mark = d.readTo >= d.passages ? (words["library-read-all"] ?? "") : (words["library-read-to"] ?? "").replace("{to}", String(d.readTo)).replace("{next}", String(d.readTo + 1));
+    return mark ? `${line} ${mark}` : line;
+  });
   return [words.library ?? "", ...lines, words["library-how"] ?? ""].join("\n");
 }
 
@@ -237,14 +243,48 @@ export function wakeNudge(tools: boolean): string {
  * Layer 2: how to write in each channel mode. `characterName` is the
  * character your kinwriter plays, used to show the casual bubble format.
  */
-export function modeInstructions(mode: ChannelMode, characterName: string): string {
+export function modeInstructions(mode: ChannelMode, characterName: string, paced = false): string {
   const words = turns();
-  if (mode === "literary") return words["literary-style"] ?? "";
+  if (mode === "literary") return words[paced ? "literary-style-paced" : "literary-style"] ?? "";
   return [
     words["casual-style"] ?? "",
     characterName ? fill(words["casual-lines"] ?? "", { name: characterName }) : (words["casual-lines-plain"] ?? ""),
     words["casual-rules"] ?? "",
   ].join("\n\n");
+}
+
+/**
+ * Matching the user's pace (the matchPace setting): a note after their
+ * latest post saying how long it was, so the reply comes out about as long.
+ * It goes last, next to their post, where models follow it best: a length
+ * rule up in the system prompt alone is easy to drift from. `post` is their
+ * latest post (consecutive posts joined); `null` when there's nothing to match.
+ */
+export function paceNote(post: string): string | null {
+  const text = post.trim();
+  if (text === "") return null;
+  const count = text.split(/\s+/).length;
+  const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim() !== "").length;
+  const round = (n: number) => Math.max(10, Math.round(n / 10) * 10);
+  const words = turns();
+  return fill(words.pace ?? "", {
+    words: String(count < 20 ? count : round(count)),
+    paragraphs: paragraphs === 1 ? (words["pace-paragraph"] ?? "") : fill(words["pace-paragraphs"] ?? "", { count: String(paragraphs) }),
+    // Room to answer a short post properly, and at most half again a long one.
+    limit: String(Math.max(60, round(count * 1.5))),
+  });
+}
+
+/** The user's latest post in `messages`: their last run of messages, joined. */
+function latestUserPost(messages: Message[]): string {
+  const run: string[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.kind === "scene_break") break;
+    if (message.author === "user") run.unshift(message.content);
+    else if (run.length > 0) break;
+  }
+  return run.join("\n\n");
 }
 
 /**
@@ -323,7 +363,7 @@ export interface PromptInput {
   /** A wake-up turn (stage 8): why your kinwriter is taking a turn on their own. */
   wake?: WakeContext;
   /** The reference library documents usable here (only mentioned with tools, which read them). */
-  library?: { title: string; description: string; passages: number }[];
+  library?: { title: string; description: string; passages: number; readTo?: number }[];
   /** Custom emoji names (without colons), for reactions (only mentioned with tools). */
   customEmojis?: string[];
   /** Channel category names by id, for the OOC channel list. */
@@ -360,6 +400,16 @@ export interface PromptInput {
   drafts?: { id: string; title: string; channel: string | null; updatedAt: string }[];
   /** In an orientation running in this channel: its guide (src/orientation.ts). */
   orientation?: string | null;
+  /** In a story channel: its shared scratchpad, and their private one (src/scratchpads.ts). Never the user's own. */
+  scratchpad?: { shared: PromptPad; private: PromptPad };
+}
+
+/** A scratchpad as the prompt carries it. */
+export interface PromptPad {
+  text: string;
+  /** Who last changed it ("user" or "friend"), and when; null if never written. */
+  by: string | null;
+  at: string | null;
 }
 
 /** Layer 5: the summaries of what came before the recent messages. */
@@ -437,9 +487,12 @@ export function buildPromptStack({
   shared,
   permissions,
   orientation,
+  scratchpad,
 }: PromptInput): ChatMessage[] {
   const isRp = channel.kind === "rp";
   const isPractice = channel.kind === "practice";
+  // Matching the user's pace: literary RP scenes only (casual and OOC are short already).
+  const paced = isRp && channel.mode === "literary" && settings.matchPace;
   const who = identity ?? { identity: settings.friendPrompt, tastes: "" };
   const pinned = notebook?.pinned ?? [];
   const characterNames = (player: Player) =>
@@ -455,7 +508,8 @@ export function buildPromptStack({
       title: "Who you are",
       content: joinNonEmpty([
         isRp ? rpFraming() : oocFraming(),
-        who.identity,
+        // Their self-notes may have headings of their own (a seed's, or theirs): kept under this layer's.
+        who.identity.replace(/^#{1,2}(?=\s)/gm, "###"),
         who.tastes.trim() ? `Your tastes:\n${who.tastes.trim()}` : "",
       ]),
     },
@@ -500,7 +554,7 @@ export function buildPromptStack({
     {
       title: isRp ? "Style" : "How you talk here",
       content: joinNonEmpty([
-        isRp ? modeInstructions(channel.mode, yourCharacters[0] ?? sharedCharacters[0] ?? "") : "",
+        isRp ? modeInstructions(channel.mode, yourCharacters[0] ?? sharedCharacters[0] ?? "", paced) : "",
         channelPrompt(settings, channel),
         !isRp && !isPractice && settings.oocBubbles ? textingStyle() : "",
       ]),
@@ -512,6 +566,8 @@ export function buildPromptStack({
     { title: "Lore", content: isRp ? describeEntries(pinned.filter((p) => p.entry.kind === "lore")) : null },
     { title: "Linked notes", content: isRp ? describeEntries(notebook?.linked ?? []) : null },
     { title: "Also in the notebook", content: isRp ? describeNotebookIndex(notebookIndex ?? []) : null },
+    // Loose notes for this storyline, kept out of the notebook (src/scratchpads.ts).
+    { title: "Scratchpad", content: isRp ? describeScratchpad(scratchpad, tools ?? false) : null },
     {
       title: "Whose characters are whose",
       content: isRp ? castRules(yourCharacters, sharedCharacters, userCharacters) : null,
@@ -589,9 +645,14 @@ export function buildPromptStack({
     // The conversation ends on a scene break (already shown as an OOC
     // line): ask for the new scene's opening.
     last!.content += `\n\n${newSceneNudge()}`;
-  } else if (!last || last.role !== "user") {
-    const nudge = nudges(channel.kind);
-    history.push({ role: "user", content: last ? nudge.continue : nudge.opening });
+  } else {
+    if (!last || last.role !== "user") {
+      const nudge = nudges(channel.kind);
+      history.push({ role: "user", content: last ? nudge.continue : nudge.opening });
+    }
+    // Their pace: how long their latest post was, right after it (or the nudge).
+    const pace = paced ? paceNote(latestUserPost(messages.slice(start))) : null;
+    if (pace) history.at(-1)!.content += `\n\n${pace}`;
   }
 
   return [system, ...history];
@@ -637,6 +698,8 @@ export function standingNotes(tools: boolean, roleplay = false, reflexes = false
     roleplay && tools ? wording("time").declining : undefined,
     tools ? notes.history : notes["history-no-tools"],
     tools ? notes["tools-visible"] : undefined,
+    // A thinking model's reasoning is kept and shown (src/activity.ts).
+    notes.reasoning,
     tools ? notes.identity : undefined,
     tools ? notes.journal : undefined,
     // The developer panel (src/developer.ts), disclosed so "private" stays true.
@@ -743,6 +806,37 @@ export function describeDrafts(drafts: PromptInput["drafts"]): string | null {
     wording("time").drafts ?? "",
     ...drafts.map((d) => `- [${d.id.slice(0, 6)}] ${d.title || "(untitled)"}${d.channel ? ` (for #${d.channel})` : ""}`),
   ].join("\n");
+}
+
+/**
+ * "Scratchpad": the shared pad and their private one, in full. Without
+ * tools, only when there's something in them (they can't write them).
+ */
+export function describeScratchpad(pads: PromptInput["scratchpad"], tools: boolean, now = Date.now()): string | null {
+  if (!pads || (!tools && !pads.shared.text && !pads.private.text)) return null;
+  const words = wording("scratchpad");
+  const changed = (pad: PromptPad) =>
+    pad.at
+      ? fill(words.changed ?? "", { who: pad.by === "friend" ? "you" : "the user", when: roughlyAgo(pad.at, now) })
+      : (words.never ?? "");
+  const show = (heading: string, pad: PromptPad) => `${fill(heading, { changed: changed(pad) })}\n${pad.text || (words.empty ?? "")}`;
+  return joinNonEmpty([
+    words.intro ?? "",
+    tools ? (words["intro-tools"] ?? "") : "",
+    show(words.shared ?? "", pads.shared),
+    show(words.private ?? "", pads.private),
+  ]);
+}
+
+/** "just now", "5 minutes ago", "2 days ago". */
+function roughlyAgo(iso: string, now: number): string {
+  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 /** Messages kept in full (keep_verbatim) that are older than the recent ones. */

@@ -25,6 +25,7 @@
 import type { Decider } from "./jev.ts";
 import type { ToolSpec } from "./nanogpt.ts";
 import type { Store } from "./store.ts";
+import { scriptsOn } from "./scripts.ts";
 import type { ChannelKind, ToolCallRecord } from "./types.ts";
 import { fill, wording } from "./wording.ts";
 
@@ -40,6 +41,8 @@ export interface Reflex {
   claim: string;
   /** Whether it's on until they choose (`default: off` in the wording). */
   onByDefault: boolean;
+  /** `scripts`: only while scripts are on for them (src/scripts.ts). */
+  requires: string[];
 }
 
 /** Every check, from defaults/reflexes.md. */
@@ -64,17 +67,35 @@ export function allReflexes(): Reflex[] {
         reminder: fields.reminder ?? "",
         claim: fields.claim ?? "",
         onByDefault: fields.default !== "off",
+        requires: list(fields.requires),
       } as Reflex;
     })
     .filter((r) => r.question && r.reminder);
 }
 
 const OFF = "reflexes.off";
+/** The checks there were when they last chose (see `reflexesOff`). */
+const SEEN = "reflexes.seen";
+/** The checks there were before `reflexes.seen` was kept. */
+const FIRST_CHECKS = ["edited", "deleted", "now", "later", "remember", "posted", "lore", "recall"];
 
-/** The checks they've turned off (until they choose, the ones that start off). */
+/**
+ * The checks they've turned off (until they choose, the ones that start
+ * off). A check that starts off and was added after they last chose is
+ * off too: it isn't in their list, but they never turned it on.
+ */
 export function reflexesOff(store: Store): Set<string> {
   const value = store.appState.get(OFF);
-  return new Set(value ? (JSON.parse(value) as string[]) : allReflexes().filter((r) => !r.onByDefault).map((r) => r.id));
+  const startOff = allReflexes().filter((r) => !r.onByDefault).map((r) => r.id);
+  if (!value) return new Set(startOff);
+  const seenValue = store.appState.get(SEEN);
+  const seen = new Set(seenValue ? (JSON.parse(seenValue) as string[]) : FIRST_CHECKS);
+  return new Set([...(JSON.parse(value) as string[]), ...startOff.filter((id) => !seen.has(id))]);
+}
+
+/** Whether a check can apply now (one about scripts only while they're on). */
+export function reflexAvailable(store: Store, reflex: Reflex): boolean {
+  return reflex.requires.every((r) => r !== "scripts" || scriptsOn(store));
 }
 
 /** How far back "what they did recently" goes: a check is skipped if they used its tool in this time. */
@@ -87,6 +108,7 @@ export function setReflex(store: Store, id: string, on: boolean): void {
   if (on) off.delete(id);
   else off.add(id);
   store.appState.set(OFF, JSON.stringify([...off]));
+  store.appState.set(SEEN, JSON.stringify(allReflexes().map((r) => r.id)));
 }
 
 /** The checks that apply to a draft here: on, for this kind of channel, and not already done this turn. */
@@ -95,6 +117,7 @@ export function applicableReflexes(store: Store, kind: ChannelKind, usedTools: s
   return allReflexes().filter(
     (r) =>
       !off.has(r.id) &&
+      reflexAvailable(store, r) &&
       (r.channels.includes("all") || r.channels.includes(kind)) &&
       !r.tools.some((t) => usedTools.includes(t)),
   );
@@ -129,7 +152,10 @@ export async function reflexReminders(
       store.getSettings().decisionConfidence,
       { purpose: "Reflexes" },
     );
-    return reflexes.filter((r) => verdicts.get(r.id)?.verdict === "yes");
+    const yes = reflexes.filter((r) => verdicts.get(r.id)?.verdict === "yes");
+    // Every read in the server log, not only the ones that remind: otherwise Jev looks idle.
+    console.log(`[reflexes] Jev read the draft (${reflexes.map((r) => r.id).join(", ")}): ${yes.length ? `came up: ${yes.map((r) => r.id).join(", ")}` : "nothing came up"}`);
+    return yes;
   } catch (error) {
     console.warn(`[reflexes] Jev couldn't read the draft: ${error instanceof Error ? error.message : error}`);
     return [];

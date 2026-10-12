@@ -290,7 +290,7 @@ function renderModels() {
       if (index === 0 && !state.settings.oocAssignment) uses.unshift("OOC");
       return profileRow(
         profile.name,
-        [profile.model.split("/").at(-1), profile.supportsTools ? "tools" : "no tools", ...(profile.consultant ? ["consultant"] : []), ...uses.map((u) => `used by ${u}`)],
+        [profile.model.split("/").at(-1), profile.supportsTools ? "tools" : "no tools", ...(profile.consultant ? ["consultant"] : []), ...(profile.kinwriterMaker ? ["creates kinwriters"] : []), ...uses.map((u) => `used by ${u}`)],
         () => openProfile(profile),
       );
     }),
@@ -349,6 +349,7 @@ export function openProfile(profile) {
   f.reasoningEffort.value = profile?.reasoningEffort ?? "";
   f.supportsTools.checked = profile?.supportsTools ?? true;
   f.consultant.checked = profile?.consultant ?? false;
+  f.kinwriterMaker.checked = profile?.kinwriterMaker ?? false;
   f.quirkPrompt.value = profile?.quirkPrompt ?? "";
   f.extraParams.value = profile?.extraParams ?? "";
   form.querySelector(".advanced").open = Boolean(profile?.extraParams);
@@ -372,6 +373,7 @@ export async function saveProfile(event) {
     reasoningEffort: f.reasoningEffort.value || null,
     supportsTools: f.supportsTools.checked,
     consultant: f.consultant.checked,
+    kinwriterMaker: f.kinwriterMaker.checked,
     quirkPrompt: f.quirkPrompt.value,
     extraParams: f.extraParams.value,
   };
