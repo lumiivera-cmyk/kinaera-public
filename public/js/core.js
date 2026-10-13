@@ -44,6 +44,8 @@ export const state = {
   replyingTo: null,
   /** The open channel's voice marks and "not me" flags: {voice: [ids], notMe: {id: {note, profile}}}. */
   flags: { voice: [], notMe: {} },
+  /** The open channel's branches you can go to, each at the message it follows (js/branches.js). */
+  branches: [],
   /** Your suggestions for their identity and self-page still waiting for them: {identity, selfNotes}. */
   waiting: { identity: [], selfNotes: [] },
   /** Channel categories, in sidebar order: {id, name, position, collapsed}. */
@@ -69,6 +71,8 @@ export const state = {
   editingRoulette: null,
   /** The open channel's tool calls (your kinwriter's actions), oldest first. */
   toolCalls: [],
+  /** The open channel's reasoning from thinking models: {turnId, round, text, profile, model, createdAt}, oldest first. */
+  reasoning: [],
   /** The open channel's comment threads: {id, messageId, quote, resolved, comments}. */
   threads: [],
   /** The open channel's summaries (stage 7): {scenes, story, current, digest, running, error}. */
@@ -83,6 +87,8 @@ export const state = {
   toolLog: [],
   /** Turn ids whose action details are expanded under their messages. */
   openActivity: new Set(),
+  /** Turns whose reasoning is unfolded. */
+  openReasoning: new Set(),
   /** Notebook entries attached to the message you're writing, by channel id: a Set of entry ids. */
   attachments: new Map(),
   /** The comment thread open in the thread dialog, or a new comment: {messageId, quote}. */

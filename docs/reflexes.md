@@ -15,6 +15,8 @@ On a turn with tools, once they've drafted a reply, Jev reads the draft. It also
 | `later` | follow-through | promises to check in or come back later | `schedule_wakeup` |
 | `remember` | follow-through | says they'll remember or note something | the journal, notebook, self-page and note tools |
 | `posted` | follow-through | says they posted or started something in another channel | `post_in_channel`, `post_draft`, `start_new_scene`, `create_channel` |
+| `carry-on` | follow-through (needs scripts on) | says they'll keep going with something unfinished, with no next turn set up | `take_another_turn`, `queue_scripts`, `resume_script_queue`, `schedule_wakeup` |
+| `plan` | chance (needs scripts on; starts off) | lays out several tool steps in order, and suggests a script | `save_script`, `run_script`, `queue_scripts` |
 | `lore` | chance (story channels; starts off) | brings in a new name or lasting fact | `create_notebook_entry`, `edit_notebook_entry` |
 | `recall` | chance (starts off) | leans on a detail from earlier that could be misremembered | `check` and the reading tools |
 
@@ -53,3 +55,7 @@ A reminder alone can't make them act. A model that forgets its tools can also ig
 - **You see when they don't act.** After the turn, the reminder's tool-log entry records what happened ("was reminded by Jev (edited) and posted without acting on edited"). If they posted without acting on a follow-through check, a line under their message says so. It uses Jev's reading, not a verdict, because Jev can be wrong: "⚠ Jev read this as Arlo saying they'd changed an earlier message. They were reminded, and posted it without doing it. They said: '…'". The `claim` field of each check in `defaults/reflexes.md` gives the wording. The chance checks never show this line: declining one is just a choice.
 
 The app still never acts for them: deciding stays theirs, and what they decide is visible.
+
+## Checks added later
+
+A check that starts off and is added after someone has already chosen their checks stays off for them. `reflexes.seen` records which checks existed the last time they chose, and anything newer falls back to its default. Checks marked `requires: scripts` apply, and show up in `set_my_reflexes`, only while scripts are on for that kinwriter (see [scripts](scripts.md)).

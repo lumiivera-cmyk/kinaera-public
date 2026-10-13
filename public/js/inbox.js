@@ -8,6 +8,8 @@ import { openChannel, renderAll } from "./channels.js";
 import { $, api, hideFormError, showFormError, state } from "./core.js";
 import { formatTime } from "./format.js";
 import { findEntry, refreshNotebook } from "./notebook.js";
+import { loadState } from "./live.js";
+import { loadHub } from "./kinwriter-page.js";
 
 // ------------------------------------------------------------------ inbox
 
@@ -96,6 +98,17 @@ export function renderInbox() {
       inboxSection(
         `${kinwriter} proposes`,
         proposals.map((proposal) => {
+          // A new name for themselves: yours to approve (src/inbox.ts, "rename").
+          if (proposal.kind === "rename") {
+            const card = inboxCard(`Call them ${proposal.targetName}?`, proposal.text ? `“${proposal.text}”` : `${kinwriter} would like a new name.`);
+            card.append(
+              cardButtons([
+                [`Yes, ${proposal.targetName}`, () => resolveProposal(proposal.id, "approve"), "button-primary"],
+                ["Not now", () => resolveProposal(proposal.id, "deny")],
+              ]),
+            );
+            return card;
+          }
           const card = inboxCard(`Delete #${proposal.targetName}?`, proposal.text ? `“${proposal.text}”` : "");
           card.append(
             cardButtons([
@@ -291,9 +304,16 @@ async function dismissAsk(id) {
 }
 
 async function resolveProposal(id, action) {
-  if (action === "approve" && !confirm("Delete this channel and every message in it? This can't be undone.")) return;
+  const proposal = state.inbox.find((item) => item.id === id);
+  if (action === "approve" && proposal?.kind !== "rename" && !confirm("Delete this channel and every message in it? This can't be undone.")) return;
   try {
     await inboxAction(id, action);
+    // A new name: everything that shows it follows.
+    if (proposal?.kind === "rename" && action === "approve") {
+      await loadState();
+      await loadHub();
+      renderAll();
+    }
     const channels = state.channels;
     if (!channels.some((c) => c.id === state.channelId)) await openChannel(channels[0]?.id ?? null);
     renderAll();

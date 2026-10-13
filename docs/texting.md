@@ -24,13 +24,9 @@ Two endgame features from [DESIGN.md](../DESIGN.md): out-of-character chat that 
 | `replyDelayMs` | 2500 | How long your kinwriter waits after your last text (0: answer each at once) |
 | `typingBaseMs`, `typingPerCharMs` | 600, 40 | How long a text takes to "type" |
 
-## RNG kinwriter creation
+## Making a new kinwriter
 
-**🎲 Surprise me** invents a new kinwriter: a name and a "who your kinwriter is" description. In the kinwriter menu it rerolls the open kinwriter; in **+** (a new server) or **Add a kinwriter here**, it fills in the new kinwriter. It fills in the form; nothing changes until you press **Save**, so roll as often as you like.
-
-Asking a model for "a random character" gets the same few every time, so the randomness comes from Kinaera (`src/rng.ts`). It picks a temperament, a way of talking, two interests, a quirk and two kinds of story they love from lists, and the model (the profile that writes OOC, at a high temperature) turns them into one believable person. The ingredients are shown under the button ("Meet Wren (dry and deadpan; quotes old films; ...)").
-
-`POST /api/friend/random` returns `{name, prompt, seeds}`. A reply without both a name and a description is an error you can retry.
+The old **🎲 Surprise me** is gone. A new kinwriter comes from the seed picker: a default, tags you pick (or leave to chance), or **Generate from idea**. See [kinwriter generation](kinwriter-generation.md).
 
 ## Tests
 

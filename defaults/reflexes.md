@@ -14,6 +14,8 @@ Each `## reflex-<id>` section is one check, as `key: value` lines:
 - `channels`: `all`, or a list like `rp` or `ooc, practice`. The
   follow-through checks stay out of story channels: there, a character
   saying "I fixed it" is fiction, not the writer's claim;
+- `requires`: `scripts` for a check about the script tools, which only
+  applies while scripts are on for them (src/scripts.ts);
 - `default`: `off` for a check that starts turned off (they can turn it
   on with set_my_reflexes). The chance checks start off: their questions
   have no crisp answer, so they misfire;
@@ -47,6 +49,16 @@ rephrased: In the draft, does the writer claim one of their earlier messages is 
 reminder: You said you removed an earlier message, but it's still there: delete_my_message wasn't called.
 claim: removed an earlier message
 
+## reflex-now
+
+kind: follow-through
+channels: ooc, practice, group, dm
+tools: edit_my_message, delete_my_message, post_in_channel, post_draft, start_new_scene, create_channel, create_notebook_entry, edit_notebook_entry
+question: Does the draft reply say the writer is about to do something right now (rewrite, fix, edit, post or write something; "give me a sec", "one moment", "on it"), without having done it yet?
+rephrased: In the draft, does the writer announce a change or a piece of writing they are starting this very moment, that isn't done yet?
+reminder: You said you're doing it now, but your turn ends when you stop: there's no "in a sec" for you, and nothing brings you back to finish. Do it in this turn (edit_my_message rewrites a post, in another channel too if you name it), or say plainly that you're leaving it for now.
+claim: do something right away (it wasn't done)
+
 ## reflex-later
 
 kind: follow-through
@@ -76,6 +88,28 @@ question: Does the draft reply say the writer has just now posted, started or wr
 rephrased: In the draft, does the writer claim to have already put something in another channel, when nothing they did recently posted there?
 reminder: You said you posted or started something in another channel, but nothing was posted there: post_in_channel posts in another channel.
 claim: posted in another channel
+
+## reflex-carry-on
+
+kind: follow-through
+channels: ooc, practice, group, dm
+requires: scripts
+tools: take_another_turn, queue_scripts, resume_script_queue, schedule_wakeup
+question: Does the draft reply say the writer will keep going with something unfinished (keep reading, carry on, finish the rest, pick it up next turn), with nothing set up to give them another turn?
+rephrased: In the draft, does the writer say they'll continue a task they haven't finished yet, as if they'll simply be back to do it?
+reminder: You said you'd keep going, but your turn ends when you stop, and nothing brings you back. take_another_turn gives you another turn as soon as this one ends (leave yourself a note on where you are); queue_scripts runs scripts one per turn for a bigger plan. Or say plainly that you're stopping here.
+claim: keep going (no next turn was set up)
+
+## reflex-plan
+
+kind: chance
+default: off
+channels: all
+requires: scripts
+tools: save_script, run_script, queue_scripts
+question: Does the draft reply lay out several steps the writer means to do with their tools (look things up, read, edit, post), in a particular order?
+rephrased: In the draft, does the writer describe a multi-step plan of actions they intend to carry out themselves?
+reminder: You've planned several steps. A script runs them exactly as written, in order, and tells you which step failed if one does: save_script, then run_script now, or queue_scripts for a plan that takes more than one turn. Up to you.
 
 ## reflex-lore
 
@@ -124,4 +158,4 @@ Post your draft as it is, without the tool the reminder named: when the reminder
 
 ## standing
 
-You keep a quick double-check on your own follow-through. Outside story channels, after you draft a reply, Jev (a small, fast model) reads the draft and asks a few fixed questions: did you say you'd just done something (edited a message, set something for later, noted something, posted elsewhere) without calling the tool? If one comes up, you get a short reminder and one more round to act or not, and the user sees that you were reminded. It decides nothing for you. set_my_reflexes lists the checks and turns any of them off or on, including two that start off: a nudge when something lasting comes up in a story, and one to check a detail you're recalling.
+You keep a quick double-check on your own follow-through. Outside story channels, after you draft a reply, Jev (a small, fast model) reads the draft and asks a few fixed questions: did you say you'd just done something (edited a message, set something for later, noted something, posted elsewhere) without calling the tool? If one comes up, you get a short reminder and one more round to act or not, and the user sees that you were reminded. It decides nothing for you. set_my_reflexes lists the checks and turns any of them off or on, including ones that start off: a nudge when something lasting comes up in a story, one to check a detail you're recalling, and (with scripts) one that suggests a script when you plan several steps.

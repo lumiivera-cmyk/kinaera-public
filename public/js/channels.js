@@ -52,7 +52,9 @@ export async function openChannel(channelId) {
   state.editingId = null;
   state.messages = [];
   state.toolCalls = [];
+  state.reasoning = [];
   state.threads = [];
+  state.branches = [];
   state.summaries = null;
   state.openSummaries.clear();
   hideError();
@@ -65,15 +67,17 @@ export async function openChannel(channelId) {
 
   if (channelId) {
     try {
-      const { messages, toolCalls, threads, summaries, flags, rewrites } = await api("GET", channelPath("messages", channelId));
+      const { messages, toolCalls, reasoning, threads, summaries, flags, rewrites, branches } = await api("GET", channelPath("messages", channelId));
       // Ignore the answer if you switched again while it was loading.
       if (state.channelId !== channelId) return;
       state.messages = messages;
       state.toolCalls = toolCalls;
+      state.reasoning = reasoning ?? [];
       state.threads = threads;
       state.rewrites = rewrites ?? [];
       state.summaries = summaries;
       state.flags = flags ?? { voice: [], notMe: {} };
+      state.branches = branches ?? [];
     } catch (error) {
       showError(`Couldn't load this channel: ${error.message}`, () => openChannel(channelId));
     }
@@ -633,6 +637,8 @@ function renderChannelHeader() {
   els.channelTitleIcon.setAttribute("href", channel?.kind === "ooc" ? "#icon-ooc" : "#icon-hash");
   els.channelTopic.textContent = channel ? channelTopic(channel) : "";
   $("channel-settings-button").hidden = !channel;
+  // Story channels have scratchpads (js/scratchpad.js).
+  $("scratchpad-button").hidden = channel?.kind !== "rp";
   document.title = channel ? `#${channel.name} · Kinaera` : "Kinaera";
 }
 

@@ -85,6 +85,12 @@ export interface CompletionResult {
   model: string;
   /** Why generation stopped: `"stop"` is normal, `"length"` means it hit `maxTokens`. */
   finishReason: string | null;
+  /**
+   * The model's reasoning before it answered, for a thinking model: from the
+   * API's reasoning field, or the `<think>` text removed from `content`.
+   * "" when there was none (most models, or a provider that hides it).
+   */
+  reasoning: string;
 }
 
 /**
@@ -132,7 +138,7 @@ export async function createChatCompletion(
   // Dig the text out of the response. Everything is checked because a model
   // provider having a bad day can return all sorts of shapes.
   const choice = (json as { choices?: unknown[] })?.choices?.[0] as
-    | { message?: { content?: unknown; tool_calls?: unknown }; finish_reason?: string }
+    | { message?: { content?: unknown; tool_calls?: unknown } & ReasoningFields; finish_reason?: string }
     | undefined;
   const rawContent = choice?.message?.content;
   const toolCalls = readToolCalls(choice?.message?.tool_calls);
@@ -155,7 +161,33 @@ export async function createChatCompletion(
     toolCalls,
     model: typeof (json as { model?: unknown }).model === "string" ? (json as { model: string }).model : request.model,
     finishReason: choice?.finish_reason ?? null,
+    reasoning: readReasoning(choice?.message, typeof rawContent === "string" ? rawContent : ""),
   };
+}
+
+/** Where providers put a thinking model's reasoning in a reply's message. */
+interface ReasoningFields {
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+  reasoning_details?: unknown;
+}
+
+/**
+ * A thinking model's reasoning, wherever the reply carries it. nanoGPT
+ * sends it as `message.reasoning` (`reasoning_content` on its legacy
+ * endpoint), some providers only as `reasoning_details` pieces, and some
+ * models write it into the text inside `<think>` tags.
+ */
+export function readReasoning(message: ReasoningFields | undefined, rawContent: string): string {
+  const field = [message?.reasoning, message?.reasoning_content].find((v) => typeof v === "string" && v.trim() !== "");
+  if (typeof field === "string") return field.trim();
+  if (Array.isArray(message?.reasoning_details)) {
+    const pieces = message.reasoning_details
+      .map((d) => (d as { text?: unknown; summary?: unknown })?.text ?? (d as { summary?: unknown })?.summary)
+      .filter((t): t is string => typeof t === "string" && t.trim() !== "");
+    if (pieces.length) return pieces.join("\n\n").trim();
+  }
+  return [...rawContent.matchAll(/<think>([\s\S]*?)<\/think>/gi)].map((m) => m[1]!.trim()).filter(Boolean).join("\n\n");
 }
 
 /**
@@ -221,8 +253,8 @@ export async function listModels(options: ApiOptions): Promise<string[]> {
  *
  * Some reasoning models put their private reasoning inside
  * `<think>...</think>` tags at the start of the reply. That's not part of the
- * post, so it's removed. (Models that send reasoning in a separate field
- * don't need this; we simply never read that field.)
+ * post, so it's removed. (It's kept apart as the reply's `reasoning`; see
+ * `readReasoning`.)
  */
 export function stripReasoning(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();

@@ -1,12 +1,14 @@
 /**
  * After a fresh start (`bun run fresh`, src/fresh.ts): before anything
  * else, you make your new kinwriter. Their name, face and colour, who they
- * are and their tastes, written by you or rolled with Surprise me. Once
+ * are and their tastes, written by you, or chosen or made in the seed
+ * picker (js/seeds.js): a default, tags, or your idea. Once
  * they're made (POST /api/setup), their first turn is an orientation.
  */
 
 import { $, api, hideFormError, showFormError, state } from "./core.js";
 import { paintAvatar } from "./kinwriter-page.js";
+import { openSeedPicker } from "./seeds.js";
 
 /** Show the setup, if a fresh start asked for it. It can't be dismissed. */
 export function maybeOpenSetup() {
@@ -33,24 +35,15 @@ function preview() {
   paintAvatar($("setup-avatar-preview"), look());
 }
 
-async function surprise() {
-  const button = $("setup-surprise");
-  const result = $("setup-surprise-result");
-  button.disabled = true;
-  result.textContent = "Rolling…";
-  try {
-    const { name, prompt, tastes, seeds } = await api("POST", "/api/friend/random", {});
-    const form = $("setup-form").elements;
-    form.name.value = name;
-    form.prompt.value = prompt;
-    form.tastes.value = tastes ?? "";
-    preview();
-    result.textContent = `Meet ${name} (${seeds}). Change anything, roll again, or meet them.`;
-  } catch (error) {
-    result.textContent = `✗ ${error.message}`;
-  } finally {
-    button.disabled = false;
-  }
+/** "Choose or make someone…": the seed picker (js/seeds.js). Accept makes them at once. */
+function choose() {
+  openSeedPicker({
+    accept: async (seedText) => {
+      const { avatar, color } = look();
+      await api("POST", "/api/setup", { seed: seedText, avatar, color });
+      location.reload();
+    },
+  });
 }
 
 async function create(event) {
@@ -71,4 +64,4 @@ async function create(event) {
 
 $("setup-form").addEventListener("submit", create);
 $("setup-form").addEventListener("input", preview);
-$("setup-surprise").addEventListener("click", surprise);
+$("setup-seed").addEventListener("click", choose);

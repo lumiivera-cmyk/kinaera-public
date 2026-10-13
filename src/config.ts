@@ -56,11 +56,13 @@ export interface Config {
    * Set by the hub (src/hub.ts), which runs one app per kinwriter. Where your
    * own themes are (shared by every kinwriter; default `<dataDir>/themes`),
    * which kinwriter this app is (for notification links), and whether a brand
-   * new kinwriter starts with the example character (default true).
+   * new kinwriter starts with an example character: `"generate"` writes one
+   * for them (src/practiceworld.ts), `true` (the default, for tests) is the
+   * fixed one in defaults/character.md.
    */
   userThemesDir?: string;
   kinwriterId?: string;
-  example?: boolean;
+  example?: boolean | "generate";
   /**
    * The other kinwriters on this kinwriter's server, from the hub: who else is
    * here (their names only: never anything they remember).

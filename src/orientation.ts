@@ -34,6 +34,8 @@ import type { Store } from "./store.ts";
 import { takeReading, WELLBEING_DAYS } from "./wellbeing.ts";
 import type { WakeResult, Wakeups } from "./wakeups.ts";
 import { fill, wording } from "./wording.ts";
+import { practiceWorld, rollCharacterSeed } from "./practiceworld.ts";
+import { seedHandoff } from "./handoff.ts";
 
 /** Where things are kept between runs (app_state). */
 const STATUS = "orientation.status";
@@ -77,6 +79,8 @@ export interface OrientationSession {
   canned?: number;
   /** On their own: the questions they saved for you, sent to OOC when it ends. */
   questions?: string[];
+  /** A starting point for their character (a job and a want), rolled when it begins. */
+  characterSeed?: string;
 }
 
 // ---------------------------------------------------------------- steps
@@ -224,7 +228,14 @@ export function skipOrientation(store: Store): void {
 /** You pick a version: it begins now, in their practice channel. */
 export function beginOrientation(store: Store, version: OrientationVersion): OrientationSession {
   if (orientationState(store).status === "running") throw new Error("An orientation is already running.");
-  const session: OrientationSession = { version, startedAt: new Date().toISOString(), channelId: store.ensurePractice().id, steps: orientationSteps(version), step: 0 };
+  const session: OrientationSession = {
+    version,
+    startedAt: new Date().toISOString(),
+    channelId: store.ensurePractice().id,
+    steps: orientationSteps(version),
+    step: 0,
+    characterSeed: rollCharacterSeed(),
+  };
   store.appState.set(SESSION, JSON.stringify(session));
   store.appState.set(REQUEST, null);
   store.appState.set(STATUS, "running");
@@ -305,7 +316,10 @@ export function applyOrientationChoices(store: Store, choices: OrientationChoice
   const done: string[] = [];
   if (choices.characters === "discard") {
     // Discarded characters take their "from orientation" notes with them.
-    const removed = store.db.query("DELETE FROM notebook_entries WHERE created_at >= $since").run({ since: session.startedAt });
+    // Not the practice notes, though: they were written for it, not made in it.
+    const removed = store.db
+      .query("DELETE FROM notebook_entries WHERE created_at >= $since AND COALESCE(folder_id, '') NOT IN (SELECT id FROM notebook_folders WHERE practice = 1)")
+      .run({ since: session.startedAt });
     if (removed.changes > 0) done.push("the characters and lore made in it were discarded");
   }
   if (choices.scene === "discard" && session.scene && store.hasChannel(session.scene)) {
@@ -357,7 +371,7 @@ export function madeInOrientation(store: Store): {
   const empty = { yours: [], theirs: [], yourSecrets: 0, theirSecrets: 0 };
   if (!session) return empty;
   // As you see them: their secrets only as a count, never a name.
-  const entries = store.notebook.listEntries("user", true).filter((e) => e.createdAt >= session.startedAt);
+  const entries = store.notebook.listEntries("user").filter((e) => e.createdAt >= session.startedAt);
   const theirsHidden = store.db
     .query("SELECT COUNT(*) AS n FROM notebook_entries WHERE owner = 'friend' AND created_at >= $since AND COALESCE(visibility, '') = 'hidden'")
     .get({ since: session.startedAt }) as { n: number };
@@ -403,10 +417,10 @@ export function makeStarterScene(store: Store): string {
   const session = orientationRunning(store);
   if (!session) throw new Error("There's no orientation running.");
   if (session.scene && store.hasChannel(session.scene)) return session.scene;
-  // On their own, the practice scene from defaults/practice-scene.md, with its canned partner.
-  const practice = session.version === "returning" ? wording("practice-scene") : null;
+  // On their own, the practice scene from their practice world (src/practiceworld.ts), with its canned partner.
+  const practice = session.version === "returning" ? practiceWorld(store).scene : null;
   const taken = new Set(store.listChannels().map((c) => c.name));
-  const base = practice?.channel?.trim() || "first-scene";
+  const base = practice?.channel || "first-scene";
   let name = base;
   for (let i = 2; taken.has(name); i++) name = `${base}-${i}`;
   const channel = store.createChannel({ name, kind: "rp", mode: "literary" });
@@ -414,15 +428,15 @@ export function makeStarterScene(store: Store): string {
   for (const c of made.yours) store.notebook.pin("user", channel.id, c.id);
   for (const c of made.theirs) store.notebook.pin("friend", channel.id, c.id);
   let partner: string | null = null;
-  if (practice?.["partner-name"]) {
+  if (practice?.partnerName) {
     // The partner is yours (the "yours" column), standing in for you.
     const names = new Set(store.notebook.listEntries("user", true).map((e) => e.name));
-    let partnerName = practice["partner-name"].trim();
-    for (let i = 2; names.has(partnerName); i++) partnerName = `${practice["partner-name"].trim()} ${i}`;
+    let partnerName = practice.partnerName;
+    for (let i = 2; names.has(partnerName); i++) partnerName = `${practice.partnerName} ${i}`;
     const entry = store.notebook.createEntry("user", {
       kind: "character",
       name: partnerName,
-      fields: practice["partner-about"]?.trim() ? [{ label: "About", value: practice["partner-about"].trim() }] : [],
+      fields: practice.partnerAbout ? [{ label: "About", value: practice.partnerAbout }] : [],
     });
     store.notebook.pin("user", channel.id, entry.id);
     partner = entry.id;
@@ -437,7 +451,7 @@ export function nextCannedPost(store: Store): boolean {
   const session = orientationRunning(store);
   if (!session?.scene || session.version !== "returning") return false;
   const n = (session.canned ?? 0) + 1;
-  const post = wording("practice-scene")[`post-${n}`]?.trim();
+  const post = practiceWorld(store).scene.posts[n - 1]?.trim();
   if (!post) return false;
   store.addTurn([{ channelId: session.scene, author: "user", content: post }]);
   saveSession(store, { ...session, canned: n });
@@ -642,7 +656,7 @@ export function orientationCatalog(tools: string[], text: string): string {
  */
 export function orientationGuide(
   tools: string[],
-  session: Pick<OrientationSession, "version" | "steps" | "step" | "handed" | "scene">,
+  session: Pick<OrientationSession, "version" | "steps" | "step" | "handed" | "scene" | "characterSeed">,
   followup = false,
   store?: Store,
 ): string {
@@ -652,7 +666,7 @@ export function orientationGuide(
   const step = currentStep(session);
   const has = (name: string) => tools.includes(name);
   const suggestions = [
-    has("check") ? words["orientation-check"] : "",
+    has("check") ? fill(words["orientation-check"] ?? "", { notes: store ? practiceWorld(store).notes.map((n) => n.name).join(", ") : "the practice notes" }) : "",
     // With drafts, a message can be posted and edited in one turn.
     has("post_draft") && has("edit_my_message") ? words["orientation-draft"] : has("edit_my_message") ? words["orientation-edit"] : "",
     has("schedule_wakeup") ? words["orientation-schedule"] : "",
@@ -673,12 +687,16 @@ export function orientationGuide(
     framing,
     words["orientation-intro"] ?? "",
     where,
+    // Their seed, the first draft of their self-notes (src/handoff.ts).
+    store ? seedHandoff(store, session.version, step?.id) : "",
     waitingForYou(session) ? (words["orientation-waiting"] ?? "") : "",
     fill(own, {
       catalog: orientationCatalog(tools, words["orientation-catalog"] ?? ""),
       suggestions,
       scene,
       library,
+      partner: store ? practiceWorld(store).scene.partnerName : "your partner",
+      "character-seed": session.characterSeed ?? rollCharacterSeed(),
       cards: interviewCards().forUser.map((q) => `- ${q}`).join("\n"),
       asked: interviewCards().forKinwriter.map((q) => `- ${q}`).join("\n"),
     }),
@@ -739,6 +757,12 @@ export class Rhythms {
       // first. Held by a rule, it stays waiting for the next tick.
       const scheduled = this.store.schedule.due(this.now())[0];
       if (scheduled) {
+        // One set to run a script: a tools-only turn. It only becomes a
+        // turn (below) if it couldn't run or a step failed.
+        if (scheduled.script) {
+          const ran = await this.wakeups.script(scheduled);
+          if (ran.outcome !== "wake") return null;
+        }
         const result = await this.wakeups.event("scheduled", { scheduleId: scheduled.id, channelId: scheduled.channelId ?? undefined });
         if (result.outcome !== null) this.store.schedule.markDone(scheduled.id);
         return result;

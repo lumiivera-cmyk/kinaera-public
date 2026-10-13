@@ -24,10 +24,12 @@
  *   library.js      the reference library
  *   inbox.js        asks, proposals and suggestions
  *   history.js      message history, the intervention log, the check log
+ *   branches.js     going back to a message, and the branches it leaves
  *   settings.js     settings, profiles, roulettes, logs
  *   themes.js       themes and appearance
  *   kinwriter-page.js  kinwriters, servers and the kinwriter menu
- *   kinwriter-self.js  the kinwriter's page: identity, self-page, orientation
+ *   kinwriter-self.js  the kinwriter's page: self-notes, self-page, orientation
+ *   seeds.js        the seed picker: defaults, tags, an idea, the preview
  *   setup.js        making your new kinwriter, after a fresh start
  */
 
@@ -59,6 +61,7 @@ import { $, els, hideError, readLocal, showError, state, writeLocal } from "./co
 import { KINWRITER_KEY, loadHub, pickKinwriter, switchKinwriter } from "./kinwriter-page.js";
 import "./kinwriter-self.js";
 import "./health.js";
+import "./scratchpad.js";
 import { updateRewriteButton, withdrawRewrite } from "./rewrites.js";
 import { maybeOfferOrientation } from "./orientation.js";
 import { openPrompts } from "./prompts.js";

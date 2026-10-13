@@ -11,6 +11,7 @@ import {
   modeInstructions,
   newSceneNudge,
   nudges,
+  paceNote,
   oocFraming,
   rpFraming,
   recentMessages,
@@ -24,6 +25,7 @@ import type { Author, Channel, Message, NotebookEntry, Settings } from "../src/t
 
 const settings: Settings = {
   friendName: "Arlo",
+  friendPronouns: "",
   friendPrompt: "You are Arlo, a writer of grounded prose.",
   literaryPrompt: "LITERARY: take your time.",
   casualPrompt: "CASUAL: keep it snappy.",
@@ -41,11 +43,13 @@ const settings: Settings = {
   awayHours: 4,
   wakeCooldownMinutes: 60,
   asideMinutes: 30,
+  scripts: false,
   hardLimits: "",
   heartbeatHours: 0,
   friendAvatar: "",
   friendColor: -1,
   oocBubbles: false,
+  matchPace: false,
   typingBaseMs: 600,
   typingPerCharMs: 40,
   replyDelayMs: 2500,
@@ -379,5 +383,42 @@ describe("recentMessages", () => {
   test("keeps the newest messages in their original order", () => {
     const messages = [msg("user", "a"), msg("user", "b"), msg("user", "c")];
     expect(recentMessages(messages, 2).map((m) => m.content)).toEqual(["b", "c"]);
+  });
+});
+
+describe("matching the user's pace", () => {
+  const paced = { ...settings, matchPace: true };
+  const post = "She set the lamp down.\n\nOutside, the rain had stopped. Nobody had noticed.";
+
+  test("paceNote gives the post's length, its paragraphs and a ceiling", () => {
+    const note = paceNote(post)!;
+    expect(note).toContain("about 13 words");
+    expect(note).toContain("2 paragraphs");
+    expect(note).toContain("60 words at most");
+    expect(paceNote("one\n\ntwo")).toContain("2 paragraphs");
+    expect(paceNote("Just a line.")).toContain("one paragraph");
+    // Long posts: rounded, with half again as the ceiling.
+    expect(paceNote(Array(200).fill("word").join(" "))).toContain("about 200 words, in one paragraph. Match my pace: keep yours about that long, 300 words at most");
+    expect(paceNote("   ")).toBeNull();
+  });
+
+  test("in a literary scene, the note follows the user's latest post, and the style drops 'room to breathe'", () => {
+    const messages = build({ settings: paced, messages: [msg("user", "Old."), msg("friend", "Reply."), msg("user", post)] });
+    expect(messages.at(-1)!.content).toBe(`${post}\n\n${paceNote(post)}`);
+    expect(messages[0]!.content).toContain(modeInstructions("literary", "Ilse Marrow", true));
+    expect(messages[0]!.content).not.toContain("room to breathe");
+  });
+
+  test("continuing after the kinwriter's own post, it follows the nudge", () => {
+    const messages = build({ settings: paced, messages: [msg("user", post), msg("friend", "Reply.")] });
+    expect(messages.at(-1)!.content).toBe(`${nudges("rp").continue}\n\n${paceNote(post)}`);
+  });
+
+  test("not when it's off, in casual scenes, in OOC or on an opening", () => {
+    expect(build({ messages: [msg("user", post)] }).at(-1)!.content).toBe(post);
+    expect(build({ settings: paced, channel: channel({ mode: "casual" }), messages: [msg("user", post)] }).at(-1)!.content).not.toContain("Match my pace");
+    const ooc = channel({ kind: "ooc" });
+    expect(build({ settings: paced, channel: ooc, channels: [ooc], messages: [msg("user", post)] }).at(-1)!.content).toBe(post);
+    expect(build({ settings: paced, messages: [] }).at(-1)!.content).toBe(nudges("rp").opening);
   });
 });

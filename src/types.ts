@@ -396,6 +396,12 @@ export interface Settings {
    */
   asideMinutes: number;
   /**
+   * Scripts (src/scripts.ts): your kinwriter can write themselves a fixed
+   * order of tool calls and run it exactly, in a turn or on its own as a
+   * tools-only turn. Off (the default), the script tools aren't offered.
+   */
+  scripts: boolean;
+  /**
    * Your hard limits: what must never be written, in any channel, whatever
    * the story asks. Yours (it carries over to a new kinwriter), and in
    * every prompt. Empty means none written.
@@ -412,10 +418,14 @@ export interface Settings {
   heartbeatHours: number;
   /** Your kinwriter's avatar: an emoji, or "" for their initial. */
   friendAvatar: string;
+  /** Their pronouns, like "she/her" ("" when not given): from their seed, on their page and in their self-notes. */
+  friendPronouns: string;
   /** Their colour, as a hue (0–359), or -1 for the theme's accent. */
   friendColor: number;
   /** OOC: your kinwriter texts in short bubbles (split at `<cht>`), shown one at a time. */
   oocBubbles: boolean;
+  /** Literary RP: your kinwriter writes about as much as your latest post (src/prompt.ts, paceNote). */
+  matchPace: boolean;
   /** How long a bubble takes to "type": `typingBaseMs + characters × typingPerCharMs` (as in Kitsikai). */
   typingBaseMs: number;
   typingPerCharMs: number;
@@ -482,6 +492,8 @@ export interface Profile {
   supportsTools: boolean;
   /** Your kinwriter may `consult` this profile for a second opinion (a "consultant"). */
   consultant: boolean;
+  /** "Use for creating kinwriters": this profile writes new kinwriters' seeds (one profile at most). */
+  kinwriterMaker: boolean;
   /** Layer 4 of the prompt stack: notes that tame this model's habits. */
   quirkPrompt: string;
   /** More request fields, as a JSON object in text (e.g. `{"top_k": 40}`), or "". */
@@ -523,6 +535,19 @@ export interface ToolCallRecord {
   /** `native` if the API returned it as a tool call; `text` if it was written out in the reply. */
   source: "native" | "text";
   profile: string | null;
+  createdAt: string;
+}
+
+/** A thinking model's reasoning in one round of a turn (src/activity.ts). */
+export interface ReasoningRecord {
+  id: string;
+  channelId: string;
+  /** The turn it belongs to: the same id as the messages that turn wrote. */
+  turnId: string;
+  round: number;
+  text: string;
+  profile: string | null;
+  model: string | null;
   createdAt: string;
 }
 
@@ -606,6 +631,30 @@ export interface MessageHistory {
   message: Message;
   revisions: Revision[];
   alternates: Message[];
+}
+
+/**
+ * A branch of a conversation: messages set aside when you went back to an
+ * earlier message (`forkId`), which you can return to.
+ */
+export interface Branch {
+  id: string;
+  channelId: string;
+  /** The message the branch follows. It shows there, while that message is in the chat. */
+  forkId: string;
+  /** How many messages it has. */
+  count: number;
+  /** Its messages, oldest first. */
+  messages: Message[];
+}
+
+/** A branch, as listed for a channel: its first and last message. */
+export interface BranchSummary {
+  id: string;
+  forkId: string;
+  count: number;
+  first: Message;
+  last: Message;
 }
 
 /** An emoji reaction on a message: a Unicode emoji, or `:name:` of a custom one. */

@@ -44,6 +44,7 @@
 
 import type { Database } from "bun:sqlite";
 import { BusyError, pickProfile, reviewsFor, type Kinwriter } from "./kinwriter.ts";
+import { waitingRequest } from "./selfnotes.ts";
 import type { WakeContext, WakeReason } from "./prompt.ts";
 import type { Store } from "./store.ts";
 import { splitScenes } from "./summaries.ts";
@@ -52,6 +53,8 @@ import { orientationRunning, orientationState } from "./orientation.ts";
 import { describeReading, describeTrend } from "./wellbeing.ts";
 import { wording } from "./wording.ts";
 import { toolSpecs } from "./tools.ts";
+import { failureNote, findScript, scriptsOn, type ScriptReport } from "./scripts.ts";
+import type { ScheduledWakeup } from "./schedule.ts";
 
 /** What can wake your kinwriter up from outside. */
 export type WakeEvent = "opened" | "scene-ended" | "review" | "heartbeat" | "answer" | "lookback" | "scheduled" | "aside";
@@ -89,6 +92,17 @@ export interface WakeRecord {
 }
 
 /** What `Wakeups.event` did. */
+/**
+ * A script wake-up (`Wakeups.script`): `ran` (every step worked, done),
+ * `wake` (it's an ordinary wake-up now, saying what went wrong), or `held`
+ * (a rule held it: it stays waiting).
+ */
+export interface ScriptWakeResult {
+  outcome: "ran" | "wake" | "held";
+  detail: string;
+  report?: ScriptReport;
+}
+
 export interface WakeResult {
   /** `null` when a hard rule stopped it (off, quiet hours, cooldown...): nothing was logged. */
   outcome: WakeOutcome | null;
@@ -385,6 +399,57 @@ export class Wakeups {
     }
   }
 
+  /**
+   * A wake-up set to run a script: a tools-only turn, no model call
+   * (src/scripts.ts). Quiet hours, an orientation, or a turn already
+   * running in that channel hold it, like a wake-up. If it runs and every
+   * step works, it's done. If a step fails, or it can't run at all (scripts
+   * turned off, the script deleted), it becomes an ordinary wake-up with
+   * what went wrong as its note, so they wake up to it and can try again.
+   * Never throws.
+   */
+  async script(wakeup: ScheduledWakeup): Promise<ScriptWakeResult> {
+    const { store } = this;
+    const name = wakeup.script ?? "";
+    const held = (why: string): ScriptWakeResult => {
+      console.log(`[wake] script "${name}" held: ${why}`);
+      return { outcome: "held", detail: why };
+    };
+    const instead = (why: string): ScriptWakeResult => {
+      store.schedule.toNote(wakeup.id, why);
+      console.log(`[wake] script "${name}" didn't run; it's a wake-up now: ${why}`);
+      return { outcome: "wake", detail: why };
+    };
+    if (this.running) return held("Your kinwriter is already waking up.");
+    const settings = store.getSettings();
+    if (inQuietHours(this.now(), settings.quietStart, settings.quietEnd)) return held("It's quiet hours.");
+    if (orientationRunning(store)) return held("They're in an orientation.");
+    if (!scriptsOn(store)) return instead(`Your script "${name}" was due, but scripts are turned off now, so it didn't run. ${wakeup.note}`);
+    if (!findScript(store, name)) return instead(`Your script "${name}" was due, but it's gone (deleted), so nothing ran. ${wakeup.note}`);
+    const channels = store.listChannels();
+    const channel = channels.find((c) => c.id === wakeup.channelId) ?? homeChannel(store, channels);
+    if (!channel) return held("There's no channel to run it in.");
+    if (this.kinwriter.isBusy(channel.id)) return held("Your kinwriter is writing there already.");
+
+    this.running = true;
+    try {
+      const report = await this.kinwriter.runScriptTurn(channel.id, name);
+      if (report.ok) {
+        store.schedule.markDone(wakeup.id);
+        return { outcome: "ran", detail: `Every step of "${name}" worked.`, report };
+      }
+      store.schedule.toNote(wakeup.id, failureNote(report, wakeup.note));
+      return { outcome: "wake", detail: `Step ${report.failedStep} of "${name}" failed: ${report.error}`, report };
+    } catch (error) {
+      if (error instanceof BusyError) return held("Your kinwriter is writing there already.");
+      const message = error instanceof Error ? error.message : String(error);
+      store.schedule.toNote(wakeup.id, `Your script "${name}" couldn't run: ${message} ${wakeup.note}`);
+      return { outcome: "wake", detail: message };
+    } finally {
+      this.running = false;
+    }
+  }
+
   private log(reason: WakeReason, outcome: WakeOutcome, channel: Channel, detail: string): WakeResult {
     this.store.wakeLog.add({ at: this.now().toISOString(), reason, outcome, channelId: channel.id, detail });
     console.log(`[wake] ${reason} → ${outcome}: ${detail}`);
@@ -424,9 +489,16 @@ export function wakeContext(store: Store, reason: WakeReason, sinceMs: number | 
   for (const n of store.selfPage.pendingNotes().filter((n) => n.source === "user")) {
     waiting.push(`The user's note for your self-page ("${n.text.slice(0, 120)}") is waiting for you to accept or decline.`);
   }
+  if (waitingRequest(store)) waiting.push("The user's request to read your self-notes is waiting for you to decide (share_self_notes).");
   if (orientationState(store).request) waiting.push("Your request for an orientation is waiting for the user.");
   for (const item of store.inbox.open()) {
-    waiting.push(item.kind === "ask" ? `Your ask ("${item.text.slice(0, 120)}") is waiting for the user.` : `Your proposal to delete #${item.targetName} is waiting for the user.`);
+    waiting.push(
+      item.kind === "ask"
+        ? `Your ask ("${item.text.slice(0, 120)}") is waiting for the user.`
+        : item.kind === "rename"
+          ? `Your request to be called ${item.targetName} is waiting for the user.`
+          : `Your proposal to delete #${item.targetName} is waiting for the user.`,
+    );
   }
 
   const context: WakeContext = { reason, sinceUser: sinceMs === null ? null : humanDuration(sinceMs), waiting };

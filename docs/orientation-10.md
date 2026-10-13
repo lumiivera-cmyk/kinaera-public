@@ -17,7 +17,7 @@ The returning version, for a kinwriter whose user has been through the full vers
 
 **Their character,** with a secret, as in the version together.
 
-**A practice scene** (`defaults/practice-scene.md`): a short story channel, `#practice-scene`, with a canned partner standing in for you, Ines Corrow. Her posts were written ahead of time, and their part says so plainly: she won't react to what they write.
+**A practice scene**: a short story channel with a canned partner standing in for you. The partner's posts were written ahead of time, and their part says so plainly: they won't react to what they write. Since then, the scene (and the practice notes) are written fresh for each orientation from who your kinwriter is (`defaults/practice-world.md`, src/practiceworld.ts); `defaults/practice-scene.md` is the built-in one, used only when that can't be done.
 - Her first post is there when the step begins. They reply.
 - Her second post comes in, and they reply again (the step's follow-up).
 - The partner is a notebook entry of yours, the "yours" column, in the scene's cast.

@@ -32,6 +32,8 @@ export interface ScheduledWakeup {
   note: string;
   /** Where they'll wake up (null: their usual OOC channel). */
   channelId: string | null;
+  /** A script to run then, as a tools-only turn, instead of a turn (src/scripts.ts). */
+  script: string | null;
   status: ScheduleStatus;
   createdAt: string;
   doneAt: string | null;
@@ -42,6 +44,7 @@ interface Row {
   at: string;
   note: string;
   channel_id: string | null;
+  script: string | null;
   status: ScheduleStatus;
   created_at: string;
   done_at: string | null;
@@ -52,6 +55,7 @@ const toWakeup = (r: Row): ScheduledWakeup => ({
   at: r.at,
   note: r.note,
   channelId: r.channel_id,
+  script: r.script ?? null,
   status: r.status,
   createdAt: r.created_at,
   doneAt: r.done_at,
@@ -151,7 +155,7 @@ export class Schedule {
   }
 
   /** Your kinwriter sets a wake-up for themselves. */
-  add(when: string, note: string, channelId: string | null = null): ScheduledWakeup {
+  add(when: string, note: string, channelId: string | null = null, script: string | null = null): ScheduledWakeup {
     const now = this.now();
     const at = parseWhen(when, now);
     if (at.getTime() <= now.getTime()) throw new ValidationError("That time has already passed.");
@@ -164,8 +168,8 @@ export class Schedule {
       throw new ValidationError(`You already have ${SCHEDULE_LIMIT} wake-ups waiting. Cancel one first.`);
     }
     const result = this.db
-      .query("INSERT INTO schedule (at, note, channel_id, created_at) VALUES ($at, $note, $channelId, $now)")
-      .run({ at: at.toISOString(), note: clean.slice(0, NOTE_LIMIT), channelId, now: now.toISOString() });
+      .query("INSERT INTO schedule (at, note, channel_id, script, created_at) VALUES ($at, $note, $channelId, $script, $now)")
+      .run({ at: at.toISOString(), note: clean.slice(0, NOTE_LIMIT), channelId, script, now: now.toISOString() });
     return this.get(Number(result.lastInsertRowid));
   }
 
@@ -174,6 +178,17 @@ export class Schedule {
     const wakeup = this.get(id);
     if (wakeup.status !== "waiting") throw new ValidationError("That wake-up isn't waiting any more.");
     this.db.query("UPDATE schedule SET status = 'cancelled', done_at = $now WHERE id = $id").run({ id, now: this.now().toISOString() });
+    return this.get(id);
+  }
+
+  /**
+   * A script wake-up whose run failed becomes an ordinary one, still
+   * waiting, with what went wrong as its note: they wake up to it.
+   */
+  toNote(id: number, note: string): ScheduledWakeup {
+    this.db
+      .query("UPDATE schedule SET script = NULL, note = $note WHERE id = $id AND status = 'waiting'")
+      .run({ id, note: note.slice(0, NOTE_LIMIT * 3) });
     return this.get(id);
   }
 

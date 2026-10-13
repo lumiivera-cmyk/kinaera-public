@@ -9,7 +9,7 @@ import { mentionCandidates, pickProfile, promptForChannel } from "../src/kinwrit
 import { applyRewrite } from "../src/rewrites.ts";
 import { createApp, type App } from "../src/server.ts";
 import { toolMap } from "../src/toolmap.ts";
-import { runTool, toolSpecs, type ToolContext } from "../src/tools.ts";
+import { runTool, TOOL_NAMES, toolSpecs, type ToolContext } from "../src/tools.ts";
 import type { Channel } from "../src/types.ts";
 import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
 
@@ -110,6 +110,17 @@ describe("the tool map", () => {
     expect(spec.function.description).toContain(`Your own note on it: "I'd reach for this when I'm not sure a detail is true."`);
     await runTool(ctx(), "write_map_entry", { tool: "check", when: "" });
     expect(toolMap(app.store).check).toBeUndefined();
+  });
+
+  test("works for every kind of tool, their own things included", async () => {
+    // These are defined in OWN, filled late in src/tools.ts: a list of names
+    // built when the module loaded once missed them all.
+    for (const tool of ["write_journal", "schedule_wakeup", "save_draft", "revise_identity", "write_map_entry", "read_prompt_manifest"]) {
+      const outcome = await runTool(ctx(), "write_map_entry", { tool, when: `I'd reach for ${tool} when it fits.` });
+      expect(outcome.ok).toBe(true);
+    }
+    expect(Object.keys(toolMap(app.store))).toContain("write_journal");
+    expect(TOOL_NAMES).toContain("write_journal");
   });
 });
 

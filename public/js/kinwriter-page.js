@@ -9,6 +9,7 @@ import { $, api, els, hideFormError, readLocal, showFormError, state, writeLocal
 import { initial } from "./format.js";
 import { seenMessages } from "./live.js";
 import { createGroup, renderServerGroups } from "./groups.js";
+import { openSeedPicker } from "./seeds.js";
 
 // ------------------------------------------------------ kinwriters and servers
 
@@ -179,12 +180,16 @@ export function openKinwriter() {
   form.themeColor.checked = s.friendColor < 0;
   form.friendColor.value = s.friendColor < 0 ? 260 : s.friendColor;
   form.friendColor.disabled = s.friendColor < 0;
+  form.friendPronouns.value = s.friendPronouns ?? "";
   for (const key of ["friendPrompt", "literaryPrompt", "casualPrompt", "oocPrompt"]) form[key].value = s[key];
+  // Their self-notes: shown to read only if they share them (src/selfnotes.ts).
+  $("friend-self-notes").hidden = !state.selfNotes?.shared;
   form.oocBubbles.checked = s.oocBubbles;
+  form.matchPace.checked = s.matchPace;
   form.replyDelaySeconds.value = s.replyDelayMs / 1000;
   form.typingPerCharMs.value = s.typingPerCharMs;
   updateTextingOnly();
-  $("surprise-result").textContent = "Reroll who they are from a few random ingredients. Nothing changes until you press Save.";
+  form.scripts.checked = s.scripts === true;
   $("friend-move").hidden = (currentServer()?.friends.length ?? 1) < 2;
   hideFormError($("friend-form"));
   $("friend-dialog").showModal();
@@ -194,22 +199,22 @@ async function saveKinwriter(event) {
   event.preventDefault();
   const form = $("friend-form").elements;
   try {
-    const { settings, suggestion } = await api("PUT", "/api/settings", {
+    const { settings } = await api("PUT", "/api/settings", {
       friendName: form.friendName.value,
+      friendPronouns: form.friendPronouns.value,
       friendAvatar: form.friendAvatar.value,
       friendColor: form.themeColor.checked ? -1 : Number(form.friendColor.value),
-      friendPrompt: form.friendPrompt.value,
       literaryPrompt: form.literaryPrompt.value,
       casualPrompt: form.casualPrompt.value,
       oocPrompt: form.oocPrompt.value,
       oocBubbles: form.oocBubbles.checked,
+      matchPace: form.matchPace.checked,
       replyDelayMs: Math.round(Number(form.replyDelaySeconds.value) * 1000),
       typingPerCharMs: Number(form.typingPerCharMs.value),
+      scripts: form.scripts.checked,
     });
     state.settings = settings;
     $("friend-dialog").close();
-    // A change to who they are is a suggestion, waiting for them.
-    if (suggestion) alert(`Your change to who ${settings.friendName} is was sent as a suggestion: they'll accept or decline it on their next turn.`);
     await loadHub();
     renderAll();
   } catch (error) {
@@ -232,26 +237,6 @@ function previewKinwriterLook() {
     avatar: form.friendAvatar.value.trim(),
     color: form.themeColor.checked ? -1 : Number(form.friendColor.value),
   });
-}
-
-/** Kinwriter menu → "Surprise me": reroll who they are, filled in but not saved. */
-async function surpriseKinwriter() {
-  const button = $("surprise-friend");
-  const result = $("surprise-result");
-  button.disabled = true;
-  result.textContent = "Rolling…";
-  try {
-    const { name, prompt, seeds } = await api("POST", "/api/friend/random", {});
-    const form = $("friend-form").elements;
-    form.friendName.value = name;
-    form.friendPrompt.value = prompt;
-    previewKinwriterLook();
-    result.textContent = `Meet ${name} (${seeds}). Press Save to keep them, or roll again.`;
-  } catch (error) {
-    result.textContent = `✗ ${error.message}`;
-  } finally {
-    button.disabled = false;
-  }
 }
 
 /**
@@ -316,29 +301,24 @@ function openNewKinwriter(serverId) {
     ? "Another kinwriter here, with their own notebook, channels and memory. Their channels show under their name."
     : "A new kinwriter, with a server of their own. They start fresh: their own notebook, channels and memory, with your connection profiles and preferences.";
   $("new-server-name-row").hidden = Boolean(server);
-  $("new-friend-surprise-result").textContent = "";
-  state.newKinwriterTastes = "";
   hideFormError(form);
   $("new-friend-dialog").showModal();
 }
 
-async function surpriseNewKinwriter() {
-  const button = $("new-friend-surprise");
-  const result = $("new-friend-surprise-result");
-  button.disabled = true;
-  result.textContent = "Rolling…";
-  try {
-    const { name, prompt, tastes, seeds } = await api("POST", "/api/friend/random", {});
-    const form = $("new-friend-form").elements;
-    form.name.value = name;
-    form.prompt.value = prompt;
-    state.newKinwriterTastes = tastes ?? "";
-    result.textContent = `Meet ${name} (${seeds}). Roll again, or Create.`;
-  } catch (error) {
-    result.textContent = `✗ ${error.message}`;
-  } finally {
-    button.disabled = false;
-  }
+/** "Choose or make someone…": the seed picker (js/seeds.js). Accept makes them at once. */
+function chooseNewKinwriter() {
+  openSeedPicker({
+    accept: async (seedText) => {
+      const form = $("new-friend-form").elements;
+      const body = { seed: seedText, avatar: form.avatar.value, copyFrom: state.kinwriterId };
+      const serverId = state.newKinwriterServer;
+      const data = serverId
+        ? await api("POST", `/api/hub/servers/${encodeURIComponent(serverId)}/friends`, body)
+        : await api("POST", "/api/hub/servers", { ...body, serverName: form.serverName.value });
+      $("new-friend-dialog").close();
+      switchKinwriter(data.kinwriterId);
+    },
+  });
 }
 
 async function createKinwriter(event) {
@@ -346,8 +326,6 @@ async function createKinwriter(event) {
   const form = $("new-friend-form").elements;
   const body = { name: form.name.value, avatar: form.avatar.value, copyFrom: state.kinwriterId };
   if (form.prompt.value.trim()) body.prompt = form.prompt.value;
-  // Tastes rolled with "Surprise me" (theirs to rewrite from then on).
-  if (state.newKinwriterTastes) body.tastes = state.newKinwriterTastes;
   const button = $("new-friend-create");
   button.disabled = true;
   try {
@@ -471,12 +449,11 @@ $("open-friend-from-settings").addEventListener("click", () => {
 $("friend-form").addEventListener("submit", saveKinwriter);
 $("friend-form").addEventListener("input", previewKinwriterLook);
 $("friend-form").elements.oocBubbles.addEventListener("change", updateTextingOnly);
-$("surprise-friend").addEventListener("click", surpriseKinwriter);
 $("friend-delete").addEventListener("click", deleteKinwriter);
 $("friend-archive").addEventListener("click", archiveKinwriter);
 $("friend-move").addEventListener("click", moveKinwriterOut);
 $("new-friend-form").addEventListener("submit", createKinwriter);
-$("new-friend-surprise").addEventListener("click", surpriseNewKinwriter);
+$("new-friend-seed").addEventListener("click", chooseNewKinwriter);
 $("server-name").addEventListener("click", openServerSettings);
 $("server-form").addEventListener("submit", saveServer);
 $("server-delete").addEventListener("click", deleteServer);

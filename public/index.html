@@ -108,6 +108,13 @@
           d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a3 3 0 0 1 6 0v10.5a1.5 1.5 0 0 1-3 0V6H9v9.5a3 3 0 0 0 6 0V5a4.5 4.5 0 0 0-9 0v12.5a6 6 0 0 0 12 0V6h-1.5Z"
         />
       </symbol>
+      <symbol id="icon-note" viewBox="0 0 24 24">
+        <!-- A notepad with a pencil: a channel's scratchpad. -->
+        <path
+          fill="currentColor"
+          d="M5 3h10l4 4v5h-2V8h-3V5H5v14h6v2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 6h8v2H7V9Zm0 4h5v2H7v-2Zm13.3.3 1.4 1.4-6.3 6.3H14v-1.4l6.3-6.3Z"
+        />
+      </symbol>
       <symbol id="icon-menu" viewBox="0 0 24 24">
         <path fill="currentColor" d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z" />
       </symbol>
@@ -179,6 +186,9 @@
             <span id="channel-name"></span>
           </h2>
           <span class="channel-topic" id="channel-topic"></span>
+          <button id="scratchpad-button" class="icon-button" type="button" aria-label="Scratchpad" title="Scratchpad" hidden>
+            <svg width="20" height="20" aria-hidden="true"><use href="#icon-note" /></svg>
+          </button>
           <button
             id="channel-settings-button"
             class="icon-button"
@@ -756,8 +766,8 @@
     </dialog>
 
     <!--
-      The kinwriter's page (js/kinwriter-self.js): who they are and its changelog,
-      their self-page, their journal (counts only: it's private), and an
+      The kinwriter's page (js/kinwriter-self.js): their self-notes (private
+      unless they share them), their self-page, their journal (counts only: it's private), and an
       invitation to an orientation.
     -->
     <dialog id="self-dialog" class="dialog surface self-page">
@@ -772,29 +782,32 @@
       </div>
 
       <section class="self-section">
-        <h3 class="section-title">Who they are</h3>
-        <p class="hint">Theirs to write. Your changes are suggestions they accept or decline.</p>
-        <div class="self-text" id="self-identity"></div>
-        <h4 class="self-subtitle">Their tastes</h4>
-        <div class="self-text" id="self-tastes"></div>
-        <div id="self-identity-waiting"></div>
-        <details class="self-suggest" id="self-suggest">
-          <summary>Suggest a change</summary>
-          <label for="self-suggest-identity">Who they are</label>
-          <textarea id="self-suggest-identity" rows="5"></textarea>
-          <label for="self-suggest-tastes">Their tastes</label>
-          <textarea id="self-suggest-tastes" rows="3"></textarea>
-          <label for="self-suggest-note">Why (optional)</label>
-          <input id="self-suggest-note" autocomplete="off" />
-          <div class="dialog-buttons">
-            <span class="spacer"></span>
-            <button type="button" class="button button-primary" id="self-suggest-send">Suggest</button>
+        <h3 class="section-title">Their self-notes</h3>
+        <p class="hint" id="self-notes-intro">
+          Who they are, and their tastes, in their own words. Theirs to write, and private unless they share them.
+        </p>
+        <!-- Private: ask to read them. Shared: read them (never change them). -->
+        <div id="self-notes-private">
+          <p class="self-text self-empty" id="self-notes-status"></p>
+          <div class="memory-buttons">
+            <button type="button" class="button" id="self-notes-ask">Ask to read them</button>
+            <button type="button" class="link-button" id="self-notes-withdraw" hidden>Take my request back</button>
           </div>
-        </details>
-        <details class="self-changelog">
-          <summary>Changelog</summary>
-          <ol id="self-changelog" class="wake-log-list"></ol>
-        </details>
+        </div>
+        <div id="self-notes-shared" hidden>
+          <p class="hint" id="self-notes-meta"></p>
+          <div class="self-text" id="self-identity"></div>
+          <h4 class="self-subtitle">Their tastes</h4>
+          <div class="self-text" id="self-tastes"></div>
+          <div id="self-identity-waiting"></div>
+          <details class="self-changelog">
+            <summary>Changelog</summary>
+            <ol id="self-changelog" class="wake-log-list"></ol>
+          </details>
+        </div>
+        <div class="memory-buttons" data-developer hidden>
+          <button type="button" class="button" id="self-seed-vs-self">Seed vs. self (dev)</button>
+        </div>
       </section>
 
       <section class="self-section">
@@ -827,6 +840,12 @@
         <ul id="self-map" class="self-notes"></ul>
         <h4 class="self-subtitle">Reaching out</h4>
         <p class="hint" id="self-proactivity"></p>
+      </section>
+
+      <section class="self-section" id="self-scripts-section" hidden>
+        <h3 class="section-title">Their scripts</h3>
+        <p class="hint">Tools they've written down to run in order, exactly as written, and how each one last went.</p>
+        <ul id="self-scripts" class="self-notes"></ul>
       </section>
 
       <section class="self-section">
@@ -909,6 +928,22 @@
         may open this; opening it isn't logged or announced. Don't use it to read them.
       </p>
       <div id="developer-body"></div>
+      <!-- Data folders (public/js/datafolders.js): every kinwriter's, old and current. -->
+      <details id="data-folders" class="developer-folders">
+        <summary>Data folders: start fresh, old folders, export and import</summary>
+        <div id="data-folders-body"></div>
+      </details>
+      <div class="dialog-buttons">
+        <span class="spacer"></span>
+        <button type="button" class="button button-primary" data-close>Close</button>
+      </div>
+    </dialog>
+
+    <!-- A kinwriter in an old folder, read-only (public/js/datafolders.js). -->
+    <dialog id="old-kinwriter-dialog" class="dialog surface tool-log">
+      <h2 class="dialog-title" id="old-kinwriter-title">Old kinwriter</h2>
+      <p class="hint" id="old-kinwriter-where"></p>
+      <div id="old-kinwriter-body"></div>
       <div class="dialog-buttons">
         <span class="spacer"></span>
         <button type="button" class="button button-primary" data-close>Close</button>
@@ -927,8 +962,16 @@
           see it.
         </p>
 
-        <label for="friend-name-input">Name</label>
-        <input id="friend-name-input" name="friendName" autocomplete="off" />
+        <div class="grid assignment-grid">
+          <div>
+            <label for="friend-name-input">Name</label>
+            <input id="friend-name-input" name="friendName" autocomplete="off" />
+          </div>
+          <div>
+            <label for="friend-pronouns-input">Pronouns</label>
+            <input id="friend-pronouns-input" name="friendPronouns" autocomplete="off" maxlength="40" placeholder="Like she/her (optional)" />
+          </div>
+        </div>
 
         <div class="grid assignment-grid">
           <div>
@@ -944,19 +987,24 @@
           </div>
         </div>
 
-        <label for="setting-friend">Who your kinwriter is</label>
-        <p class="hint">
-          Their identity is theirs: a change you save here is a suggestion, which they accept or decline on their
-          next turn (see their page).
-        </p>
-        <textarea id="setting-friend" name="friendPrompt" rows="5"></textarea>
-        <div class="memory-buttons">
-          <button type="button" class="button" id="surprise-friend">🎲 Surprise me</button>
+        <div id="friend-self-notes">
+          <label for="setting-friend">Their self-notes</label>
+          <p class="hint" id="friend-self-notes-hint">
+            Who they are, in their own words. They share these with you to read: they're theirs to write, and they can
+            stop sharing at any time.
+          </p>
+          <textarea id="setting-friend" name="friendPrompt" rows="5" readonly></textarea>
         </div>
-        <p class="hint" id="surprise-result" role="status">
-          Reroll who they are from a few random ingredients. Nothing changes until you press Save, and then it's a
-          suggestion.
-        </p>
+
+        <label class="check-option">
+          <input type="checkbox" name="matchPace" />
+          <span
+            ><strong>Match my pace</strong><br /><span class="hint"
+              >In literary scenes, your kinwriter writes about as much as your latest post. Turn it off to let them
+              write as long as they like.</span
+            ></span
+          >
+        </label>
 
         <label class="check-option">
           <input type="checkbox" name="oocBubbles" />
@@ -977,6 +1025,18 @@
             <input id="setting-typing-speed" name="typingPerCharMs" type="number" min="0" max="1000" step="5" />
           </div>
         </div>
+
+        <label class="check-option">
+          <input type="checkbox" name="scripts" />
+          <span
+            ><strong>Scripts</strong><br /><span class="hint"
+              >Your kinwriter can write themselves scripts: tools in a fixed order that run exactly as written, in a
+              turn or on their own at a set time. If a step fails, they're told which one and why, and can fix it and
+              try again. They can also queue scripts to run one per turn, and take another turn when they ask for one
+              (up to 30 in a row before one has to come from you; Stop ends it).</span
+            ></span
+          >
+        </label>
 
         <!--
           One prompt per kind of channel. Only the one that applies is sent,
@@ -1014,9 +1074,9 @@
           <h2 class="dialog-title">Meet your new kinwriter</h2>
         </div>
         <p class="hint">
-          Who are they? Write them yourself, or roll someone and change whatever you like. Their identity is theirs
-          from the moment they're made, and their first turn of their own is an orientation, to find out what
-          suits them.
+          Who are they? Choose or make someone, or write them yourself. Who they are is theirs from the moment
+          they're made, and private unless they share it; their first turn of their own is an orientation, to find
+          out what suits them.
         </p>
         <div class="grid assignment-grid">
           <div>
@@ -1038,9 +1098,12 @@
         <label for="setup-tastes">Their tastes</label>
         <textarea id="setup-tastes" name="tastes" rows="3" placeholder="Optional: what they love, what bores them, what they'd never write. They can write this themselves later."></textarea>
         <div class="memory-buttons">
-          <button type="button" class="button" id="setup-surprise">🎲 Surprise me</button>
+          <button type="button" class="button button-primary" id="setup-seed">✨ Choose or make someone…</button>
         </div>
-        <p class="hint" id="setup-surprise-result" role="status"></p>
+        <p class="hint" id="setup-seed-result" role="status">
+          A ready-made kinwriter, a new one from tags you pick, or one generated from your idea. Or write them
+          yourself above.
+        </p>
         <p class="form-error" role="alert" hidden></p>
         <div class="dialog-buttons">
           <span class="spacer"></span>
@@ -1074,9 +1137,12 @@
         <label for="new-friend-prompt">Who they are</label>
         <textarea id="new-friend-prompt" name="prompt" rows="5" placeholder="Their personality and taste as a writer. Leave empty for the default."></textarea>
         <div class="memory-buttons">
-          <button type="button" class="button" id="new-friend-surprise">🎲 Surprise me</button>
+          <button type="button" class="button button-primary" id="new-friend-seed">✨ Choose or make someone…</button>
         </div>
-        <p class="hint" id="new-friend-surprise-result" role="status"></p>
+        <p class="hint" id="new-friend-seed-result" role="status">
+          A ready-made kinwriter, a new one from tags you pick, or one generated from your idea. Or write them
+          yourself above.
+        </p>
         <p class="form-error" role="alert" hidden></p>
         <div class="dialog-buttons">
           <span class="spacer"></span>
@@ -1084,6 +1150,142 @@
           <button type="submit" class="button button-primary" id="new-friend-create">Create</button>
         </div>
       </form>
+    </dialog>
+
+    <!--
+      The seed picker (js/seeds.js, design/kinwriter-generation/spec.md):
+      a default kinwriter, a new one from tags, or one generated from your
+      idea; then a preview, and Accept makes them. One screen at a time.
+    -->
+    <dialog id="seed-dialog" class="dialog surface seed-dialog">
+      <div class="seed-screen" data-screen="entry">
+        <h2 class="dialog-title">Who will they be?</h2>
+        <p class="hint">Pick someone ready-made, or make someone new. You'll see them before they're made.</p>
+        <div class="seed-cards" id="seed-cards"></div>
+        <div class="memory-buttons" data-developer hidden>
+          <button type="button" class="button" id="seed-test">Load test seed (dev)</button>
+          <button type="button" class="button" id="seed-check-files">Check files (dev)</button>
+        </div>
+      </div>
+
+      <div class="seed-screen" data-screen="tags" hidden>
+        <h2 class="dialog-title">Make a new one</h2>
+        <p class="hint">Pick what you like, or leave it to chance. Every choice starts on "Surprise me".</p>
+        <form id="seed-tags-form" class="seed-tags"></form>
+        <details class="seed-advanced" id="seed-advanced">
+          <summary>Advanced</summary>
+          <p class="hint" id="seed-advanced-empty">Pick a platform or a biggest influence above, and you can choose its corner here.</p>
+          <div id="seed-pockets"></div>
+        </details>
+        <label class="check-option">
+          <input type="checkbox" id="seed-blind" />
+          <span><strong>Surprise me, don't show me</strong><br /><span class="hint">Skip the preview and meet them fresh, in orientation.</span></span>
+        </label>
+        <div class="dialog-buttons">
+          <button type="button" class="button" data-seed-back="entry">Back</button>
+          <span class="spacer"></span>
+          <button type="button" class="button" id="seed-roll5" data-developer hidden>Roll 5 (dev)</button>
+          <button type="button" class="button button-primary" id="seed-generate">Make them</button>
+        </div>
+      </div>
+
+      <div class="seed-screen" data-screen="details" hidden>
+        <h2 class="dialog-title">Primary social media</h2>
+        <p class="hint">Where someone spent their time online leaves habits: how they joke, react, and take feedback. Each one, and the tics it leaves.</p>
+        <div id="seed-details"></div>
+        <div class="dialog-buttons">
+          <span class="spacer"></span>
+          <button type="button" class="button" data-seed-back="tags">Back to tags</button>
+        </div>
+      </div>
+
+      <div class="seed-screen" data-screen="idea" hidden>
+        <h2 class="dialog-title">Generate from idea</h2>
+        <p class="hint">Write as much or as little as you like: a vibe, a voice, a few traits, a whole person. The rest is filled in for you.</p>
+        <textarea id="seed-idea-text" rows="7" maxlength="4000" placeholder="A retired stage actor who still can't resist a dramatic entrance, writes gothic romance, and gives notes like a director."></textarea>
+        <div class="dialog-buttons">
+          <button type="button" class="button" data-seed-back="entry">Back</button>
+          <span class="spacer"></span>
+          <button type="button" class="button button-primary" id="seed-idea-generate">Make them</button>
+        </div>
+      </div>
+
+      <div class="seed-screen" data-screen="busy" hidden>
+        <h2 class="dialog-title">Meeting someone…</h2>
+        <p class="hint" id="seed-busy-text" role="status">Writing their seed. This takes a moment.</p>
+      </div>
+
+      <div class="seed-screen" data-screen="error" hidden>
+        <h2 class="dialog-title">That didn't work</h2>
+        <p class="form-error" id="seed-error-text" role="alert"></p>
+        <div class="dialog-buttons">
+          <button type="button" class="button" id="seed-error-back">Back</button>
+          <span class="spacer"></span>
+          <button type="button" class="button" id="seed-error-raw" data-developer hidden>Raw output (dev)</button>
+          <button type="button" class="button button-primary" id="seed-retry">Try again</button>
+        </div>
+      </div>
+
+      <div class="seed-screen" data-screen="preview" hidden>
+        <div class="seed-preview-head">
+          <h2 class="dialog-title" id="seed-preview-name"></h2>
+          <span class="hint" id="seed-preview-pronouns"></span>
+        </div>
+        <div class="seed-chips" id="seed-preview-chips"></div>
+        <div class="seed-body" id="seed-preview-body"></div>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="memory-buttons" data-developer hidden>
+          <button type="button" class="button" id="seed-show-prompt">Show prompt (dev)</button>
+          <button type="button" class="button" id="seed-raw">Raw output (dev)</button>
+          <button type="button" class="button" id="seed-trace">Trace (dev)</button>
+        </div>
+        <div class="dialog-buttons seed-preview-buttons">
+          <button type="button" class="button" id="seed-back-tags">Back to tags</button>
+          <button type="button" class="button" id="seed-back-entry">Back</button>
+          <button type="button" class="button" id="seed-reroll" title="Same tags and chosen corners, a new person">Reroll</button>
+          <button type="button" class="button" id="seed-reroll-dice" title="Re-roll only what chance picked">🎲 Reroll the dice</button>
+          <span class="spacer"></span>
+          <button type="button" class="button" id="seed-edit">Edit</button>
+          <button type="button" class="button button-primary" id="seed-accept">Accept</button>
+        </div>
+      </div>
+
+      <form class="seed-screen" data-screen="edit" id="seed-edit-form" hidden>
+        <h2 class="dialog-title">Edit</h2>
+        <div class="grid assignment-grid">
+          <div>
+            <label for="seed-edit-name">Name</label>
+            <input id="seed-edit-name" name="name" autocomplete="off" maxlength="40" required />
+          </div>
+          <div>
+            <label for="seed-edit-pronouns">Pronouns</label>
+            <input id="seed-edit-pronouns" name="pronouns" autocomplete="off" maxlength="40" required />
+          </div>
+        </div>
+        <label for="seed-edit-body">Who they are</label>
+        <p class="hint">Keep the seven headings as they are; change anything under them.</p>
+        <textarea id="seed-edit-body" name="body" rows="16"></textarea>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="dialog-buttons">
+          <button type="button" class="button" id="seed-edit-cancel">Cancel</button>
+          <span class="spacer"></span>
+          <button type="submit" class="button button-primary">Save</button>
+        </div>
+      </form>
+
+      <div class="seed-screen" data-screen="dev" hidden>
+        <h2 class="dialog-title" id="seed-dev-title">Dev</h2>
+        <div id="seed-dev-body" class="seed-dev"></div>
+        <div class="dialog-buttons">
+          <span class="spacer"></span>
+          <button type="button" class="button" id="seed-dev-back">Back</button>
+        </div>
+      </div>
+
+      <div class="dialog-buttons seed-close">
+        <span class="spacer"></span>
+        <button type="button" class="link-button" data-close>Close</button>
+      </div>
     </dialog>
 
     <!-- A server: its name, its kinwriters, and deleting it. -->
@@ -1197,6 +1399,59 @@
         <span class="spacer"></span>
         <button type="button" class="button button-primary" data-close>Done</button>
       </div>
+    </dialog>
+
+    <!-- A story channel's scratchpads: the shared one, and yours (js/scratchpad.js). -->
+    <dialog id="scratchpad-dialog" class="dialog surface scratchpad">
+      <h2 class="dialog-title">Scratchpad <span class="scratchpad-channel" id="scratchpad-channel"></span></h2>
+      <div class="prompts-tabs scratchpad-tabs" role="tablist">
+        <button type="button" class="button prompts-tab scratchpad-tab" role="tab" data-pad="shared" aria-selected="true">Shared</button>
+        <button type="button" class="button prompts-tab scratchpad-tab" role="tab" data-pad="mine" aria-selected="false">Just mine</button>
+      </div>
+      <p class="hint" id="scratchpad-hint"></p>
+      <textarea id="scratchpad-text" class="scratchpad-text" rows="14" spellcheck="true" aria-label="Scratchpad"></textarea>
+      <p class="hint scratchpad-status" id="scratchpad-status"></p>
+      <p class="form-error" role="alert" hidden></p>
+      <div class="dialog-buttons">
+        <button type="button" class="button" id="scratchpad-undo">Undo last change</button>
+        <button type="button" class="button" id="scratchpad-commit">Save to notebook…</button>
+        <span class="spacer"></span>
+        <button type="button" class="button button-primary" id="scratchpad-done">Done</button>
+      </div>
+    </dialog>
+
+    <!-- Saving a passage of a scratchpad to the notebook (js/scratchpad.js). -->
+    <dialog id="scratchpad-commit-dialog" class="dialog surface">
+      <form id="scratchpad-commit-form" method="dialog">
+        <h2 class="dialog-title">Save to notebook</h2>
+        <pre id="scratchpad-commit-passage" class="library-passage scratchpad-passage"></pre>
+        <label class="check-option"><input type="radio" name="target" value="new" checked /> A new entry</label>
+        <label class="check-option"><input type="radio" name="target" value="existing" /> Add to an entry</label>
+        <div id="scratchpad-commit-new">
+          <label for="scratchpad-commit-name">Name</label>
+          <input id="scratchpad-commit-name" autocomplete="off" maxlength="100" />
+          <label for="scratchpad-commit-kind">Kind</label>
+          <select id="scratchpad-commit-kind">
+            <option value="lore">Lore</option>
+            <option value="character">Character</option>
+          </select>
+          <label class="check-option"><input type="checkbox" id="scratchpad-commit-pin" checked /> Pin it to this channel</label>
+        </div>
+        <div id="scratchpad-commit-existing" hidden>
+          <label for="scratchpad-commit-entry">Entry</label>
+          <select id="scratchpad-commit-entry"></select>
+        </div>
+        <label for="scratchpad-commit-field">Field</label>
+        <p class="hint">Where it goes in the entry. It's added after what's already there.</p>
+        <input id="scratchpad-commit-field" autocomplete="off" maxlength="60" placeholder="Details" />
+        <label class="check-option"><input type="checkbox" id="scratchpad-commit-keep" /> Keep it in the scratchpad too</label>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="dialog-buttons">
+          <span class="spacer"></span>
+          <button type="button" class="button" data-close>Cancel</button>
+          <button type="submit" class="button button-primary">Save</button>
+        </div>
+      </form>
     </dialog>
 
     <!-- Adding a document to the library, or changing one. -->
@@ -1426,6 +1681,16 @@
           >
         </label>
 
+        <label class="check-option">
+          <input type="checkbox" name="kinwriterMaker" />
+          <span
+            ><strong>Use for creating kinwriters</strong><br /><span class="hint"
+              >This profile writes new kinwriters' seeds (from tags, or from your idea), with its own settings. Only one
+              profile can have it on. With none, the default profile does it. Best for a strong model.</span
+            ></span
+          >
+        </label>
+
         <label for="profile-quirk">Model notes</label>
         <p class="hint">
           Tame this model's habits, e.g. "Don't restate the scene." Not for personality: that's the kinwriter prompts.
@@ -1529,6 +1794,18 @@
       <h2 class="dialog-title">History</h2>
       <p class="hint" id="history-note"></p>
       <ol id="history-list" class="tool-log-list"></ol>
+      <p class="form-error" role="alert" hidden></p>
+      <div class="dialog-buttons">
+        <span class="spacer"></span>
+        <button type="button" class="button button-primary" data-close>Close</button>
+      </div>
+    </dialog>
+
+    <!-- Where the conversation went from a message: its branches (js/branches.js). -->
+    <dialog id="branches-dialog" class="dialog surface tool-log">
+      <h2 class="dialog-title">Branches</h2>
+      <p class="hint" id="branches-note"></p>
+      <ol id="branches-list" class="tool-log-list"></ol>
       <p class="form-error" role="alert" hidden></p>
       <div class="dialog-buttons">
         <span class="spacer"></span>

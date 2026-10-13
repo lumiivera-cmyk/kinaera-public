@@ -154,6 +154,7 @@ export async function sendComment(event) {
     try {
       const data = await request;
       acceptThread(data.thread);
+      state.reasoning.push(...(data.reasoning ?? []));
       if (data.toolCalls?.length) {
         state.toolCalls.push(...data.toolCalls);
         refreshNotebook().catch(() => {});

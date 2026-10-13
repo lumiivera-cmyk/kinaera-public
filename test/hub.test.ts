@@ -79,7 +79,10 @@ describe("a new kinwriter", () => {
     expect(existsSync(join(dir.path, "friends", wren, "kinaera.db"))).toBe(true);
 
     const state = (await call("GET", `/p/${wren}/api/state`)).data;
-    expect(state.settings).toMatchObject({ friendName: "Wren", friendPrompt: "You are Wren.", friendAvatar: "🐦", decisionConfidence: 0.9 });
+    expect(state.settings).toMatchObject({ friendName: "Wren", friendAvatar: "🐦", decisionConfidence: 0.9 });
+    // Who they are is their self-notes: private, so the app doesn't get it (src/selfnotes.ts).
+    expect(state.settings.friendPrompt).toBe("");
+    expect(hub.apps.get(wren)!.store.identity.current()!.identity).toBe("You are Wren.");
     // Not Arlo's prompts…
     expect(state.settings.literaryPrompt).not.toBe("Arlo's style");
     // …the same connection profiles (same ids, so assignments carry over)…
@@ -123,8 +126,11 @@ describe("orientation in a hub", () => {
   test("only the kinwriter orienting is unavailable; the others work, and their card says so", async () => {
     const serverId = (await call("GET", "/api/hub")).data.servers[0].id;
     const wren = (await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Wren" })).data.kinwriterId;
-    fake.replies.push({ content: "[nothing]" });
+    // First their practice world (unreadable here: the built-in one is used), then their turn.
+    fake.replies.push({ content: "(no world)" }, { content: "[nothing]" });
     await call("POST", "/p/home/api/orientation/start", { version: "full" });
+    for (let i = 0; i < 200 && fake.requests.length < 2; i++) await Bun.sleep(5);
+    for (let i = 0; i < 200 && hub.apps.get("home")!.kinwriter.busyChannels().length > 0; i++) await Bun.sleep(5);
     const friends = (await call("GET", "/api/hub")).data.servers[0].friends;
     expect(friends.map((f: any) => [f.name, f.orienting])).toEqual([["Arlo", true], ["Wren", false]]);
     // Wren works as ever.
@@ -132,6 +138,27 @@ describe("orientation in a hub", () => {
     fake.replies.push({ content: "hi" });
     expect((await call("POST", `/p/${wren}/api/channels/${wrenOoc.id}/messages`, { content: "hey" })).status).toBe(200);
     await call("POST", "/p/home/api/orientation/finish", {});
+  });
+});
+
+describe("deleting a kinwriter mid-orientation", () => {
+  test("their orientation just ends; the server and everyone else keep going", async () => {
+    const serverId = (await call("GET", "/api/hub")).data.servers[0].id;
+    const wren = (await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Wren" })).data.kinwriterId;
+    // Their practice world, then a slow turn: still writing when they're deleted.
+    fake.replies.push({ content: "(no world)" }, { content: "*waves*", delayMs: 150 });
+    for (let i = 0; i < 12; i++) fake.replies.push({ content: "[nothing]" });
+    await call("POST", `/p/${wren}/api/orientation/start`, { version: "returning" });
+    for (let i = 0; i < 200 && fake.requests.length < 2; i++) await Bun.sleep(5);
+    expect((await call("DELETE", `/api/hub/friends/${wren}`)).status).toBe(200);
+    // The slow turn comes back to a closed store: nothing is thrown.
+    await Bun.sleep(300);
+    expect(hub.apps.has(wren)).toBe(false);
+    fake.replies.unshift({ content: "still here" });
+    const ooc = hub.apps.get("home")!.store.listChannels().find((c) => c.kind === "ooc")!;
+    const reply = await call("POST", `/p/home/api/channels/${ooc.id}/messages`, { content: "hey" });
+    expect(reply.status).toBe(200);
+    expect(reply.data.kinwriterMessages[0].content).toBe("still here");
   });
 });
 

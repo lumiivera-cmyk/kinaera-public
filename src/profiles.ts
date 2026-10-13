@@ -86,6 +86,10 @@ function profileInput(input: Record<string, unknown>): Partial<Profile> {
     if (typeof input.consultant !== "boolean") throw new ValidationError("consultant must be true or false");
     clean.consultant = input.consultant;
   }
+  if (input.kinwriterMaker !== undefined) {
+    if (typeof input.kinwriterMaker !== "boolean") throw new ValidationError("kinwriterMaker must be true or false");
+    clean.kinwriterMaker = input.kinwriterMaker;
+  }
   if (input.quirkPrompt !== undefined) clean.quirkPrompt = text(input.quirkPrompt, "quirkPrompt", 20_000, false);
   if (input.extraParams !== undefined) {
     clean.extraParams = text(input.extraParams, "extraParams", 5_000, false);
@@ -107,6 +111,7 @@ interface ProfileRow {
   reasoning_effort: ReasoningEffort | null;
   supports_tools: number;
   consultant: number;
+  kinwriter_maker: number;
   quirk_prompt: string;
   extra_params: string;
   position: number;
@@ -125,6 +130,7 @@ function toProfile(row: ProfileRow): Profile {
     reasoningEffort: row.reasoning_effort,
     supportsTools: row.supports_tools === 1,
     consultant: row.consultant === 1,
+    kinwriterMaker: row.kinwriter_maker === 1,
     quirkPrompt: row.quirk_prompt,
     extraParams: row.extra_params,
     position: row.position,
@@ -159,9 +165,9 @@ export class Profiles {
     this.db
       .query(
         `INSERT INTO profiles (id, name, model, temperature, max_tokens, top_p, min_p, reasoning_effort, supports_tools,
-                               consultant, quirk_prompt, extra_params, position, created_at)
+                               consultant, kinwriter_maker, quirk_prompt, extra_params, position, created_at)
          VALUES ($id, $name, $model, $temperature, $maxTokens, $topP, $minP, $reasoningEffort, $supportsTools,
-                 $consultant, $quirkPrompt, $extraParams, $position, $now)`,
+                 $consultant, $kinwriterMaker, $quirkPrompt, $extraParams, $position, $now)`,
       )
       .run({
         id,
@@ -174,11 +180,13 @@ export class Profiles {
         reasoningEffort: clean.reasoningEffort ?? null,
         supportsTools: clean.supportsTools === false ? 0 : 1,
         consultant: clean.consultant ? 1 : 0,
+        kinwriterMaker: clean.kinwriterMaker ? 1 : 0,
         quirkPrompt: clean.quirkPrompt ?? "",
         extraParams: clean.extraParams ?? "",
         position: next,
         now: new Date().toISOString(),
       });
+    if (clean.kinwriterMaker) this.onlyMaker(id);
     return this.get(id);
   }
 
@@ -189,7 +197,7 @@ export class Profiles {
       .query(
         `UPDATE profiles SET name = $name, model = $model, temperature = $temperature, max_tokens = $maxTokens,
                 top_p = $topP, min_p = $minP, reasoning_effort = $reasoningEffort, supports_tools = $supportsTools, consultant = $consultant,
-                quirk_prompt = $quirkPrompt, extra_params = $extraParams
+                kinwriter_maker = $kinwriterMaker, quirk_prompt = $quirkPrompt, extra_params = $extraParams
           WHERE id = $id`,
       )
       .run({
@@ -203,10 +211,37 @@ export class Profiles {
         reasoningEffort: merged.reasoningEffort,
         supportsTools: merged.supportsTools ? 1 : 0,
         consultant: merged.consultant ? 1 : 0,
+        kinwriterMaker: merged.kinwriterMaker ? 1 : 0,
         quirkPrompt: merged.quirkPrompt,
         extraParams: merged.extraParams,
       });
+    if (merged.kinwriterMaker) this.onlyMaker(id);
     return this.get(id);
+  }
+
+  /** "Use for creating kinwriters" is on for one profile at most: turning it on turns it off everywhere else. */
+  private onlyMaker(id: string): void {
+    this.db.query("UPDATE profiles SET kinwriter_maker = 0 WHERE id != $id").run({ id });
+  }
+
+  /**
+   * The profile that writes new kinwriters' seeds (src/generator.ts): the
+   * one marked "Use for creating kinwriters", or else the default (what
+   * OOC is assigned to, if that's a profile; otherwise the first profile).
+   * Never a roulette: a seed is written once, by one strong model.
+   */
+  kinwriterMaker(defaultAssignment: string): Profile {
+    const row = this.db.query("SELECT * FROM profiles WHERE kinwriter_maker = 1 ORDER BY position LIMIT 1").get() as ProfileRow | null;
+    if (row) return toProfile(row);
+    const [kind, id] = splitAssignment(defaultAssignment);
+    if (kind === "profile") {
+      try {
+        return this.get(id);
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+      }
+    }
+    return this.list()[0]!;
   }
 
   /**

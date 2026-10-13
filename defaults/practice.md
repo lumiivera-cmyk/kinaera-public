@@ -1,24 +1,26 @@
 # Practice notes
 
-Sample notebook entries for the practice channel, where your kinwriter tries
-out their tools during orientation. They're in a "Practice" folder of their
-own, pinned only to the practice channel, and left out of every other
-prompt and listing. Each `## Name (character)` or `## Name (lore)` section
-is one entry; each `Label: text` line is one field.
+The built-in practice notes, used only when a practice world can't be
+written for your kinwriter (no model reachable, or a reply Kinaera couldn't
+read: see defaults/practice-world.md). Usually each orientation gets a world
+of its own, made from who they are. The notes are in a "Practice" folder,
+pinned only to the practice channel, and left out of every other prompt and
+listing. Each `## Name (character)` or `## Name (lore)` section is one entry;
+each `Label: text` line is one field.
 
-## Marrowby (lore)
+## The Ninth Arcade (lore)
 
-Summary: A harbour town of slate roofs and gulls, where the tide comes in fast and the fish market opens before dawn.
-Details: The harbour master rings a bell twice for a storm and three times for a wedding. The bakery on Quay Street is the only place open after dark.
+Summary: A covered market under a city's old railway viaduct, where stalls are rented by the hour and the trains overhead set the time.
+Details: Nobody haggles before the 6:40 freight has passed. A stall left empty three days running goes to whoever chalks their name on its shutter first.
 
-## Fen Aldous (character)
+## Odile Varga (character)
 
-Pronouns: he/him
-Age: 61
-Personality: Unhurried, fond of riddles, keeps a list of everyone who owes him a loaf.
-Background: Has run the Quay Street bakery for thirty years. Once sailed as a ship's cook, and still ties his apron with a sailor's knot.
+Pronouns: she/her
+Age: 58
+Personality: Brisk, exact, and secretly sentimental about anything with a mainspring.
+Background: Has mended clocks at the same stall for twenty-two years. Keeps every part she has ever replaced, labelled, in tins under the counter.
 
-## The Lantern Fair (lore)
+## The Long Count (lore)
 
-Summary: Marrowby's midwinter fair, when every window holds a lantern and the harbour is strung with lights.
-Details: Held on the longest night. Whoever carries the last lantern home is said to be lucky for a year.
+Summary: The night each year when the arcade's ledgers are audited by candle, stall by stall.
+Details: Any stall still in debt at midnight is auctioned before dawn, contents and all.

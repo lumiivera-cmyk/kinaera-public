@@ -12,6 +12,7 @@ import { highlightRewrites, openRewrite, rewritesOn, rewriteSummary } from "./re
 import { autoGrow, renderAttachments } from "./composer.js";
 import { $, api, channelPath, currentChannel, els, hideError, showError, state } from "./core.js";
 import { badge, formatText, formatTime, hueFor, initial } from "./format.js";
+import { branchesAt, goBack, openBranches } from "./branches.js";
 import { openHistory } from "./history.js";
 import { checkForUpdate } from "./live.js";
 import { refreshNotebook } from "./notebook.js";
@@ -80,9 +81,10 @@ export async function refreshMessages(onAbandon) {
   const channelId = state.channelId;
   if (!channelId) return;
   try {
-    const { messages, flags, rewrites } = await api("GET", channelPath("messages", channelId));
+    const { messages, flags, rewrites, branches } = await api("GET", channelPath("messages", channelId));
     if (state.channelId !== channelId) return;
     state.messages = messages;
+    state.branches = branches ?? state.branches;
     state.rewrites = rewrites ?? state.rewrites;
     if (flags) state.flags = flags;
     onAbandon?.(messages);
@@ -288,17 +290,30 @@ export async function kinwriterTurn() {
  *
  * @param profileId  Write with this profile. Without one, the channel's
  *                   profile or roulette picks again.
+ * @param messageId  An earlier reply to regenerate instead: what came after
+ *                   it is kept as a branch (js/branches.js).
  */
-export async function regenerate(profileId) {
+export async function regenerate(profileId, messageId) {
+  if (messageId) {
+    const after = state.messages.length - 1 - state.messages.findIndex((m) => m.id === messageId);
+    if (!confirm(`Regenerate this reply? The ${after} message${after === 1 ? "" : "s"} after it are kept as a branch, which comes back with this version of the reply.`)) return;
+  }
   await runTurn(
     "regenerate",
     (data) => {
+      if (data.branched) {
+        // Messages left the chat: reload it, with its branches.
+        state.toolCalls.push(...(data.toolCalls ?? []));
+        if (data.channels) state.channels = data.channels;
+        refreshMessages().catch(() => {});
+        return;
+      }
       const replaced = new Set(data.replacedIds);
       state.messages = state.messages.filter((m) => !replaced.has(m.id));
       acceptTurn(data);
     },
-    () => regenerate(profileId),
-    profileId ? { profileId } : {},
+    () => regenerate(profileId, messageId),
+    { ...(profileId ? { profileId } : {}), ...(messageId ? { messageId } : {}) },
   );
 }
 
@@ -355,6 +370,7 @@ function acceptTurn(data) {
     state.messages.push(...data.kinwriterMessages);
   }
   state.toolCalls.push(...(data.toolCalls ?? []));
+  state.reasoning.push(...(data.reasoning ?? []));
   if (data.channels) state.channels = data.channels;
   const skippedNotice = `${state.settings.friendName} chose not to reply this time.`;
   if (data.skipped && data.kinwriterMessages.length === 0) {
@@ -425,6 +441,8 @@ async function deleteMessage(id) {
   if (!confirm("Delete this message?")) return;
   try {
     await api("DELETE", `/api/messages/${encodeURIComponent(id)}`, {});
+    // Branches after it move to the message before: reload to show them there.
+    if (branchesAt(id).length > 0) return refreshMessages();
     state.messages = state.messages.filter((m) => m.id !== id);
     renderMessages();
   } catch (error) {
@@ -461,8 +479,20 @@ export function renderMessages() {
   // Tool calls grouped by turn. Turns that wrote messages show their actions
   // under them; turns that only acted are shown on their own, in time order.
   const turns = toolCallsByTurn();
+  const thoughts = reasoningByTurn();
   const turnsWithMessages = new Set(state.messages.map((m) => m.turnId).filter(Boolean));
-  const loose = [...turns].filter(([turnId]) => !turnsWithMessages.has(turnId));
+  // Turns that wrote nothing, with what they did or thought, oldest first.
+  const loose = [...new Set([...turns.keys(), ...thoughts.keys()])]
+    .filter((turnId) => !turnsWithMessages.has(turnId))
+    .map((turnId) => [turnId, (thoughts.get(turnId) ?? turns.get(turnId))[0].createdAt])
+    .sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  // What a turn did and thought, under its messages (or on its own).
+  const afterTurn = (turnId) => {
+    const parts = [];
+    if (thoughts.has(turnId)) parts.push(renderReasoning(turnId, thoughts.get(turnId)));
+    if (turns.has(turnId)) parts.push(renderActivity(turnId, turns.get(turnId)));
+    return parts;
+  };
 
   if (state.messages.length === 0 && loose.length === 0) {
     els.messages.append(
@@ -479,14 +509,15 @@ export function renderMessages() {
   // bubble of the last reply; the button goes on the last one.
   const last = state.messages.at(-1);
   // Not in a group channel or DM: the others have already seen it.
-  const canRegenerate = last?.kind === "post" && last.author === "friend" && !isShared(currentChannel());
+  const canBranch = !isShared(currentChannel());
+  const canRegenerate = last?.kind === "post" && last.author === "friend" && canBranch;
 
   let previous = null;
   state.messages.forEach((message, index) => {
     // Actions from turns that wrote nothing, before this message.
-    while (loose.length && loose[0][1][0].createdAt <= message.createdAt) {
-      const [turnId, calls] = loose.shift();
-      els.messages.append(renderActivity(turnId, calls));
+    while (loose.length && loose[0][1] <= message.createdAt) {
+      const [turnId] = loose.shift();
+      els.messages.append(...afterTurn(turnId));
       previous = null;
     }
     const element =
@@ -495,16 +526,19 @@ export function renderMessages() {
         : renderMessage(message, {
             continued: continuesGroup(previous, message),
             regenerate: canRegenerate && message === last,
+            // Earlier messages: go back to them, or regenerate an earlier reply (the
+            // last bubble of it), keeping what came after as a branch.
+            branch: canBranch && message !== last,
+            regenerateEarlier:
+              canBranch && message !== last && message.author === "friend" && (!message.turnId || state.messages[index + 1]?.turnId !== message.turnId),
           });
     els.messages.append(element);
     previous = message;
     // After a turn's last message, the actions it took.
     const next = state.messages[index + 1];
-    if (message.turnId && turns.has(message.turnId) && next?.turnId !== message.turnId) {
-      els.messages.append(renderActivity(message.turnId, turns.get(message.turnId)));
-    }
+    if (message.turnId && next?.turnId !== message.turnId) els.messages.append(...afterTurn(message.turnId));
   });
-  for (const [turnId, calls] of loose) els.messages.append(renderActivity(turnId, calls));
+  for (const [turnId] of loose) els.messages.append(...afterTurn(turnId));
 }
 
 /**
@@ -640,8 +674,10 @@ function authorOf(message) {
  *
  * @param options.continued   Hide the avatar and name (see `continuesGroup`).
  * @param options.regenerate  Show the Regenerate button.
+ * @param options.branch      Show "Go back here" (js/branches.js).
+ * @param options.regenerateEarlier  Show Regenerate for an earlier reply.
  */
-function renderMessage(message, { continued = false, regenerate: showRegenerate = false } = {}) {
+function renderMessage(message, { continued = false, regenerate: showRegenerate = false, branch = false, regenerateEarlier = false } = {}) {
   const { name, badge } = authorOf(message);
   const pending = message.id === "pending";
   const mode = message.mode ?? "ooc";
@@ -705,6 +741,17 @@ function renderMessage(message, { continued = false, regenerate: showRegenerate 
     history.title = message.alternates > 0 ? `Regenerated: ${message.alternates} earlier ${message.alternates === 1 ? "reply" : "replies"} kept. Tap for history.` : "Tap for its history";
     history.addEventListener("click", () => openHistory(message.id));
     meta.append(history);
+  }
+  // Branches: other ways the conversation went on from here.
+  const forks = branchesAt(message.id).length;
+  if (forks > 0) {
+    const tree = document.createElement("button");
+    tree.type = "button";
+    tree.className = "message-history";
+    tree.textContent = `⑂ ${forks + 1}`;
+    tree.title = `${forks} other ${forks === 1 ? "branch" : "branches"} from here. Tap to see them.`;
+    tree.addEventListener("click", () => openBranches(message.id));
+    meta.append(tree);
   }
   if (message.model) {
     const model = document.createElement("span");
@@ -793,6 +840,8 @@ function renderMessage(message, { continued = false, regenerate: showRegenerate 
     actions.append(actionButton("Regenerate", () => regenerate(), busy));
     if (state.profiles.length > 1) actions.append(actionButton("Regenerate with…", openRegenerateWith, busy));
   }
+  if (regenerateEarlier) actions.append(actionButton("Regenerate", () => regenerate(undefined, message.id), busy));
+  if (branch) actions.append(actionButton("Go back here", () => goBack(message), busy));
   root.append(actions);
   return root;
 }
@@ -873,6 +922,56 @@ function toolCallsByTurn() {
     turns.get(call.turnId).push(call);
   }
   return turns;
+}
+
+/** The open channel's reasoning, grouped by turn: Map of turnId → rounds. */
+function reasoningByTurn() {
+  const turns = new Map();
+  for (const entry of state.reasoning) {
+    if (!turns.has(entry.turnId)) turns.set(entry.turnId, []);
+    turns.get(entry.turnId).push(entry);
+  }
+  return turns;
+}
+
+/**
+ * A thinking model's reasoning for one turn: a folded line that opens into
+ * what it thought, round by round (rounds come between tool calls).
+ */
+function renderReasoning(turnId, rounds) {
+  const root = document.createElement("div");
+  root.className = "activity reasoning";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "activity-summary";
+  const open = state.openReasoning.has(turnId);
+  toggle.setAttribute("aria-expanded", String(open));
+  const words = rounds.reduce((n, r) => n + r.text.split(/\s+/).filter(Boolean).length, 0);
+  toggle.textContent = `💭 ${state.settings.friendName}'s reasoning · ${words} word${words === 1 ? "" : "s"}`;
+  toggle.addEventListener("click", () => {
+    if (state.openReasoning.has(turnId)) state.openReasoning.delete(turnId);
+    else state.openReasoning.add(turnId);
+    renderMessages();
+  });
+  root.append(toggle);
+  if (open) {
+    const list = document.createElement("div");
+    list.className = "reasoning-details";
+    for (const entry of rounds) {
+      if (rounds.length > 1 || entry.round > 0) {
+        const head = document.createElement("p");
+        head.className = "reasoning-round";
+        head.textContent = `Round ${entry.round + 1}${entry.model ? ` · ${entry.model}` : ""}`;
+        list.append(head);
+      }
+      const text = document.createElement("pre");
+      text.className = "reasoning-text";
+      text.textContent = entry.text;
+      list.append(text);
+    }
+    root.append(list);
+  }
+  return root;
 }
 
 /** One turn's actions: a summary line that opens into the details. */

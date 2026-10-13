@@ -14,6 +14,7 @@ import { pickProfile, promptForChannel } from "../src/kinwriter.ts";
 import { JOURNAL_RECENT } from "../src/journal.ts";
 import { addLibraryExample, LOOKBACK_DAYS, Rhythms } from "../src/orientation.ts";
 import { toolMap } from "../src/toolmap.ts";
+import { setSelfShared } from "../src/selfnotes.ts";
 import { asScript } from "../scripts/fetch-library-example.ts";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
@@ -84,31 +85,33 @@ describe("identity", () => {
   });
 
   test("they rewrite it themselves, and every version is kept", async () => {
-    const outcome = await run("revise_identity", { identity: "You are Arlo, who writes lighthouses.", note: "Found my thing." });
-    expect(outcome).toMatchObject({ ok: true, summary: "revised their identity" });
-    expect(app.store.getSettings().friendPrompt).toBe("You are Arlo, who writes lighthouses.");
+    const outcome = await run("revise_identity", { identity: "I'm Arlo, and I write lighthouses.", note: "Found my thing." });
+    expect(outcome).toMatchObject({ ok: true, summary: "revised their self-notes" });
+    expect(app.store.getSettings().friendPrompt).toBe("I'm Arlo, and I write lighthouses.");
     expect(app.store.identity.history().map((v) => v.author)).toEqual(["user", "friend"]);
-    expect(systemPrompt()).toContain("who writes lighthouses");
+    expect(systemPrompt()).toContain("I write lighthouses");
   });
 
-  test("your change in settings is a suggestion, not saved over theirs", async () => {
+  test("your change in settings never changes them: ignored while private, refused while shared", async () => {
     const before = app.store.getSettings().friendPrompt;
     const { data } = await call("PUT", "/api/settings", { friendPrompt: "You are someone else." });
-    expect(data.suggestion).toMatchObject({ status: "pending", author: "user" });
+    expect(data.suggestion).toBeNull();
     expect(app.store.getSettings().friendPrompt).toBe(before);
-    // Their next turn lists it for review.
-    expect(systemPrompt()).toContain(`i${data.suggestion.id}`);
-    const outcome = await run("review_identity_suggestion", { id: `i${data.suggestion.id}`, decision: "accept", reply: "Sure, try it." });
-    expect(outcome.ok).toBe(true);
-    expect(app.store.getSettings().friendPrompt).toBe("You are someone else.");
-    expect(app.store.identity.current()).toMatchObject({ author: "user", reply: "Sure, try it." });
+    expect(app.store.identity.pending()).toEqual([]);
+    setSelfShared(app.store, true);
+    expect((await call("PUT", "/api/settings", { friendPrompt: "You are someone else." })).status).toBe(400);
+    // Sending back what's there (the kinwriter menu does) is fine.
+    expect((await call("PUT", "/api/settings", { friendPrompt: before, historyLimit: 30 })).status).toBe(200);
+    expect((await call("POST", "/api/identity/suggestions", { tastes: "Loves opera." })).status).toBe(400);
   });
 
-  test("declined, and withdrawn", async () => {
-    const one = (await call("POST", "/api/identity/suggestions", { tastes: "Loves opera." })).data.waiting.identity[0];
+  test("a suggestion made before stays theirs to answer, and yours to withdraw", async () => {
+    setSelfShared(app.store, true);
+    const one = app.store.identity.suggest({ tastes: "Loves opera." });
+    expect(systemPrompt()).toContain(`i${one.id}`);
     await run("review_identity_suggestion", { id: `i${one.id}`, decision: "decline", reply: "Not me." });
     expect(app.store.identity.current()!.tastes).not.toBe("Loves opera.");
-    const two = (await call("POST", "/api/identity/suggestions", { tastes: "Loves jazz." })).data.waiting.identity[0];
+    const two = app.store.identity.suggest({ tastes: "Loves jazz." });
     const { data } = await call("POST", `/api/identity/suggestions/${two.id}/withdraw`, {});
     expect(data.waiting.identity).toEqual([]);
     expect(data.history.map((v: any) => v.status)).toEqual(["accepted", "declined", "withdrawn"]);
@@ -230,12 +233,12 @@ describe("the practice channel", () => {
   });
 
   test("its sample notes are found only from there", () => {
-    const question = { question: "Is Fen Aldous the lamplighter?", rephrased: "Does Fen Aldous light the lamps?" };
+    const question = { question: "Is Odile Varga the clockmaker?", rephrased: "Does Odile Varga mend clocks?" };
     expect(gatherEvidence(app.store, practice(), question).some((p) => p.source === "notebook")).toBe(true);
-    expect(gatherEvidence(app.store, story, question).some((p) => p.text.includes("Fen Aldous"))).toBe(false);
+    expect(gatherEvidence(app.store, story, question).some((p) => p.text.includes("Odile Varga"))).toBe(false);
     expect(app.store.notebook.listEntries("friend").map((e) => e.name)).toEqual(["Ilse Marrow"]);
-    expect(systemPrompt(practice().id)).toContain("Fen Aldous");
-    expect(systemPrompt(story.id)).not.toContain("Fen Aldous");
+    expect(systemPrompt(practice().id)).toContain("Odile Varga");
+    expect(systemPrompt(story.id)).not.toContain("Odile Varga");
   });
 
   test("nothing in it reaches other channels", () => {
@@ -269,6 +272,22 @@ describe("orientation", () => {
     }
   }
   const status = async () => (await call("GET", "/api/orientation")).data.orientation;
+
+  /** A practice world, as the model writes one (src/practiceworld.ts). */
+  const WORLD = JSON.stringify({
+    place: { name: "The Glass Orchard", summary: "A greenhouse city on a mountainside.", details: "Nobody picks fruit after dark." },
+    local: { name: "Bram Osei", pronouns: "he/him", age: "40", personality: "Gruff.", background: "Tends the vines." },
+    event: { name: "The Frost Vigil", summary: "The night the heaters fail.", details: "Everyone keeps watch." },
+    character: { name: "Sefa Lind", age: "29", role: "Glazier" },
+    partner: { name: "Wren Halloway", about: "A botanist who lost her seeds." },
+    channel: "#Night Shift",
+    posts: ["*Wren knocks on the greenhouse door.* \"Anyone here?\"", "*She sets down an empty seed tin.* \"Who took them?\""],
+  });
+  /** Start one: first a practice world is written for them, then their turns. */
+  function startOrientation(version: "full" | "returning") {
+    fake.replies.unshift({ content: WORLD });
+    return call("POST", "/api/orientation/start", { version });
+  }
 
   test("never runs by itself: a new kinwriter is offered one, and nothing starts", async () => {
     expect((await status()).status).toBe("none");
@@ -313,16 +332,23 @@ describe("orientation", () => {
     );
     // The write-up, alone too.
     fake.replies.push({ content: "[nothing]" });
-    const started = await call("POST", "/api/orientation/start", { version: "returning" });
+    const started = await startOrientation("returning");
     expect(started.data.orientation).toMatchObject({ status: "running", session: { version: "returning" } });
     const waiting = await untilChoices();
-    const sent = fake.requests.map((r) => JSON.stringify(r.messages));
+    // First, their practice world: written from who they are, with rolled ingredients.
+    const world = JSON.stringify(fake.requests[0]!.messages);
+    expect(world).toContain("practice world");
+    expect(world).toContain(app.store.getSettings().friendName);
+    expect(world).toContain("Genre:");
+    expect(app.store.notebook.listEntries("friend", true).map((e) => e.name)).toEqual(expect.arrayContaining(["The Glass Orchard", "Bram Osei", "The Frost Vigil"]));
+    expect(app.store.notebook.listEntries("friend", true).map((e) => e.name)).not.toContain("Odile Varga");
+    const sent = fake.requests.slice(1).map((r) => JSON.stringify(r.messages));
     expect(sent[0]).toContain("This is your orientation, on your own");
     expect(sent[0]).toContain("for a short practice scene");
     expect(sent[0]).not.toContain("The user is making their character too");
     // The practice scene, with its canned partner, told plainly.
-    expect(sent[1]).toContain("Your partner here is a canned one, Ines Corrow");
-    expect(sent[2]).toContain("The canned partner's next post is in #practice-scene");
+    expect(sent[1]).toContain("Your partner here is a canned one, Wren Halloway");
+    expect(sent[2]).toContain("The canned partner's next post is in #night-shift");
     const scene = waiting.session.scene;
     expect(app.store.getMessages(scene).map((m) => m.author)).toEqual(["user", "friend", "user", "friend"]);
     expect(sent[3]).toContain("The lesson is editing");
@@ -337,29 +363,29 @@ describe("orientation", () => {
     expect(waiting.bingo.tools.length).toBeGreaterThan(20);
     expect(waiting.bingo.used).not.toContain("reflex");
     // Your choices: keep the scene as a starter; the partner is yours; their questions arrive in OOC.
-    expect(waiting.choices).toMatchObject({ version: "returning", sceneName: "practice-scene", questions: 2 });
+    expect(waiting.choices).toMatchObject({ version: "returning", sceneName: "night-shift", questions: 2 });
     expect((await call("POST", "/api/orientation/choices", { characters: "keep", scene: "keep" })).status).toBe(200);
     expect((await status()).status).toBe("done");
-    expect(app.store.notebook.castFor("user", scene).map((e) => e.name)).toContain("Ines Corrow");
-    expect(app.store.notebook.listEntries("user").find((e) => e.name === "Ines Corrow")!.owner).toBe("user");
+    expect(app.store.notebook.castFor("user", scene).map((e) => e.name)).toContain("Wren Halloway");
+    expect(app.store.notebook.listEntries("user").find((e) => e.name === "Wren Halloway")!.owner).toBe("user");
     expect(app.store.getMessages(ooc.id).at(-1)).toMatchObject({ author: "friend", content: expect.stringContaining("- Hero, trouble or narrator?") });
   });
 
   test("on their own, by default the practice scene goes, with its partner", async () => {
     for (let i = 0; i < 12; i++) fake.replies.push({ content: "[nothing]" });
-    await call("POST", "/api/orientation/start", { version: "returning" });
+    await startOrientation("returning");
     const waiting = await untilChoices();
     expect((await call("POST", "/api/orientation/choices", {})).status).toBe(200);
     expect(app.store.hasChannel(waiting.session.scene)).toBe(false);
-    expect(app.store.notebook.listEntries("user").map((e) => e.name)).not.toContain("Ines Corrow");
-    expect(app.store.interventions.recent()[0]!.summary).toContain("the practice scene, #practice-scene, was deleted");
+    expect(app.store.notebook.listEntries("user").map((e) => e.name)).not.toContain("Wren Halloway");
+    expect(app.store.interventions.recent()[0]!.summary).toContain("the practice scene, #night-shift, was deleted");
   });
 
   test("together: you're there, writing in #practice; the live feed; other channels wait until you finish", async () => {
     fake.replies.push({ toolCalls: [{ name: "write_journal", arguments: { text: "PRIVATE-FEELING" } }, { name: "read_prompt_manifest", arguments: {} }] }, { content: "Hi! I'm trying my tools." });
-    await call("POST", "/api/orientation/start", { version: "full" });
+    await startOrientation("full");
     await settled();
-    expect(JSON.stringify(fake.requests[0]!.messages)).toContain("the user is here with you");
+    expect(JSON.stringify(fake.requests[1]!.messages)).toContain("the user is here with you");
     // The feed: readable words, private tools only as having happened.
     const { feed } = (await call("GET", "/api/orientation")).data;
     expect(feed.map((f: any) => f.text)).toEqual(["wrote in their journal", expect.stringContaining("prompt manifest")]);
@@ -388,12 +414,12 @@ describe("orientation", () => {
       return (await status()).step;
     };
     fake.replies.push({ content: "Hello!" });
-    await call("POST", "/api/orientation/start", { version: "full" });
+    await startOrientation("full");
     await settled();
     const first = (await status()).step;
     expect(first).toMatchObject({ id: "opener", index: 0, count: 12 });
     expect(first.spotlights.length).toBeGreaterThan(3);
-    expect(JSON.stringify(fake.requests[0]!.messages)).toContain('step 1 of 12, \\"Where things are\\"');
+    expect(JSON.stringify(fake.requests[1]!.messages)).toContain('step 1 of 12, \\"Where things are\\"');
 
     // Characters: one each, each with a secret the other can't see.
     expect((await next([
@@ -506,6 +532,8 @@ describe("orientation", () => {
     expect((await call("POST", "/api/orientation/choices", { characters: "discard", scene: "discard", conversation: "set-aside", chattiness: "quiet" })).status).toBe(200);
     expect((await status()).status).toBe("done");
     expect(app.store.notebook.listEntries("user").map((e) => e.name)).not.toContain("Kestrel");
+    // The practice notes written for it stay.
+    expect(app.store.notebook.listEntries("user", true).map((e) => e.name)).toContain("The Glass Orchard");
     expect(app.store.hasChannel(scene)).toBe(false);
     expect(app.store.getMessages(practice().id)).toEqual([]);
     expect(app.store.getSettings().wakeups).toBe("quiet");
@@ -547,7 +575,7 @@ describe("orientation", () => {
 
   test("its guide lists everything they can do, and only what they can", async () => {
     for (let i = 0; i < 12; i++) fake.replies.push({ content: "[nothing]" });
-    await call("POST", "/api/orientation/start", { version: "returning" });
+    await startOrientation("returning");
     await untilChoices();
     // Their own instruments, the last step.
     const guide = JSON.stringify(fake.requests.find((r) => JSON.stringify(r.messages).includes("lesson is your own instruments"))!.messages);
@@ -564,7 +592,7 @@ describe("orientation", () => {
     fake.replies.push({ content: "[nothing]" }, { content: "[nothing]" }); // their character, the practice scene
     for (let i = 0; i < 9; i++) fake.replies.push({ toolCalls: [{ name: "read_prompt_manifest", arguments: {} }] });
     for (let i = 0; i < 10; i++) fake.replies.push({ content: "[nothing]" });
-    await call("POST", "/api/orientation/start", { version: "returning" });
+    await startOrientation("returning");
     await untilChoices();
     expect(app.store.toolLog.forChannel(practice().id).filter((c) => c.status === "ok")).toHaveLength(9);
   });

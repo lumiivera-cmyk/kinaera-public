@@ -20,6 +20,8 @@ export async function loadState() {
   state.channels = data.channels;
   state.practice = data.practice ?? null;
   state.waiting = data.waiting ?? state.waiting;
+  // Their self-notes: whether they share them with you (src/selfnotes.ts).
+  state.selfNotes = data.selfNotes ?? null;
   state.profiles = data.profiles;
   state.roulettes = data.roulettes;
   refreshProfileEditors();
@@ -111,6 +113,8 @@ export async function checkLive() {
   state.channels = data.channels;
   state.practice = data.practice ?? null;
   state.waiting = data.waiting ?? state.waiting;
+  // Their self-notes: whether they share them with you (src/selfnotes.ts).
+  state.selfNotes = data.selfNotes ?? null;
   state.categories = data.categories ?? state.categories;
   state.inbox = data.inbox ?? [];
   state.settings = data.settings;

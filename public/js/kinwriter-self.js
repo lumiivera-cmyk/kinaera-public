@@ -3,9 +3,10 @@
  * self-page, their journal (only how many entries: it's private), and an
  * invitation to an orientation. Tapping your kinwriter in the sidebar opens it.
  *
- * Their identity and self-page are theirs. What you write here arrives as a
- * suggestion, which they accept or decline on their next turn; until then
- * you can take it back.
+ * Their self-notes (who they are, and their tastes) are theirs, and
+ * private unless they share them: you can ask to read them. Their self-page
+ * is theirs too: a note you add there arrives as a suggestion, which they
+ * accept or decline on their next turn; until then you can take it back.
  */
 
 import { $, api, hideFormError, showFormError, state } from "./core.js";
@@ -13,6 +14,7 @@ import { formatTime } from "./format.js";
 import { openKinwriter, paintAvatar } from "./kinwriter-page.js";
 import { openChannel } from "./channels.js";
 import { openOrientationChoice, renderBingo, startOrientation } from "./orientation.js";
+import { openSeedVsSelf } from "./seeds.js";
 
 /** The page as the server last sent it (GET /api/kinwriter-page). */
 let page = null;
@@ -40,22 +42,54 @@ function fill(id, text, empty = "Nothing yet.") {
   element.classList.toggle("self-empty", !text?.trim());
 }
 
+/**
+ * Their self-notes (src/selfnotes.ts): private unless they share them. You
+ * can ask; they decide on their next turn, and can stop sharing any time.
+ */
+function renderSelfNotes(kinwriter) {
+  const notes = page.selfNotes;
+  state.selfNotes = notes;
+  $("self-notes-private").hidden = notes.shared;
+  $("self-notes-shared").hidden = !notes.shared;
+  const request = notes.request;
+  const waiting = request?.status === "waiting";
+  const reply = request?.reply ? ` They said: “${request.reply}”` : "";
+  const status = waiting
+    ? `You asked to read them ${formatTime(request.at)}. It's up to ${kinwriter}: they'll see it on their next turn.`
+    : request?.status === "declined"
+      ? `${kinwriter} would rather keep them to themselves for now.${reply}`
+      : request?.status === "shared" && !notes.shared
+        ? `${kinwriter} shared them for a while, and has stopped sharing them.`
+        : `${kinwriter}'s self-notes are private. You can ask to read them, and ${kinwriter} decides.`;
+  $("self-notes-status").textContent = status;
+  $("self-notes-ask").hidden = waiting;
+  $("self-notes-ask").textContent = request && !waiting ? "Ask again" : "Ask to read them";
+  $("self-notes-withdraw").hidden = !waiting;
+  if (notes.shared) {
+    const parts = [
+      notes.pronouns ? `${kinwriter} (${notes.pronouns})` : kinwriter,
+      notes.fromSeed ? (notes.draft ? "still the seed they began as, not yet in their own words" : "began as a seed, now in their own words") : "",
+      notes.words !== null ? `${notes.words} of about ${notes.cap} words` : "",
+      `${kinwriter} shares these with you, to read: they can stop sharing at any time.${reply}`,
+    ];
+    $("self-notes-meta").textContent = parts.filter(Boolean).join(" · ");
+  }
+}
+
 function renderSelf() {
   const kinwriter = state.settings.friendName;
+  renderSelfNotes(kinwriter);
+  // Dev mode's tools (DEVELOPER_PANEL=1): never shown otherwise.
+  for (const element of $("self-dialog").querySelectorAll("[data-developer]")) element.hidden = !state.developerPanel;
   fill("self-identity", page.identity?.identity);
   fill("self-tastes", page.identity?.tastes, `${kinwriter} hasn't written their tastes yet.`);
 
-  // Your suggestions still waiting for them.
+  // Your suggestions from before, still waiting for them.
   $("self-identity-waiting").replaceChildren(
     ...page.waiting.identity.map((v) =>
       waitingCard(`Your suggestion, waiting for ${kinwriter}`, v.note || "A change to who they are.", () => withdraw(`/api/identity/suggestions/${v.id}/withdraw`)),
     ),
   );
-  if (!$("self-suggest").open) {
-    $("self-suggest-identity").value = page.identity?.identity ?? "";
-    $("self-suggest-tastes").value = page.identity?.tastes ?? "";
-    $("self-suggest-note").value = "";
-  }
 
   // The changelog, newest first.
   const by = (v) => (v.author === "friend" ? kinwriter : "You");
@@ -153,6 +187,26 @@ function renderSelf() {
     map.push(empty);
   }
   $("self-map").replaceChildren(...map);
+
+  // Their scripts (src/scripts.ts): only while scripts are on, or if they have some.
+  const scripts = page.scripts ?? { on: false, list: [] };
+  $("self-scripts-section").hidden = !scripts.on && scripts.list.length === 0;
+  const scriptItems = scripts.list.map((s) => {
+    const item = document.createElement("li");
+    item.className = "self-note";
+    const name = document.createElement("strong");
+    name.textContent = `${s.name}: `;
+    const last = s.lastRun ? (s.lastRun.ok ? " Last run: every step worked." : ` Last run: stopped at step ${s.lastRun.failedStep}.`) : " Not run yet.";
+    item.append(name, `${s.steps.join(" → ")}.${s.about ? ` ${s.about}` : ""}${last}`);
+    return item;
+  });
+  if (scriptItems.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "self-empty";
+    empty.textContent = `No scripts yet: ${kinwriter} writes them with save_script.`;
+    scriptItems.push(empty);
+  }
+  $("self-scripts").replaceChildren(...scriptItems);
 
   // How proactive they'd like to be, beside your chattiness (yours, and the ceiling).
   const pro = page.proactivity ?? {};
@@ -342,12 +396,6 @@ async function act(method, path, body = {}) {
 
 const withdraw = (path) => act("POST", path);
 
-async function suggestIdentity() {
-  const change = { identity: $("self-suggest-identity").value, tastes: $("self-suggest-tastes").value, note: $("self-suggest-note").value };
-  hideFormError($("self-dialog"));
-  if (await act("POST", "/api/identity/suggestions", change)) $("self-suggest").open = false;
-}
-
 async function suggestNote() {
   hideFormError($("self-dialog"));
   if (await act("POST", "/api/self-page/notes", { text: $("self-note-text").value })) {
@@ -362,7 +410,9 @@ $("self-settings").addEventListener("click", () => {
   $("self-dialog").close();
   openKinwriter();
 });
-$("self-suggest-send").addEventListener("click", suggestIdentity);
+$("self-notes-ask").addEventListener("click", () => (hideFormError($("self-dialog")), act("POST", "/api/self-notes/request")));
+$("self-notes-withdraw").addEventListener("click", () => act("POST", "/api/self-notes/request/withdraw"));
+$("self-seed-vs-self").addEventListener("click", () => openSeedVsSelf());
 $("self-note-send").addEventListener("click", suggestNote);
 $("self-open-practice").addEventListener("click", () => {
   $("self-dialog").close();
