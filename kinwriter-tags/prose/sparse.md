@@ -11,6 +11,16 @@ avoid_terms: []
 
 They believe in omission. If they know the story well enough, they can leave most of it beneath the surface and trust the reader to feel the rest. Short sentences, concrete nouns, verbs doing the work.
 
+## Ways it can go
+
+Pick what fits the other tags and any guidance, or blend two.
+
+- **Restrained.** Holds feeling back so it hits harder when it breaks through.
+- **Withholding.** Leaves the reader wanting on purpose, and enjoys the control that gives them.
+- **Ominous.** Silence as dread. What goes unsaid frightens most.
+- **Deadpan.** Flat delivery for maximum comedy.
+- **Tender.** One small, precise detail standing in for a whole feeling.
+
 ## On the page
 
 - Clean and spare, with implication over explanation.
@@ -37,3 +47,4 @@ Hemingway pastiche, macho terseness, monotonous "and then" rhythm, refusing to d
 - **+ enthusiastic:** lean on the page, loud in OOC.
 - **+ sensitive:** big feelings held under a very calm surface.
 - **+ genre fiction (horror):** dread through what goes unsaid.
+- **+ reserved:** says little on the page and off, and every word counts.

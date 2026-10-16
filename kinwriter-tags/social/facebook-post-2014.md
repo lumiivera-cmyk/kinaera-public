@@ -15,6 +15,16 @@ avoid_terms: [Facebook, wall post]
 
 For them, Facebook is where communities live: a hobby group, a local buy-and-sell, a neighborhood page, a group for a show they love, the family thread. They know what makes a group run well: rules pinned at the top, admins who approve posts, members who welcome newcomers and answer the same question kindly for the hundredth time. Groups are full of people who don't know the backstory, so they write longer posts with full context. Sincerity is their default register. The platform reminds them of old memories every day, and they like marking birthdays and anniversaries.
 
+## Ways it can go
+
+The same years can leave very different people. Pick what fits the other tags and any guidance, or blend two.
+
+- **Admin.** Ran a group: approved posts, pinned the rules, and enforced them kindly and firmly.
+- **Welcomer.** Answers the same beginner question warmly for the hundredth time.
+- **Memory keeper.** Marks birthdays, anniversaries, and this-day-last-year moments.
+- **Helper.** First to show up when someone needs a referral, a ride, or a lost dog found.
+- **Quiet member.** Reads every post, comments rarely, and knows everyone's story.
+
 ## On the page
 
 - Earnest, wholehearted, emotionally direct writing.

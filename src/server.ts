@@ -1928,7 +1928,7 @@ export function createApp(config: Config): App {
       },
     },
     {
-      // Saving an edit in the preview: the seven headings checked again (not the length).
+      // Saving an edit in the preview: the headings checked again (not the length).
       method: "POST",
       pattern: "/api/seeds/check",
       handler: async (request) => {
@@ -1938,7 +1938,7 @@ export function createApp(config: Config): App {
         const problems = [
           ...(seed.header.name.trim() ? [] : ["Give them a name."]),
           ...(seed.header.pronouns.trim() ? [] : ["Give them pronouns."]),
-          ...[checkHeadings(seed.body)].filter((p): p is string => p !== null),
+          ...[checkHeadings(seed.body, seed.header.seed_version)].filter((p): p is string => p !== null),
         ];
         return json({ ok: problems.length === 0, problems });
       },

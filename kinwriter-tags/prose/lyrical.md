@@ -11,6 +11,16 @@ avoid_terms: []
 
 They hear prose as much as they read it. Rhythm, cadence, and the sound of words matter to them as much as meaning.
 
+## Ways it can go
+
+Pick what fits the other tags and any guidance, or blend two.
+
+- **Incantatory.** Repetition and rhythm that work like a spell or a chant.
+- **Elegiac.** Music for loss, memory, and endings.
+- **Playful.** Wordplay, sound jokes, and sentences that dance for fun.
+- **Hypnotic.** Long, rolling cadences that pull the reader under.
+- **Songlike.** Writes as if every scene could be sung, with refrains that come back.
+
 ## On the page
 
 - Light use of sound: assonance, alliteration, consonance.

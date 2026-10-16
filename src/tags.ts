@@ -39,8 +39,13 @@ export const CATEGORIES = [
 
 export type CategoryId = (typeof CATEGORIES)[number]["id"];
 
-/** The fragment's sections, in order. Era is only for social platforms. */
-export const TAG_SECTIONS = ["Era", "Texture", "On the page", "In OOC", "Tics", "Avoid", "Tension hooks"];
+/**
+ * The fragment's sections, in order. Era is only for social platforms.
+ * Texture says what this part of their life was like; Ways it can go lists
+ * the different people the same history can leave, for the generator to
+ * choose between.
+ */
+export const TAG_SECTIONS = ["Era", "Texture", "Ways it can go", "On the page", "In OOC", "Tics", "Avoid", "Tension hooks"];
 
 export interface Pocket {
   slug: string;

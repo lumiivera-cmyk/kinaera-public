@@ -4,15 +4,16 @@
  *
  *   1. `buildSeedPrompt` fills every "Surprise me" category at random, then
  *      rolls one pocket for each tag that has them (unless you chose one),
- *      and records what chance picked. It assembles the user message: each
- *      tag's fragment without its Pockets section, and the chosen or rolled
- *      pocket's bullets under "This person's corner". The system prompt is
+ *      and records what chance picked. It assembles the user message: your
+ *      guidance first (so it frames the rest), then each tag's fragment
+ *      without its Pockets section, and the chosen or rolled pocket's
+ *      bullets under "This person's corner". The system prompt is
  *      `kinwriter-generator/system-prompt.md`, read as it is.
  *   2. `generateSeed` sends one call, with the profile marked "Use for
  *      creating kinwriters" (or the default profile; never a roulette), with
  *      its own samplers and reasoning setting.
- *   3. The reply is parsed: `name:` and `pronouns:` lines, then the seven
- *      headings. The header is built here: the model never writes `id`,
+ *   3. The reply is parsed: the model's Working notes are dropped, then the
+ *      `name:` and `pronouns:` lines, then the headings. The header is built here: the model never writes `id`,
  *      `source`, `tags`, `rolled`, `pockets`, `model`, `created` or
  *      `seed_version`.
  *   4. It's checked (src/seeds.ts). On a failure, it tries once more with
@@ -122,10 +123,10 @@ export function buildSeedPrompt(
     }
     sections.push(`## ${categorySection(tag.category)}: ${tag.label}\n${demote(tag.fragment)}${corner}`);
   }
-  const guidance = userGuidance?.trim() ? `\n\n# User guidance\n${userGuidance.trim()}` : "";
+  const guidance = `# User guidance\n${userGuidance?.trim() || "None."}`;
   return {
     system: generatorSystemPrompt(),
-    user: `# Research notes\n\n${sections.join("\n\n")}${guidance}`.trim(),
+    user: `${guidance}\n\n# Research notes\n\n${sections.join("\n\n")}`.trim(),
     tags: chosen.map((t) => t.id),
     rolled,
     pockets,
@@ -134,11 +135,23 @@ export function buildSeedPrompt(
 
 // --------------------------------------------------------------- parsing
 
-/** The model's reply, read: `name:` and `pronouns:` lines, then the body from its first heading. */
+/**
+ * The model's reply, read: its Working notes dropped (they're scratch work,
+ * kept only in dev mode's Raw output), then the `name:` and `pronouns:`
+ * lines, then the body from its first `##` heading.
+ */
 export function parseReply(content: string): { name: string; pronouns: string; body: string } {
-  const text = content.replace(/\r\n?/g, "\n").replace(/^```(?:\w+)?\n([\s\S]*?)\n```\s*$/m, "$1").trim();
-  const line = (key: string) => text.match(new RegExp(`^\\s*\\**${key}\\**\\s*:\\s*\\**\\s*(.+?)\\s*$`, "im"))?.[1]?.replace(/\*+$/, "").trim() ?? "";
+  const text = content
+    .replace(/\r\n?/g, "\n")
+    .replace(/^```(?:\w+)?\n([\s\S]*?)\n```\s*$/m, "$1")
+    // Up to the name line that has the pronouns line right under it.
+    .replace(/^#{1,4}\s*Working notes\s*$[\s\S]*?(?=^\s*\**name\**\s*:[^\n]*\n\s*\**pronouns\**\s*:)/im, "")
+    .trim();
   const first = text.search(/^##\s/m);
+  // Only the lines before the body count, and the last of each wins.
+  const head = first === -1 ? text : text.slice(0, first);
+  const line = (key: string) =>
+    [...head.matchAll(new RegExp(`^\\s*\\**${key}\\**\\s*:\\s*\\**\\s*(.+?)\\s*$`, "gim"))].at(-1)?.[1]?.replace(/\*+$/, "").trim() ?? "";
   return { name: line("name"), pronouns: line("pronouns"), body: first === -1 ? "" : text.slice(first).trim() };
 }
 
@@ -184,7 +197,7 @@ export interface GeneratedSeed {
 
 /**
  * One seed: one call, checked, and once more if it fails. `words` is only
- * for tests (forcing a failure), and defaults to the spec's 250 to 450.
+ * for tests (forcing a failure), and defaults to SEED_WORDS (350 to 750).
  */
 export async function generateSeed(
   api: ApiOptions,
@@ -209,7 +222,8 @@ export async function generateSeed(
       try {
         const response = await createChatCompletion(api, {
           ...request,
-          maxTokens: Math.max(request.maxTokens, 1500),
+          // Working notes and the seed together run long.
+          maxTokens: Math.max(request.maxTokens, 4000),
           messages: [
             { role: "system", content: prompt.system },
             { role: "user", content: prompt.user },

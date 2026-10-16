@@ -66,11 +66,11 @@ async function acceptMargo(text = MARGO) {
 describe("the seed format", () => {
   test("Margo, the spec's example, reads and passes every check", () => {
     const seed = parseSeed(MARGO);
-    expect(seed.header).toMatchObject({ id: "kw_7f3a", name: "Margo", pronouns: "she/her", source: "generated", seed_version: 1 });
+    expect(seed.header).toMatchObject({ id: "kw_7f3a", name: "Margo", pronouns: "she/her", source: "generated", seed_version: 2 });
     expect(seed.header.tags).toHaveLength(5);
     expect(seed.header.pockets).toEqual(["inspiration.contemporary-fiction#literary", "social.twitter-2010s#writers"]);
     expect(validateSeed(seed)).toEqual([]);
-    expect(seedWordCount(seed.body)).toBeGreaterThan(250);
+    expect(seedWordCount(seed.body)).toBeGreaterThan(350);
   });
 
   test("written back, it reads the same", () => {
@@ -86,12 +86,12 @@ describe("the seed format", () => {
       validateSeed({ header: { ...seed.header, ...change }, body }, options).map((p) => p.check);
     expect(check({ name: "" })).toEqual(["name"]);
     expect(check({ pronouns: " " })).toEqual(["pronouns"]);
-    expect(check({}, seed.body.replace("## Tension", "## Tensions"))).toContain("headings");
+    expect(check({}, seed.body.replace("## Contradictions", "## Tensions"))).toContain("headings");
     expect(check({}, seed.body.replace("## Voice", "## Vibe"))).toContain("headings");
     expect(check({}, seed.body, { words: { min: 10, max: 100 } })).toEqual(["length"]);
     expect(check({}, seed.body, { wordCount: false, words: { min: 10, max: 100 } })).toEqual([]);
     expect(check({}, seed.body.replace("- Whether she has", "- One more.\n- Whether she has").replace("- What she's like", "- And another.\n- What she's like"))).toEqual(["left-open"]);
-    expect(check({}, seed.body.replace("Literary references, occasionally, and only", "Literary references, and only"))).toEqual(["voice"]);
+    expect(check({}, seed.body.replace("References to books she's read, occasionally, and only", "References to books she's read, and only"))).toEqual(["voice"]);
   });
 
   test("avoid terms: whole words or phrases, any case", () => {
@@ -100,13 +100,30 @@ describe("the seed format", () => {
     expect(containsTerm("a quote-tweet", "quote-tweet")).toBe(true);
     expect(containsTerm("Discord servers", "Discord server")).toBe(false);
     expect(containsTerm("the discord server", "Discord server")).toBe(true);
-    const seed = parseSeed(MARGO.replace("Literary references", "Tweet-sized references"));
+    const seed = parseSeed(MARGO.replace("References to books", "Tweet-sized references to books"));
     expect(validateSeed(seed, { avoidTerms: ["tweet", "Reddit"] })).toEqual([{ check: "avoid", message: 'It names something it shouldn\'t: "tweet".' }]);
   });
 
   test("the heading check reads like a person wrote it", () => {
     expect(checkHeadings("## Who they are\nx")).toContain("missing");
     expect(checkHeadings(parseSeed(MARGO).body)).toBeNull();
+  });
+
+  test("a version 1 seed still checks against its own seven headings and length", () => {
+    const v1 = [
+      "## Who they are\nA quiet writer.",
+      "## On the page\n- Lean prose.",
+      "## In OOC\n- Brief.",
+      "## Voice\n- Lowercase, often.",
+      "## Tension\nWants to argue, hates conflict.",
+      "## Leanings\n- Noir.",
+      "## Left open\n- One.\n- Two.",
+    ].join("\n\n");
+    expect(checkHeadings(v1, 1)).toBeNull();
+    expect(checkHeadings(v1)).toContain("missing");
+    const seed = { header: { name: "Old", pronouns: "he/him", seed_version: 1 }, body: v1 };
+    expect(validateSeed(seed, { wordCount: false })).toEqual([]);
+    expect(validateSeed(seed).map((p) => p.check)).toEqual(["length"]);
   });
 });
 
@@ -128,10 +145,10 @@ describe("Accept", () => {
   });
 
   test("defaults and generated seeds go through the same check; a broken one is refused", async () => {
-    const broken = MARGO.replace("## Tension", "## Conflict");
+    const broken = MARGO.replace("## Contradictions", "## Conflict");
     const { status, data } = await acceptMargo(broken);
     expect(status).toBe(400);
-    expect(data.error).toContain("Tension");
+    expect(data.error).toContain("Contradictions");
   });
 
   test("self.md goes into their context; seed.md never does, but they can read it", async () => {

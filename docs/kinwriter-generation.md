@@ -18,14 +18,14 @@ Writing who they are yourself still works, in the same form as before. That kinw
 - **Reroll**: the same tags and chosen corners, a new person.
 - **Reroll the dice**: rolls only what chance picked. It shows only if chance picked something.
 - **Back to tags**: back to the picker, with your choices kept.
-- **Edit**: name, pronouns and the text. Saving checks the seven headings again (not the length) and marks the seed `user_edited`.
+- **Edit**: name, pronouns and the text. Saving checks the headings again (not the length) and marks the seed `user_edited`.
 - **Accept**: makes them, and the app offers their orientation.
 
 A default gets the same preview, without the rerolls.
 
 ## The seed
 
-`src/seeds.ts`. A seed is a Markdown file: a header for code (`id`, `name`, `pronouns`, `source`, `tags`, `rolled`, `pockets`, `model`, `created`, `seed_version`, plus `user_edited`, and `tagline` for defaults), and a body with seven headings, in order: Who they are, On the page, In OOC, Voice, Tension, Leanings, Left open. Code reads only the header.
+`src/seeds.ts`. A seed is a Markdown file: a header for code (`id`, `name`, `pronouns`, `source`, `tags`, `rolled`, `pockets`, `model`, `created`, `seed_version`, plus `user_edited`, and `tagline` for defaults), and a body with nine headings, in order: Who they are, Wants, Off the page, In OOC, On the page, Voice, Contradictions, Leanings, Left open. Code reads only the header. This is `seed_version: 2`; version 1 seeds (seven headings, with Tension and no Wants or Off the page, 250 to 450 words) still read, and are checked against their own headings.
 
 On Accept, the kinwriter gets their own id (their hub id, written into the seed's header). The seed is kept as it was, read-only, in their database (`seed` table, migration 12). Their self-notes start as a copy of its body.
 
@@ -34,18 +34,18 @@ On Accept, the kinwriter gets their own id (their hub id, written into the seed'
 `src/generator.ts`: one prompt-assembly function and one call.
 
 1. `buildSeedPrompt` fills every "Surprise me" category at random, then rolls a pocket for each tag that has them (unless you chose one), and records what chance picked.
-2. It assembles the user message the way the spec lays it out:
+2. It assembles the user message:
+   - **Your idea first:** under `# User guidance` ("None." if there isn't one), so it frames the notes instead of arriving last and overwriting them.
    - **Each tag:** its fragment, without its Pockets section, under `## <category>: <label>`.
    - **Its pocket:** the chosen or rolled pocket's bullets, under `### This person's corner`.
-   - **Your idea, if any:** under `# User guidance`.
    - The fragments' own `##` headings move down to `###`, so they sit under their tag's heading.
-3. The system prompt is `kinwriter-generator/system-prompt.md`, copied word for word from the spec. Edit it to tune generation; no code change is needed.
+3. The system prompt is `kinwriter-generator/system-prompt.md`, rewritten in October 2026 for more vivid kinwriters: the model starts with rough Working notes (what each tag's history left this person with, which of its Ways it can go fits, how they'd use the app's tools, and what they want), then writes the seed. It's told to keep contradictions, give them wants and a life off the page, write people who aren't agreeable by default, leave safety to the app, and start them with no built-in feelings about you. Edit it to tune generation; no code change is needed.
 4. One call, with the profile marked **Use for creating kinwriters** (Settings → Profiles). Only one profile can have it on. With none checked, the default is used: the profile OOC is assigned to, or the first profile if OOC uses a roulette. A roulette is never used. The profile's own samplers and reasoning setting apply.
-5. The reply's `name:` and `pronouns:` lines and body are read, and the header is built in code.
+5. The Working notes are dropped (dev mode's Raw output still shows them). The reply's `name:` and `pronouns:` lines and body are read, and the header is built in code. The call allows at least 4000 tokens, since the notes and the seed run long together.
 6. **The checks:**
    - name and pronouns are there;
-   - the seven headings are there, in order, with exact text;
-   - the body is 250 to 450 words;
+   - the nine headings are there, in order, with exact text;
+   - the body is 350 to 750 words;
    - two or three Left open bullets;
    - a dosage word (rarely, occasionally, regularly or often) in every Voice bullet;
    - none of any tag file's `avoid_terms`, as whole words or phrases, in any case.
@@ -54,9 +54,18 @@ On Accept, the kinwriter gets their own id (their hub id, written into the seed'
 
 ## Tag files
 
-`kinwriter-tags/<category>/<slug>.md`, one per option, converted from the fragment docs. There are 34: 10 personality, 4 temperament, 6 prose, 6 influences, 8 platforms. `src/tags.ts` reads them fresh each time, so adding, changing or deleting a file changes the picker and the details page with no code change. Only the five categories and their order are fixed in code.
+`kinwriter-tags/<category>/<slug>.md`, one per option, converted from the fragment docs. Since the October 2026 overhaul, the tag files are the working copy; the fragment docs in `design/kinwriter-generation/` keep the original research and sources. There are 34: 10 personality, 4 temperament, 6 prose, 6 influences, 8 platforms. `src/tags.ts` reads them fresh each time, so adding, changing or deleting a file changes the picker and the details page with no code change. Only the five categories and their order are fixed in code.
 
-The header holds `id`, `category`, `label`, `blurb`, `order` and `avoid_terms`. The body holds the fragment's sections as `##` headings: Era (platforms only), Texture, On the page, In OOC, Tics, Avoid and Tension hooks. Platforms and influences end with `## Pockets`. Each pocket is an `###` slug with `label:` and `blurb:` lines, then bullets: the effects, "On the page", "In OOC".
+The header holds `id`, `category`, `label`, `blurb`, `order` and `avoid_terms`. The body holds the fragment's sections as `##` headings: Era (platforms only), Texture, Ways it can go, On the page, In OOC, Tics, Avoid and Tension hooks. Platforms and influences end with `## Pockets`. Each pocket is an `###` slug with `label:` and `blurb:` lines, then bullets: what happened there, "On the page", "In OOC".
+
+How fragments are written (since the October 2026 overhaul):
+
+- **Texture** describes what happened or what the trait is like day to day, with no verdict about who they became. "Held permissions other people didn't" leaves the generator room; "became a calm mediator" decides for it.
+- **Ways it can go** lists four or five different people the same history or trait can leave (for Discord: Keeper, Architect, Authority, Regular, Lurker). The generator picks one or blends two to fit the other tags and your guidance.
+- **On the page** and **In OOC** are pools to draw from, not checklists, and include habits that show up in how they use the app's tools.
+- **Avoid** names the caricatures, including the dark side of each Ways it can go option (the power-tripping mod, the brooding mystery act). It doesn't sum up what the tag "gave them".
+- **Pockets** describe the corner as experiences, and where a corner can go two ways, say so.
+- Same rules as before: no "the X is the Y" or "not X, but Y", tics carry a dosage, and nothing tells them to quote you.
 
 A file that doesn't load is skipped, with a warning in the log, except in dev mode, where it stops the picker until it's fixed.
 
@@ -78,7 +87,7 @@ Their self-notes are their identity (`src/identity.ts`), not a second store: who
 
 `src/handoff.ts`, wording in `defaults/seeds.md`. While their self-notes are still the seed's draft:
 
-- **Together:** from the first step, they're told it's a starting draft of who they are, written before they existed: keep what fits, change what doesn't, and rewrite it in the first person by the end. The interview lists their Left open questions to explore with you. In the write-up, they rewrite it, with the suggested headings (Who I am, On the page, In OOC, Voice, Tension, How I like to work, Still figuring out), and their Leanings become choices, such as `set_my_proactivity`.
+- **Together:** from the first step, they're told it's a starting draft of who they are, written before they existed: keep what fits, change what doesn't, and rewrite it in the first person by the end. The interview lists their Left open questions to explore with you. In the write-up, they rewrite it, with the suggested headings (Who I am, What I want, Off the page, In OOC, On the page, Voice, Contradictions, How I like to work, Still figuring out), and their Leanings become choices, such as `set_my_proactivity`.
 - **On their own:** the same, alone. Their Left open questions go under "Still figuring out", with a note to bring them up naturally in early OOC.
 - **Skipped**, or the rewrite didn't happen: their OOC turns ask them to rewrite it until they do.
 

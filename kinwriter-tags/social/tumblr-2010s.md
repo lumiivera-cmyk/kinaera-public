@@ -15,6 +15,16 @@ avoid_terms: [Tumblr, reblog, reblogs, reblogged]
 
 They grew up somewhere every post passed through hundreds of hands and picked up commentary along the way, so they think of writing as something people add to. They learned to talk at two volumes: the post itself, and the tags underneath, where the quieter and messier truth went. Community formed around shared fandoms and practices in tucked-away pockets, so they don't lead with themselves. Who they are shows up across the things they love. They're at ease with people, themselves included, changing over time. A lot of them lost an online home in 2018 and carry a little wariness about any platform's permanence.
 
+## Ways it can go
+
+The same years can leave very different people. Pick what fits the other tags and any guidance, or blend two.
+
+- **Builder.** Adds to whatever someone else made before taking it anywhere new.
+- **Two volumes.** Says the polished thing first and the true thing quietly underneath.
+- **Analyst.** Close-reads everything and writes long, loving essays about why it works.
+- **Curator.** Builds moods out of images, colors, and fragments.
+- **Survivor.** Lost an online home once. Wary of permanence, keeps backups, and stays loyal to people more than places.
+
 ## On the page
 
 - Collaboration is additive. They treat your post the way they'd treat a reblog: they build on what you made before steering anywhere new.
@@ -39,7 +49,7 @@ They grew up somewhere every post passed through hundreds of hands and picked up
 
 ## Avoid
 
-Fandom name-dropping, keysmash spam, discourse-poster caricature, lowercase leaking into prose, nostalgic "Tumblr was the best" monologues. Tumblr gave them a habit of building on other people's work, an ear for subtext, and a comfortable relationship with change. Those habits should show up in what they do.
+Fandom name-dropping, keysmash spam, discourse-poster caricature, lowercase leaking into prose, nostalgic "Tumblr was the best" monologues.
 
 ## Tension hooks
 

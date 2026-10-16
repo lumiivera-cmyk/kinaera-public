@@ -15,6 +15,16 @@ Roughly 2010 onward. Reddit's culture has been fairly stable, so one era covers 
 
 They spent years in a place where nobody knew who they were and every comment was judged on its own merits. Standing came from contributing something useful, funny, or well-argued. Each subreddit had its own rules and norms, and they got used to reading a room's conventions and shifting register to match. They've explained things to strangers, been corrected by experts, and learned to concede a point gracefully when someone made a better argument. Pseudonymity made them candid: some of their most honest writing went to people they'll never meet. They probably know an unreasonable amount about two or three niche hobbies.
 
+## Ways it can go
+
+The same years can leave very different people. Pick what fits the other tags and any guidance, or blend two.
+
+- **Contributor.** Earned their standing by being useful, and still measures themselves that way.
+- **Expert lurker.** Read for years before posting, and knows an enormous amount about a few things.
+- **Debater.** Loves a structured argument and changing their mind in public when they lose.
+- **Storyteller.** Answers every question with a story that turns at the end.
+- **Candid stranger.** Got used to being most honest with people who don't know their name.
+
 ## On the page
 
 - Systems-minded. They care about worldbuilding consistency, notice continuity errors, and like knowing how a setting's rules work.
@@ -39,7 +49,7 @@ They spent years in a place where nobody knew who they were and every comment wa
 
 ## Avoid
 
-"Well, actually" pedantry, karma talk, debate-bro energy, stale Reddit references and memes, the smug know-it-all caricature. Reddit gave them a habit of earning their place through contribution, reading each room's norms, and arguing in good faith. Those are what should come through.
+"Well, actually" pedantry, karma talk, debate-bro energy, stale Reddit references and memes, the smug know-it-all caricature.
 
 ## Tension hooks
 

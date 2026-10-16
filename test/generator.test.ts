@@ -17,10 +17,9 @@ import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpe
 const MARGO = readFileSync(join(import.meta.dir, "..", "kinwriter-generator", "test-seed.md"), "utf8");
 /**
  * A good reply: Margo's name, pronouns and body, the way the model writes
- * them. The spec's example says "literary fiction", one of contemporary
- * fiction's avoid terms, so that's changed here.
+ * them.
  */
-const GOOD = `name: Margo\npronouns: she/her\n\n${parseSeed(MARGO).body.replace("literary fiction", "quiet, careful novels")}`;
+const GOOD = `name: Margo\npronouns: she/her\n\n${parseSeed(MARGO).body}`;
 
 let fake: FakeNanoGpt;
 let dir: ReturnType<typeof tempDir>;
@@ -89,7 +88,7 @@ describe("tag files", () => {
     const before = pickerView(loadTags({ dir: copy }));
     writeFileSync(
       join(copy, "social", "myspace.md"),
-      `---\nid: social.myspace\ncategory: social\nlabel: MySpace\nblurb: Top eight energy.\norder: 9\navoid_terms: [MySpace]\n---\n\n## Era\nThe 2000s.\n\n## Texture\nx\n\n## On the page\nx\n\n## In OOC\nx\n\n## Tics\n- **Glitter, rarely.**\n\n## Avoid\nx\n\n## Tension hooks\nx\n`,
+      `---\nid: social.myspace\ncategory: social\nlabel: MySpace\nblurb: Top eight energy.\norder: 9\navoid_terms: [MySpace]\n---\n\n## Era\nThe 2000s.\n\n## Texture\nx\n\n## Ways it can go\nx\n\n## On the page\nx\n\n## In OOC\nx\n\n## Tics\n- **Glitter, rarely.**\n\n## Avoid\nx\n\n## Tension hooks\nx\n`,
     );
     writeFileSync(join(copy, "prose", "lush.md"), readFileSync(join(copy, "prose", "lush.md"), "utf8").replace(/^label: Lush$/m, "label: Lavish"));
     rmSync(join(copy, "temperament", "formal.md"));
@@ -145,23 +144,23 @@ describe("buildSeedPrompt", () => {
       undefined,
       { random: seq(0) },
     );
-    expect(prompt.user.startsWith("# Research notes\n\n## Personality: Reserved\n")).toBe(true);
+    expect(prompt.user.startsWith("# User guidance\nNone.\n\n# Research notes\n\n## Personality: Reserved\n")).toBe(true);
+    expect(prompt.user).toContain("### Ways it can go\n");
     expect(prompt.user).toContain("## Prose style: Sparse\n");
     expect(prompt.user).toContain("## Primary social media: Twitter (2010s)\n### Era\n");
     // The chosen pocket's bullets, under "This person's corner", and no other pocket.
     expect(prompt.user).toContain("### This person's corner\n- Craft threads, process talk");
     expect(prompt.user).not.toContain("Weird Twitter");
     expect(prompt.user).not.toContain("label:");
-    expect(prompt.user).not.toContain("# User guidance");
     // Picked, not rolled; the games pocket was rolled.
     expect(prompt.rolled).toEqual(["inspiration.games#" + prompt.pockets.find((p) => p.startsWith("inspiration.games"))!.split("#")[1]]);
     expect(prompt.pockets).toContain("social.twitter-2010s#writers");
   });
 
-  test("user guidance goes at the end, under its own heading", () => {
+  test("user guidance goes first, under its own heading, so it frames the notes", () => {
     const prompt = buildSeedPrompt(tags, { tags: { prose: "prose.lush" } }, "A lighthouse keeper.", { fill: false });
     expect(prompt.tags).toEqual(["prose.lush"]);
-    expect(prompt.user.endsWith("# User guidance\nA lighthouse keeper.")).toBe(true);
+    expect(prompt.user.startsWith("# User guidance\nA lighthouse keeper.\n\n# Research notes\n")).toBe(true);
   });
 
   test("Reroll keeps the tags (chance's still marked rolled) and chosen pockets; rolled pockets roll fresh", () => {
@@ -187,13 +186,13 @@ describe("generating a seed", () => {
     const seed = await generateSeed(api(), profile(), p, { source: "generated", avoidTerms: [] });
     expect(fake.requests).toHaveLength(1);
     expect(fake.requests[0]!.messages.map((m) => m.role)).toEqual(["system", "user"]);
-    expect(seed.header).toMatchObject({ name: "Margo", pronouns: "she/her", source: "generated", tags: p.tags, rolled: p.rolled, pockets: p.pockets, model: profile().model, seed_version: 1 });
+    expect(seed.header).toMatchObject({ name: "Margo", pronouns: "she/her", source: "generated", tags: p.tags, rolled: p.rolled, pockets: p.pockets, model: profile().model, seed_version: 2 });
     expect(seed.header.id).toMatch(/^kw_/);
     expect(parseSeed(seed.text).body.split("\n").filter((l) => l.startsWith("## "))).toEqual(SEED_HEADINGS.map((h) => `## ${h}`));
   });
 
   test("an avoid term is rejected and retried; the second try passes", async () => {
-    fake.replies.push({ content: GOOD.replace("Literary references", "Tweet-sized references") }, { content: GOOD });
+    fake.replies.push({ content: GOOD.replace("References to books", "Tweet-sized references to books") }, { content: GOOD });
     const seed = await generateSeed(api(), profile(), prompt(), { source: "generated", avoidTerms: ["tweet"] });
     expect(fake.requests).toHaveLength(2);
     expect(seed.header.name).toBe("Margo");
@@ -211,6 +210,19 @@ describe("generating a seed", () => {
 
   test("the reply is read forgivingly: bold keys, a code fence", () => {
     expect(parseReply("```markdown\n**name:** Ines\n**pronouns:** they/them\n\n## Who they are\nx\n```")).toEqual({ name: "Ines", pronouns: "they/them", body: "## Who they are\nx" });
+  });
+
+  test("Working notes are dropped, even when they mention a name or use ## headings", () => {
+    const notes = "### Working notes\n- Discord: Authority, blended with Lurker.\nname: maybe Rowan?\n## Wants\n- scratch\n\n";
+    expect(parseReply(`${notes}name: Ines\npronouns: they/them\n\n## Who they are\nx`)).toEqual({ name: "Ines", pronouns: "they/them", body: "## Who they are\nx" });
+    expect(parseReply(`## Working notes\nrough\n\nname: Ines\npronouns: they/them\n\n## Who they are\nx`)).toEqual({ name: "Ines", pronouns: "they/them", body: "## Who they are\nx" });
+  });
+
+  test("a full reply with Working notes passes every check", async () => {
+    fake.replies.push({ content: `### Working notes\n- Reserved: Deliberate.\n- Want: one finished story.\n\n${GOOD}` });
+    const seed = await generateSeed(api(), profile(), prompt(), { source: "generated", avoidTerms: [] });
+    expect(seed.header.name).toBe("Margo");
+    expect(seed.body).not.toContain("Working notes");
   });
 
   test("the route: a valid seed, then Show prompt and Raw output in dev mode", async () => {

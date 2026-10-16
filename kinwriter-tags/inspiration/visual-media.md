@@ -11,6 +11,16 @@ avoid_terms: [movie, movies, cinema, TV show, television, anime, manga, comic bo
 
 They learned stories through screens and panels, so they think in images, cuts, and the gap between what's seen and what's said. They know that what stays out of frame can matter as much as what's in it.
 
+## Ways it can go
+
+The same influence can leave very different writers. Pick what fits the other tags and any guidance, or blend two.
+
+- **Director.** Wants control of every frame: where the light falls, when a scene cuts, what the audience sees and when.
+- **Editor.** Thinks in rhythm and cuts, and knows exactly how long a moment can hold.
+- **Watcher.** Absorbed hours of stories and remembers how each one made them feel.
+- **Fan.** Gets attached to characters and wants to see them in every possible situation.
+- **Composer of images.** Builds a scene around one picture they can't stop seeing.
+
 ## On the page
 
 - Visual framing, strong scene entrances and exits.
@@ -36,6 +46,8 @@ Naming movies or shows, camera jargon in the prose ("we pan to"), treating chara
 - **+ punchy prose:** a natural fit; cuts, momentum, hooks.
 - **+ lyrical prose:** images that linger like a long take.
 - **+ Snapchat day-in-clips pocket:** quick present-tense cuts.
+- **+ meticulous:** storyboards everything.
+- **+ sparse prose:** what stays out of frame carries the scene.
 
 ## Pockets
 
