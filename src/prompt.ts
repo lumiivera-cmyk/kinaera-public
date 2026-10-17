@@ -11,26 +11,29 @@
  * Roughly, in order (`buildPromptStack` has the full list):
  *
  *   1. Who is writing: their framing and self-notes, your hard limits, and
- *      (with tools) what they keep: self-page, journal, time, drafts. Also
- *      their voice, their notes on you and other kinwriters, and on the
- *      profile writing.
+ *      (with tools) what they keep: self-page, journal, drafts. Also their
+ *      notes on you and other kinwriters, and on the profile writing.
  *   2. This channel and how to write in it: what it's for, then the scene
  *      mode's instructions (RP) and your kinwriter prompt for this kind of
  *      channel. Only the one that applies is sent, so they can't be mixed up.
  *   3. What's in it: in RP, the cast, lore, linked notes, the rest of the
- *      notebook by name, the scratchpads and who plays whom; elsewhere, the
- *      channels on the server (with who they play and each one's digest),
- *      channels that came up, and the notebook.
- *   4. What's around the conversation: attached notes, comment threads,
- *      reactions, reviews waiting, recent actions, the inbox, notices.
- *   5. How things work: tool guidance, standing notes, permissions, the
- *      library; then an orientation or a wake-up's "Why you're up".
- *   6. The connection profile's model notes: taming this particular model,
+ *      notebook by name and who plays whom; elsewhere, the channels on the
+ *      server (with who they play and each one's digest), channels that came
+ *      up, and the notebook. Then notes attached to messages.
+ *   4. How things work: tool guidance, standing notes, permissions, the
+ *      library.
+ *   5. The connection profile's model notes: taming this particular model,
  *      never who your kinwriter is.
- *   7. What has happened (see src/summaries.ts): the story so far, recent
+ *   6. What has happened (see src/summaries.ts): the story so far, recent
  *      scenes' summaries, what came earlier in this scene, and moments kept
  *      in full. What's summarized isn't sent again, and what isn't
  *      summarized yet is always sent, so nothing falls in between.
+ *   7. What changes from turn to turn, kept last so everything above can be
+ *      reused from a provider's prompt cache: their voice (excerpts of their
+ *      latest posts), the scratchpads (RP), comment
+ *      threads, reactions, reviews waiting, recent actions, the inbox,
+ *      notices, the time and their wake-ups, then an orientation or a
+ *      wake-up's "Why you're up".
  *   8. One line on what's in front of them (read_prompt_manifest has more).
  *
  * In RP channels the kinwriter is framed as the author of a story; entries
@@ -526,20 +529,16 @@ export function buildPromptStack({
     // of them (src/selfpage.ts, src/journal.ts).
     { title: "Your self-page (short version)", content: tools ? describeSelfPage(selfPage ?? "") : null },
     { title: "Your journal", content: tools ? describeJournal(journal) : null },
-    // Staying themselves across models (src/continuity.ts): their own
-    // voice, and their note on the profile writing this turn.
-    { title: "Your voice", content: describeAnchors(anchors, tools ?? false) },
     // The user: your own private note on them, and how proactive you'd like to be.
     { title: "You and the user", content: describeYou(you) },
     // Other kinwriters on the server: who they are to you, in your own words.
     { title: "Kinwriters here", content: describeKinwritersHere(kinwritersHere, tools ?? false) },
+    // Their note on the profile writing this turn (src/continuity.ts).
     {
       title: "This profile",
       content: profileNote ? `${(wording("continuity")["profile-note"] ?? "").replace("{profile}", profileNote.profile)}\n${profileNote.note}` : null,
     },
-    // Their own time: what time it is, what they've planned, what they're
-    // working on (src/schedule.ts, src/drafts.ts).
-    { title: "Your time", content: tools ? describeSchedule(schedule) : null },
+    // What they're working on (src/drafts.ts).
     { title: "Your drafts", content: tools ? describeDrafts(drafts) : null },
     // The practice channel explains itself; a paused storyline says so.
     // What this channel is for, in a line, then how it works.
@@ -573,8 +572,6 @@ export function buildPromptStack({
     { title: "Lore", content: isRp ? describeEntries(pinned.filter((p) => p.entry.kind === "lore")) : null },
     { title: "Linked notes", content: isRp ? describeEntries(notebook?.linked ?? []) : null },
     { title: "Also in the notebook", content: isRp ? describeNotebookIndex(notebookIndex ?? []) : null },
-    // Loose notes for this storyline, kept out of the notebook (src/scratchpads.ts).
-    { title: "Scratchpad", content: isRp ? describeScratchpad(scratchpad, tools ?? false) : null },
     {
       title: "Whose characters are whose",
       content: isRp ? castRules(yourCharacters, sharedCharacters, userCharacters) : null,
@@ -586,23 +583,13 @@ export function buildPromptStack({
     },
     ...(mentioned ?? []).map((m) => ({ title: `About #${m.name}`, content: m.summary })),
     { title: "Your shared notebook", content: isRp || isPractice ? null : describeNotebook(overview?.entries ?? []) },
-    // In both: notes attached to messages, comment threads,
-    // what's waiting for your kinwriter, and what they've done lately.
+    // In both: notes attached to messages.
     { title: "Attached notes", content: describeEntries(attached ?? []) },
-    { title: "Comment threads", content: describeThreads(threads ?? []) },
-    { title: "Waiting for your review", content: tools ? describeReviews(reviews ?? []) : null },
-    { title: "What you did recently", content: (recentActions ?? []).map((line) => `- ${line}`).join("\n") },
-    { title: "What you've asked of the user", content: (inbox ?? []).map((line) => `- ${line}`).join("\n") },
-    { title: "Notices", content: (notices ?? []).map((line) => `- ${line}`).join("\n") },
     { title: "Tools", content: tools ? toolGuidance(channel.kind) : null },
     // Honest notes on how things work here (defaults/standing.md).
     { title: "Good to know", content: standingNotes(tools ?? false, isRp, Boolean(settings.decisionModel?.trim() || settings.decisionFallback)) },
     { title: "Standing permissions", content: tools ? (permissions ?? null) : null },
     { title: "Reference library", content: tools ? describeLibrary(library ?? []) : null },
-    // An orientation running here (src/orientation.ts).
-    { title: "Your orientation", content: orientation ?? null },
-    // A wake-up: why your kinwriter is taking a turn on their own.
-    { title: "Why you're up", content: wake ? describeWake(wake, tools ?? false) : null },
     // The connection profile's notes on this model's habits.
     { title: "Model notes", content: modelNotes ?? null },
     // What has happened, first part: summaries of what came before the recent messages.
@@ -613,6 +600,28 @@ export function buildPromptStack({
     },
     { title: isRp ? "Earlier in this scene" : "Earlier in this conversation", content: memory?.earlier ?? null },
     { title: "Moments you kept in full", content: describeVerbatim(verbatim ?? []) },
+    // Last, what changes from turn to turn: their latest writing, the time,
+    // "3 minutes ago"s, what's waiting, why they're up. A provider's prompt
+    // cache reuses a prompt only up to the first thing that differs from the
+    // last one, so everything above stays reusable between turns (and
+    // between heartbeats).
+    // Staying themselves across models (src/continuity.ts): their own voice,
+    // from their latest posts outside the recent conversation.
+    { title: "Your voice", content: describeAnchors(anchors, tools ?? false) },
+    // Loose notes for this storyline, kept out of the notebook (src/scratchpads.ts).
+    { title: "Scratchpad", content: isRp ? describeScratchpad(scratchpad, tools ?? false) : null },
+    // Comment threads, what's waiting for your kinwriter, and what they've done lately.
+    { title: "Comment threads", content: describeThreads(threads ?? []) },
+    { title: "Waiting for your review", content: tools ? describeReviews(reviews ?? []) : null },
+    { title: "What you did recently", content: (recentActions ?? []).map((line) => `- ${line}`).join("\n") },
+    { title: "What you've asked of the user", content: (inbox ?? []).map((line) => `- ${line}`).join("\n") },
+    { title: "Notices", content: (notices ?? []).map((line) => `- ${line}`).join("\n") },
+    // Their own time: what time it is and what they've planned (src/schedule.ts).
+    { title: "Your time", content: tools ? describeSchedule(schedule) : null },
+    // An orientation running here (src/orientation.ts).
+    { title: "Your orientation", content: orientation ?? null },
+    // A wake-up: why your kinwriter is taking a turn on their own.
+    { title: "Why you're up", content: wake ? describeWake(wake, tools ?? false) : null },
   ];
 
   // What has happened, second part: the recent conversation, in full.
@@ -712,15 +721,16 @@ export function buildCheckPrompt({
     },
     { title: "Your self-page (short version)", content: selfPage?.trim() || null },
     { title: "You and the user", content: describeYou(you) },
-    { title: "Your time", content: describeSchedule(schedule) },
     { title: "Your drafts", content: describeDrafts(drafts) },
+    { title: "Your tools", content: describeCheckTools(checkTools ?? []) },
+    { title: "Model notes", content: modelNotes ?? null },
+    // What changes from beat to beat last, so the rest stays cacheable (see buildPromptStack).
     { title: "Waiting for your review", content: describeReviews(reviews ?? []) },
     { title: "What you did recently", content: (recentActions ?? []).map((line) => `- ${line}`).join("\n") },
     { title: "What you've asked of the user", content: (inbox ?? []).map((line) => `- ${line}`).join("\n") },
     { title: "Notices", content: (notices ?? []).map((line) => `- ${line}`).join("\n") },
-    { title: "Your tools", content: describeCheckTools(checkTools ?? []) },
+    { title: "Your time", content: describeSchedule(schedule) },
     { title: "Why you're up", content: wake ? describeWake(wake, false) : null },
-    { title: "Model notes", content: modelNotes ?? null },
   ];
   const start = windowStart ?? Math.max(0, messages.length - settings.historyLimit);
   const recent = messages.slice(Math.max(start, messages.length - CHECK_HISTORY));
