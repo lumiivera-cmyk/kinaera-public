@@ -24,7 +24,7 @@ import { otherKinwriterItems, paintAvatar, renderRail } from "./kinwriter-page.j
 import { groupItems, groupTopic, isShared } from "./groups.js";
 import { renderInboxBadge } from "./inbox.js";
 import { isUnread, loadState, markSeen } from "./live.js";
-import { currentSceneIsEmpty, kinwriterTurn, renderMessages, scrollToBottom } from "./messages.js";
+import { acceptChannelData, currentSceneIsEmpty, kinwriterTurn, renderMessages, scrollToBottom } from "./messages.js";
 import { loadNotebook, renderCastEditor } from "./notebook.js";
 import { assignmentName, fillAssignmentSelect } from "./settings.js";
 import { refreshSummaries, renderMemory } from "./summaries.js";
@@ -67,17 +67,11 @@ export async function openChannel(channelId) {
 
   if (channelId) {
     try {
-      const { messages, toolCalls, reasoning, threads, summaries, flags, rewrites, branches } = await api("GET", channelPath("messages", channelId));
+      const data = await api("GET", channelPath("messages", channelId));
       // Ignore the answer if you switched again while it was loading.
       if (state.channelId !== channelId) return;
-      state.messages = messages;
-      state.toolCalls = toolCalls;
-      state.reasoning = reasoning ?? [];
-      state.threads = threads;
-      state.rewrites = rewrites ?? [];
-      state.summaries = summaries;
-      state.flags = flags ?? { voice: [], notMe: {} };
-      state.branches = branches ?? [];
+      acceptChannelData(data);
+      state.summaries = data.summaries;
     } catch (error) {
       showError(`Couldn't load this channel: ${error.message}`, () => openChannel(channelId));
     }
@@ -149,6 +143,7 @@ export async function saveChannel(event) {
 export async function moveChannel(step) {
   const groups = sidebarGroups().map((g) => g.channels.map((c) => c.id));
   const group = groups.find((ids) => ids.includes(state.channelId));
+  if (!group) return; // #practice, groups and DMs aren't in the list you can reorder
   const from = group.indexOf(state.channelId);
   const to = from + step;
   if (to < 0 || to >= group.length) return;
@@ -206,8 +201,12 @@ export function renderAll() {
 
 /** The channel list and the kinwriter card at the bottom of the sidebar. */
 export function renderSidebar() {
-  // Not in the middle of a drag: that would pull the channel from under your finger.
-  if (state.dragging) return;
+  // Not in the middle of a drag, or a press and hold that may become one:
+  // that would pull the channel from under your finger. It's redrawn after.
+  if (state.dragging || drag.pending) {
+    drag.missedRender = true;
+    return;
+  }
   const items = [];
   for (const { category, channels } of sidebarGroups()) {
     if (category) items.push(renderCategoryHeader(category, channels));
@@ -227,14 +226,14 @@ export function renderSidebar() {
   els.channelList.append(els.channelIndicator);
   moveChannelIndicator();
 
-  const friendName = state.settings?.friendName ?? "Friend";
-  els.friendName.textContent = friendName;
+  const kinwriterName = state.settings?.kinwriterName ?? "Kinwriter";
+  els.kinwriterName.textContent = kinwriterName;
   // Under their name: their own status (set_status), else what they're doing now.
   const doing = state.orientation?.status === "running" ? "orienting" : ({ writing: "writing…", reading: "reading…", quiet: "quiet hours" }[state.presence] ?? "your kinwriter");
-  $("friend-role").textContent = state.status?.text ?? doing;
-  $("friend-role").title = state.status ? `Status, set by ${friendName}` : "";
-  $("friend-card").dataset.presence = state.presence ?? "idle";
-  paintAvatar(els.friendAvatar, { name: friendName, avatar: state.settings?.friendAvatar, color: state.settings?.friendColor });
+  $("kinwriter-role").textContent = state.status?.text ?? doing;
+  $("kinwriter-role").title = state.status ? `Status, set by ${kinwriterName}` : "";
+  $("kinwriter-card").dataset.presence = state.presence ?? "idle";
+  paintAvatar(els.kinwriterAvatar, { name: kinwriterName, avatar: state.settings?.kinwriterAvatar, color: state.settings?.kinwriterColor });
   renderRail();
 }
 
@@ -245,7 +244,7 @@ function renderPracticeItem(channel) {
   item.dataset.practiceId = channel.id;
   item.className = "practice-item";
   const link = item.querySelector(".channel-link");
-  link.title = `${state.settings.friendName}'s own channel, for trying things out. You can read it.`;
+  link.title = `${state.settings.kinwriterName}'s own channel, for trying things out. You can read it.`;
   return item;
 }
 
@@ -256,14 +255,14 @@ function renderChannelItem(channel, category) {
   if (category) item.dataset.inCategory = category.id;
   const link = document.createElement("a");
   link.className = "channel-link";
-  link.href = `#/channel/${channel.id}`;
+  link.href = `#/p/${encodeURIComponent(state.kinwriterId)}/channel/${channel.id}`;
   link.draggable = false; // dragging is ours (see "Dragging in the sidebar")
   link.dataset.kind = channel.kind;
   if (channel.id === state.channelId) link.setAttribute("aria-current", "page");
   link.title =
     channel.kind === "ooc"
       ? "Out of character"
-      : [...castNames(channel, "friend"), ...castNames(channel, "both")].join(", ") || "Roleplay";
+      : [...castNames(channel, "kinwriter"), ...castNames(channel, "both")].join(", ") || "Roleplay";
 
   const name = document.createElement("span");
   name.className = "channel-link-name";
@@ -410,7 +409,17 @@ export function fillCategorySelect(select, value) {
  * you let go: the new order, and the channel's category.
  */
 
-const drag = { pending: null, active: null, justDropped: false };
+const drag = { pending: null, active: null, justDropped: false, missedRender: false };
+
+/**
+ * Redraw the sidebar if it was skipped while a drag was starting or going
+ * on. A moment later, so the tap that ended it still reaches its link.
+ */
+function renderMissed() {
+  if (!drag.missedRender) return;
+  drag.missedRender = false;
+  setTimeout(renderSidebar, 100);
+}
 
 els.channelList.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || drag.active) return;
@@ -461,13 +470,17 @@ els.channelList.addEventListener(
 );
 
 function cancelPendingDrag() {
-  if (drag.pending?.timer) clearTimeout(drag.pending.timer);
+  if (!drag.pending) return;
+  clearTimeout(drag.pending.timer);
   drag.pending = null;
+  // (Not when it's turning into a drag: that redraws when it ends.)
+  if (!state.dragging) renderMissed();
 }
 
 function startDrag(x, y) {
   const pending = drag.pending;
   if (!pending) return;
+  state.dragging = true;
   cancelPendingDrag();
   const item = pending.item;
   const rect = item.getBoundingClientRect();
@@ -479,7 +492,6 @@ function startDrag(x, y) {
   marker.className = "drop-marker";
   els.channelList.append(marker);
   item.classList.add("drag-source");
-  state.dragging = true;
   drag.active = {
     item,
     ghost,
@@ -522,7 +534,8 @@ async function finishDrag(drop) {
   active.item.classList.remove("drag-source");
   drag.justDropped = true;
   setTimeout(() => (drag.justDropped = false), 50);
-  if (!drop || active.before === undefined) return;
+  if (!drop || active.before === undefined) return renderMissed();
+  drag.missedRender = false; // dropping redraws it
   try {
     if (active.kind === "channel") await dropChannel(active.id, active.before);
     else await dropCategory(active.id, active.before);
@@ -629,7 +642,7 @@ export function channelIcon(kind) {
 /** Channel name and "topic" (character or OOC) at the top of the channel. */
 function renderChannelHeader() {
   const channel = currentChannel();
-  // These attributes are what per-channel themes (stage 3.5) will hook onto.
+  // For per-channel themes (and theme authors): which channel this is.
   els.channelView.dataset.channelId = channel?.id ?? "";
   els.channelView.dataset.channelKind = channel?.kind ?? "";
 
@@ -648,15 +661,15 @@ function renderChannelHeader() {
  * Literary (casual from the next scene)".
  */
 function channelTopic(channel) {
-  const friendName = state.settings.friendName;
+  const kinwriterName = state.settings.kinwriterName;
   // What it's for, if it says; then, for a storyline, who plays whom.
-  if (channel.kind === "ooc") return channel.about || `Out of character with ${friendName}`;
+  if (channel.kind === "ooc") return channel.about || `Out of character with ${kinwriterName}`;
   if (isShared(channel)) return groupTopic(channel);
-  if (channel.kind === "practice") return `${friendName}'s own channel, for trying things out. You can read it; nothing here feeds anything else.`;
+  if (channel.kind === "practice") return `${kinwriterName}'s own channel, for trying things out. You can read it; nothing here feeds anything else.`;
   const parts = channel.about ? [channel.about] : [];
-  const theirs = castNames(channel, "friend");
+  const theirs = castNames(channel, "kinwriter");
   const yours = castNames(channel, "user");
-  if (theirs.length) parts.push(`${friendName} plays ${theirs.join(", ")}`);
+  if (theirs.length) parts.push(`${kinwriterName} plays ${theirs.join(", ")}`);
   const shared = castNames(channel, "both");
   if (yours.length) parts.push(`you play ${yours.join(", ")}`);
   if (shared.length) parts.push(`you both play ${shared.join(", ")}`);
@@ -687,7 +700,7 @@ export function openChannelSettings() {
   );
   form.theme.value = channel.theme ?? "";
   const serverWide = channel.kind === "ooc" ? state.settings.oocAssignment : state.settings.rpAssignment;
-  fillAssignmentSelect(form.assignment, channel.assignment, `Same as the server (${assignmentName(serverWide)})`, () => serverWide);
+  fillAssignmentSelect(form.assignment, channel.assignment, `Same as Settings (${assignmentName(serverWide)})`, () => serverWide);
   // Show the mode you'll get: a waiting change if there is one.
   form.mode.value = channel.pendingMode ?? channel.mode;
   updateModeNote();

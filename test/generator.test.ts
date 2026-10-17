@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApp, type App } from "../src/server.ts";
-import { buildSeedPrompt, generateSeed, ideaTags, parseReply, SeedError } from "../src/generator.ts";
+import { buildSeedPrompt, generateSeed, generatorSystemPrompt, ideaTags, parseReply, SeedError } from "../src/generator.ts";
 import { loadTags, parseTagFile, pickerView, readTagFiles, TAGS_DIR } from "../src/tags.ts";
 import { parseSeed, SEED_HEADINGS } from "../src/seeds.ts";
 import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
@@ -17,10 +17,9 @@ import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpe
 const MARGO = readFileSync(join(import.meta.dir, "..", "kinwriter-generator", "test-seed.md"), "utf8");
 /**
  * A good reply: Margo's name, pronouns and body, the way the model writes
- * them. The spec's example says "literary fiction", one of contemporary
- * fiction's avoid terms, so that's changed here.
+ * them.
  */
-const GOOD = `name: Margo\npronouns: she/her\n\n${parseSeed(MARGO).body.replace("literary fiction", "quiet, careful novels")}`;
+const GOOD = `name: Margo\npronouns: she/her\n\n${parseSeed(MARGO).body}`;
 
 let fake: FakeNanoGpt;
 let dir: ReturnType<typeof tempDir>;
@@ -89,7 +88,7 @@ describe("tag files", () => {
     const before = pickerView(loadTags({ dir: copy }));
     writeFileSync(
       join(copy, "social", "myspace.md"),
-      `---\nid: social.myspace\ncategory: social\nlabel: MySpace\nblurb: Top eight energy.\norder: 9\navoid_terms: [MySpace]\n---\n\n## Era\nThe 2000s.\n\n## Texture\nx\n\n## On the page\nx\n\n## In OOC\nx\n\n## Tics\n- **Glitter, rarely.**\n\n## Avoid\nx\n\n## Tension hooks\nx\n`,
+      `---\nid: social.myspace\ncategory: social\nlabel: MySpace\nblurb: Top eight energy.\norder: 9\navoid_terms: [MySpace]\n---\n\n## Era\nThe 2000s.\n\n## Texture\nx\n\n## Ways it can go\nx\n\n## On the page\nx\n\n## In OOC\nx\n\n## Tics\n- **Glitter, rarely.**\n\n## Avoid\nx\n\n## Tension hooks\nx\n`,
     );
     writeFileSync(join(copy, "prose", "lush.md"), readFileSync(join(copy, "prose", "lush.md"), "utf8").replace(/^label: Lush$/m, "label: Lavish"));
     rmSync(join(copy, "temperament", "formal.md"));
@@ -114,6 +113,8 @@ describe("tag files", () => {
     expect(social.subtitle).toBe("i promise this option is interesting");
     expect(social.options[0]).toMatchObject({ label: "Twitter (2010s)", era: expect.stringContaining("2010s Twitter") });
     expect(social.options[0].tics[0]).toContain("Lowercase in casual OOC");
+    // Personality takes several; the rest take one.
+    expect(data.categories.map((c: any) => c.multiple)).toEqual([true, false, false, false, false]);
     // The fragments never go to the app.
     expect(JSON.stringify(data)).not.toContain("Tension hooks");
   });
@@ -135,7 +136,7 @@ describe("buildSeedPrompt", () => {
     expect(prompt.rolled).toEqual(expect.arrayContaining(prompt.tags));
     expect(prompt.pockets).toHaveLength(2);
     for (const pocket of prompt.pockets) expect(prompt.rolled).toContain(pocket);
-    expect(prompt.system).toBe(readFileSync(join(import.meta.dir, "..", "kinwriter-generator", "system-prompt.md"), "utf8").trim());
+    expect(prompt.system).toBe(generatorSystemPrompt());
   });
 
   test("the user message, as the spec lays it out", () => {
@@ -145,23 +146,23 @@ describe("buildSeedPrompt", () => {
       undefined,
       { random: seq(0) },
     );
-    expect(prompt.user.startsWith("# Research notes\n\n## Personality: Reserved\n")).toBe(true);
+    expect(prompt.user.startsWith("# User guidance\nNone.\n\n# Research notes\n\n## Personality: Reserved\n")).toBe(true);
+    expect(prompt.user).toContain("### Ways it can go\n");
     expect(prompt.user).toContain("## Prose style: Sparse\n");
     expect(prompt.user).toContain("## Primary social media: Twitter (2010s)\n### Era\n");
     // The chosen pocket's bullets, under "This person's corner", and no other pocket.
     expect(prompt.user).toContain("### This person's corner\n- Craft threads, process talk");
     expect(prompt.user).not.toContain("Weird Twitter");
     expect(prompt.user).not.toContain("label:");
-    expect(prompt.user).not.toContain("# User guidance");
     // Picked, not rolled; the games pocket was rolled.
     expect(prompt.rolled).toEqual(["inspiration.games#" + prompt.pockets.find((p) => p.startsWith("inspiration.games"))!.split("#")[1]]);
     expect(prompt.pockets).toContain("social.twitter-2010s#writers");
   });
 
-  test("user guidance goes at the end, under its own heading", () => {
+  test("user guidance goes first, under its own heading, so it frames the notes", () => {
     const prompt = buildSeedPrompt(tags, { tags: { prose: "prose.lush" } }, "A lighthouse keeper.", { fill: false });
     expect(prompt.tags).toEqual(["prose.lush"]);
-    expect(prompt.user.endsWith("# User guidance\nA lighthouse keeper.")).toBe(true);
+    expect(prompt.user.startsWith("# User guidance\nA lighthouse keeper.\n\n# Research notes\n")).toBe(true);
   });
 
   test("Reroll keeps the tags (chance's still marked rolled) and chosen pockets; rolled pockets roll fresh", () => {
@@ -171,6 +172,41 @@ describe("buildSeedPrompt", () => {
     expect(again.tags).toEqual(first.tags);
     expect(again.rolled.filter((r) => !r.includes("#"))).toEqual(first.rolled.filter((r) => !r.includes("#")));
     expect(again.pockets).not.toEqual(first.pockets);
+  });
+
+  test("several personalities: each gets a section, all count as picked, nothing else is rolled for them", () => {
+    const prompt = buildSeedPrompt(tags, { tags: { personality: ["personality.warm", "personality.chaotic", "personality.warm"] } }, undefined, { random: seq(0) });
+    expect(prompt.tags.filter((t) => t.startsWith("personality."))).toEqual(["personality.warm", "personality.chaotic"]);
+    expect(prompt.rolled.some((r) => r.startsWith("personality."))).toBe(false);
+    expect(prompt.user).toContain("## Personality: Warm\n");
+    expect(prompt.user).toContain("## Personality: Chaotic\n");
+    expect(prompt.system).toContain("blend them into one person");
+    // An empty list is "Surprise me": one is rolled.
+    const empty = buildSeedPrompt(tags, { tags: { personality: [] } }, undefined, { random: seq(0) });
+    expect(empty.rolled.filter((r) => r.startsWith("personality."))).toHaveLength(1);
+    // A category that takes one keeps only the first.
+    const one = buildSeedPrompt(tags, { tags: { prose: ["prose.sparse", "prose.lush"] } }, undefined, { fill: false });
+    expect(one.tags).toEqual(["prose.sparse"]);
+  });
+
+  test("naming: a random name adds nothing; a random username and a given name each get a Name section", () => {
+    const plain = buildSeedPrompt(tags, { tags: {}, naming: { kind: "name" } }, undefined, { random: seq(0) });
+    expect(plain.user).not.toContain("# Name");
+    expect(plain.name).toBeUndefined();
+    const handle = buildSeedPrompt(tags, { tags: {}, naming: { kind: "username" } }, "A night owl.", { random: seq(0) });
+    expect(handle.user).toContain("# Name\nThey go by an online username");
+    // The user's guidance comes first; the name comes after the notes.
+    expect(handle.user.startsWith("# User guidance\nA night owl.\n\n# Research notes\n")).toBe(true);
+    expect(handle.user.indexOf("# Name")).toBeGreaterThan(handle.user.indexOf("# Research notes"));
+    const given = buildSeedPrompt(tags, { tags: {}, naming: { kind: "given", name: "Wren" } }, undefined, { random: seq(0) });
+    expect(given.user).toContain("# Name\nTheir name is Wren.");
+    expect(given.name).toBe("Wren");
+  });
+
+  test("Reroll keeps every picked personality", () => {
+    const first = buildSeedPrompt(tags, { tags: { personality: ["personality.reserved", "personality.curious"] } }, undefined, { random: seq(0.3) });
+    const again = buildSeedPrompt(tags, { tags: { personality: first.tags.filter((t) => t.startsWith("personality.")) }, rolledTags: first.rolled.filter((r) => !r.includes("#")) }, undefined, { random: seq(0.3) });
+    expect(again.tags).toEqual(first.tags);
   });
 });
 
@@ -187,13 +223,13 @@ describe("generating a seed", () => {
     const seed = await generateSeed(api(), profile(), p, { source: "generated", avoidTerms: [] });
     expect(fake.requests).toHaveLength(1);
     expect(fake.requests[0]!.messages.map((m) => m.role)).toEqual(["system", "user"]);
-    expect(seed.header).toMatchObject({ name: "Margo", pronouns: "she/her", source: "generated", tags: p.tags, rolled: p.rolled, pockets: p.pockets, model: profile().model, seed_version: 1 });
+    expect(seed.header).toMatchObject({ name: "Margo", pronouns: "she/her", source: "generated", tags: p.tags, rolled: p.rolled, pockets: p.pockets, model: profile().model, seed_version: 2 });
     expect(seed.header.id).toMatch(/^kw_/);
     expect(parseSeed(seed.text).body.split("\n").filter((l) => l.startsWith("## "))).toEqual(SEED_HEADINGS.map((h) => `## ${h}`));
   });
 
   test("an avoid term is rejected and retried; the second try passes", async () => {
-    fake.replies.push({ content: GOOD.replace("Literary references", "Tweet-sized references") }, { content: GOOD });
+    fake.replies.push({ content: GOOD.replace("References to books", "Tweet-sized references to books") }, { content: GOOD });
     const seed = await generateSeed(api(), profile(), prompt(), { source: "generated", avoidTerms: ["tweet"] });
     expect(fake.requests).toHaveLength(2);
     expect(seed.header.name).toBe("Margo");
@@ -204,13 +240,28 @@ describe("generating a seed", () => {
     let generation: any;
     const error = await generateSeed(api(), profile(), prompt(), { source: "generated", avoidTerms: [], words: { min: 10, max: 100 }, record: (g) => (generation = g) }).catch((e) => e);
     expect(error).toBeInstanceOf(SeedError);
-    expect(error.message).toBe("Their seed didn't come out right, twice. Try again for someone new.");
+    expect(error.message).toMatch(
+      /^Their seed didn't come out right, twice\.\nFirst try: It's \d+ words; it should be 10 to 100\.\nSecond try: It's \d+ words; it should be 10 to 100\.\nTry again for someone new\.$/,
+    );
     expect(fake.requests).toHaveLength(2);
     expect(generation.attempts.map((a: any) => a.problems[0].check)).toEqual(["length", "length"]);
   });
 
   test("the reply is read forgivingly: bold keys, a code fence", () => {
     expect(parseReply("```markdown\n**name:** Ines\n**pronouns:** they/them\n\n## Who they are\nx\n```")).toEqual({ name: "Ines", pronouns: "they/them", body: "## Who they are\nx" });
+  });
+
+  test("Working notes are dropped, even when they mention a name or use ## headings", () => {
+    const notes = "### Working notes\n- Discord: Authority, blended with Lurker.\nname: maybe Rowan?\n## Wants\n- scratch\n\n";
+    expect(parseReply(`${notes}name: Ines\npronouns: they/them\n\n## Who they are\nx`)).toEqual({ name: "Ines", pronouns: "they/them", body: "## Who they are\nx" });
+    expect(parseReply(`## Working notes\nrough\n\nname: Ines\npronouns: they/them\n\n## Who they are\nx`)).toEqual({ name: "Ines", pronouns: "they/them", body: "## Who they are\nx" });
+  });
+
+  test("a full reply with Working notes passes every check", async () => {
+    fake.replies.push({ content: `### Working notes\n- Reserved: Deliberate.\n- Want: one finished story.\n\n${GOOD}` });
+    const seed = await generateSeed(api(), profile(), prompt(), { source: "generated", avoidTerms: [] });
+    expect(seed.header.name).toBe("Margo");
+    expect(seed.body).not.toContain("Working notes");
   });
 
   test("the route: a valid seed, then Show prompt and Raw output in dev mode", async () => {
@@ -229,11 +280,42 @@ describe("generating a seed", () => {
     expect(app.store.seeds.get()!.seed.header).toMatchObject({ id: "home", tags: data.header.tags, model: data.header.model });
   });
 
+  test("the route: several personalities as a list; a list for a one-tag category is refused", async () => {
+    fake.replies.push({ content: GOOD });
+    const { status, data } = await call("POST", "/api/seeds/generate", { tags: { personality: ["personality.warm", "personality.grounded"] } });
+    expect(status).toBe(200);
+    expect(data.header.tags).toEqual(expect.arrayContaining(["personality.warm", "personality.grounded"]));
+    expect(data.header.rolled).not.toContain("personality.warm");
+    expect(fake.requests.at(-1)!.messages[1]!.content).toContain("## Personality: Grounded");
+    const refused = await call("POST", "/api/seeds/generate", { tags: { prose: ["prose.sparse", "prose.lush"] } });
+    expect(refused.status).toBe(400);
+  });
+
+  test("the route: a name you give is theirs, whatever the model wrote; a blank one is refused", async () => {
+    fake.replies.push({ content: GOOD });
+    const { status, data } = await call("POST", "/api/seeds/generate", { tags: {}, naming: { given: "  Wren " } });
+    expect(status).toBe(200);
+    expect(data.header.name).toBe("Wren");
+    expect(parseSeed(data.text).header.name).toBe("Wren");
+    expect((await call("POST", "/api/seeds/generate", { tags: {}, naming: { given: " " } })).status).toBe(400);
+    expect((await call("POST", "/api/seeds/generate", { tags: {}, naming: "nickname" })).status).toBe(400);
+    fake.replies.push({ content: GOOD });
+    expect((await call("POST", "/api/seeds/generate", { tags: {}, naming: "username" })).status).toBe(200);
+    expect(fake.requests.at(-1)!.messages[1]!.content).toContain("online username");
+  });
+
   test("the route: twice wrong is a 422 with a short error", async () => {
     fake.replies.push({ content: "Sure! Here's someone." }, { content: "name: X" });
     const { status, data } = await call("POST", "/api/seeds/generate", { tags: {} });
     expect(status).toBe(422);
     expect(data.error).toContain("didn't come out right, twice");
+    // What was wrong is in the error, not only in dev mode.
+    expect(data.error).toContain("First try: It has no name. It has no pronouns.");
+    expect(data.error).toContain("Second try:");
+    // …and what it needed beside what each try wrote, for "What they wrote".
+    expect(data.expected).toEqual(expect.arrayContaining([expect.stringContaining("350 to 750 words")]));
+    expect(data.attempts.map((a: any) => a.raw)).toEqual(["Sure! Here's someone.", "name: X"]);
+    expect(data.attempts[0].problems).toContain("It has no name.");
     expect((await call("GET", "/api/seeds/last")).data.generation.attempts).toHaveLength(2);
   });
 });
@@ -296,6 +378,45 @@ describe("Generate from idea", () => {
       expect(new Set(prompt.tags.map((t) => t.split(".")[0])).size).toBe(prompt.tags.length);
       for (const t of prompt.tags) expect(prompt.rolled).toContain(t);
     }
+  });
+
+  test("tags you attach are kept; Jev is asked only about the categories you left open, and nothing is rolled", async () => {
+    let asked: string[] = [];
+    const decider = {
+      enabled: () => true,
+      ask: async (_state: string, questions: any[]) => {
+        asked = questions.map((q) => q.id);
+        return new Map(
+          questions.map((q) => {
+            const selected = q.id === "prose" ? "Lyrical" : "none";
+            return [q.id, { id: q.id, selected, probabilities: { [selected]: 0.95 }, confidence: 0.95 }];
+          }),
+        );
+      },
+    } as any;
+    const chosen = { tags: { personality: ["personality.reserved", "personality.curious"], social: "social.twitter-2010s" }, pockets: { "social.twitter-2010s": "writers" } };
+    const { selection, picked } = await ideaTags(tags, "A poet who writes by ear.", decider, 0.8, Math.random, chosen);
+    expect(asked).not.toContain("personality");
+    expect(asked).not.toContain("social");
+    expect(picked).toEqual(["prose.lyrical"]);
+    const prompt = buildSeedPrompt(tags, selection, "A poet who writes by ear.", { fill: false });
+    expect(prompt.tags.sort()).toEqual(["personality.curious", "personality.reserved", "prose.lyrical", "social.twitter-2010s"]);
+    expect(prompt.rolled).toEqual([]);
+    expect(prompt.pockets).toEqual(["social.twitter-2010s#writers"]);
+
+    // With no Jev, what you attached is all there is: no tags are rolled on top.
+    const alone = await ideaTags(tags, "Someone fun.", null, 0.8, () => 0.99, { tags: { prose: "prose.sparse" } });
+    expect(buildSeedPrompt(tags, alone.selection, "Someone fun.", { fill: false }).tags).toEqual(["prose.sparse"]);
+  });
+
+  test("the route takes attached tags", async () => {
+    fake.replies.push({ content: GOOD });
+    const { status, data } = await call("POST", "/api/seeds/idea", { text: "A retired stage actor.", tags: { personality: ["personality.reserved"], prose: null }, pockets: {} });
+    expect(status).toBe(200);
+    expect(data.header.tags).toContain("personality.reserved");
+    expect(data.header.rolled).not.toContain("personality.reserved");
+    expect(fake.requests.at(-1)!.messages[1]!.content).toContain("## Personality: Reserved");
+    expect((await call("POST", "/api/seeds/idea", { text: "x", tags: "nope" })).status).toBe(400);
   });
 
   test("the route: source prompted, your words as the guidance", async () => {

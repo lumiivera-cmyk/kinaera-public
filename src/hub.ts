@@ -31,18 +31,22 @@
  *
  * Deleting a kinwriter moves their files to `<dataDir>/trash/`, not away for
  * good, in case you change your mind.
+ *
+ * The Settings menu, and the connection profiles and roulettes, are shared
+ * by every kinwriter (src/universal.ts): each keeps a copy, and the hub
+ * keeps the copies the same. A kinwriter can have some sections of it
+ * (models, memory, reaching out) just for themselves.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import type { Database } from "bun:sqlite";
 import type { Config } from "./config.ts";
 import { listWording, setWording, setWordingOverrides } from "./wording.ts";
 import { keepAwake } from "./notify.ts";
 import { acceptedSeed, beginFromSeed, type Seed } from "./seeds.ts";
 import { createApp, type App } from "./server.ts";
 import { Groups, type HubGroup } from "./groups.ts";
-import { isShared, validateSettings } from "./store.ts";
+import { defaultSettings, isShared, validateSettings } from "./store.ts";
 import {
   browseKinwriter,
   browseMessages,
@@ -51,21 +55,37 @@ import {
   exportKinwriter,
   folderPath,
   kinwriterDir,
+  kinwriterNameIn,
   oldFolderNames,
   readBundle,
+  renamedRegistry,
   startFresh,
   writeKinwriter,
   type KinwriterBundle,
 } from "./datafolders.ts";
 import { orientationRunning } from "./orientation.ts";
 import type { Settings } from "./types.ts";
+import { ASSIGNMENT_KEYS } from "./profiles.ts";
+import {
+  mergeProfiles,
+  OWN_GROUPS,
+  ownGroups,
+  ownKeys,
+  same,
+  setOwnGroup,
+  SETTING_GROUPS,
+  syncProfiles,
+  UNIVERSAL_KEYS,
+  unionLines,
+  type SettingGroup,
+} from "./universal.ts";
 
 export interface HubServer {
   id: string;
   /** Its name; "" shows its first kinwriter's name. */
   name: string;
   /** Its kinwriters' ids, in sidebar order. */
-  friends: string[];
+  kinwriters: string[];
 }
 
 export interface HubKinwriter {
@@ -81,7 +101,7 @@ export interface HubKinwriter {
 
 interface Registry {
   servers: HubServer[];
-  friends: HubKinwriter[];
+  kinwriters: HubKinwriter[];
   /** Group channels and DMs (src/groups.ts). */
   groups?: HubGroup[];
   /**
@@ -90,18 +110,24 @@ interface Registry {
    * kinwriter is on their own, even with several on one server.
    */
   together?: boolean;
+  /**
+   * The shared settings (src/universal.ts): what every kinwriter has, except
+   * in sections that are their own. A hub from before settings were shared
+   * doesn't have it yet: it's made on start, from the first kinwriter's.
+   */
+  settings?: Partial<Settings>;
 }
 
 /** Settings that are the kinwriter themselves: never copied to a new kinwriter. */
 export const KINWRITER_KEYS: (keyof Settings)[] = [
-  "friendName",
-  "friendPrompt",
+  "kinwriterName",
+  "kinwriterPrompt",
   "literaryPrompt",
   "casualPrompt",
   "oocPrompt",
-  "friendAvatar",
-  "friendColor",
-  "friendPronouns",
+  "kinwriterAvatar",
+  "kinwriterColor",
+  "kinwriterPronouns",
 ];
 
 /** A kinwriter as the rail and sidebar show them, with their channels. */
@@ -154,11 +180,17 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
 
   // ------------------------------------------------------------ the list
 
+  // A hub.json from before the second rename is saved again under the new names.
+  let renamed = false;
   function load(): Registry {
-    if (existsSync(registryPath)) return JSON.parse(readFileSync(registryPath, "utf8")) as Registry;
-    return { friends: [{ id: "home", dir: "." }], servers: [{ id: crypto.randomUUID(), name: "", friends: ["home"] }] };
+    if (!existsSync(registryPath)) return { kinwriters: [{ id: "home", dir: "." }], servers: [{ id: crypto.randomUUID(), name: "", kinwriters: ["home"] }] };
+    const text = readFileSync(registryPath, "utf8");
+    const registry = renamedRegistry<Registry>(JSON.parse(text));
+    renamed = JSON.stringify(registry) !== JSON.stringify(JSON.parse(text));
+    return registry;
   }
   const registry = load();
+  if (moveOutOfFriends()) renamed = true;
 
   function save(): void {
     // Written whole, then renamed over the old one: never half-written.
@@ -166,34 +198,62 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     writeFileSync(temp, JSON.stringify(registry, null, 2));
     renameSync(temp, registryPath);
   }
-  if (!existsSync(registryPath)) save();
+  if (!existsSync(registryPath) || renamed) save();
+
+  /**
+   * Kinwriters' folders were in `friends/` before the second rename
+   * (docs/orientation-1.md): each moves to `kinwriters/`, before any is
+   * opened. Their new places are saved after; a start that stopped in
+   * between finds the folder already moved, or moves it then. True if
+   * anything changed.
+   */
+  function moveOutOfFriends(): boolean {
+    let changed = false;
+    for (const kinwriter of registry.kinwriters) {
+      const old = /^friends[\\/]([^\\/]+)$/.exec(kinwriter.dir);
+      if (!old) continue;
+      const from = join(root, "friends", old[1]!);
+      const to = join(root, "kinwriters", old[1]!);
+      if (existsSync(from) && !existsSync(to)) {
+        mkdirSync(join(root, "kinwriters"), { recursive: true });
+        renameSync(from, to);
+      }
+      kinwriter.dir = join("kinwriters", old[1]!);
+      changed = true;
+    }
+    // The old folder goes once it's empty.
+    const friends = join(root, "friends");
+    if (existsSync(friends) && readdirSync(friends).length === 0) rmdirSync(friends);
+    return changed;
+  }
 
   // Group channels and DMs: shared by several kinwriters, so kept here.
   const groups = new Groups(() => (registry.groups ??= []), apps, save, config.groupDelayMs);
 
   /** The server a kinwriter is in. */
-  const serverOf = (kinwriterId: string) => registry.servers.find((s) => s.friends.includes(kinwriterId));
+  const serverOf = (kinwriterId: string) => registry.servers.find((s) => s.kinwriters.includes(kinwriterId));
 
   function open(kinwriter: HubKinwriter): App {
     const app = makeApp({
       ...config,
       dataDir: resolve(root, kinwriter.dir),
       userThemesDir: join(root, "themes"),
+      userBackgroundsDir: join(root, "backgrounds"),
       kinwriterId: kinwriter.id,
       example: kinwriter.id === "home" ? "generate" : false,
       // Who else is on their server (names only), only with kinwriters together.
       peers: () => {
         if (!registry.together) return [];
-        const server = registry.servers.find((s) => s.friends.includes(kinwriter.id));
-        return (server?.friends ?? [])
+        const server = registry.servers.find((s) => s.kinwriters.includes(kinwriter.id));
+        return (server?.kinwriters ?? [])
           .filter((id) => id !== kinwriter.id && apps.has(id))
-          .map((id) => ({ id, name: apps.get(id)!.store.getSettings().friendName }));
+          .map((id) => ({ id, name: apps.get(id)!.store.getSettings().kinwriterName }));
       },
       groups: {
         info: (channelId) => groups.info(kinwriter.id, channelId),
         dmWith: (peerId) => {
           const server = serverOf(kinwriter.id);
-          if (!server || !server.friends.includes(peerId)) throw new HubError(400, "They aren't on your server.");
+          if (!server || !server.kinwriters.includes(peerId)) throw new HubError(400, "They aren't on your server.");
           return groups.dm(server.id, kinwriter.id, peerId).id;
         },
       },
@@ -206,7 +266,154 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     if (started) startApp(app);
     return app;
   }
-  for (const kinwriter of registry.friends) if (!kinwriter.archived) open(kinwriter);
+  for (const kinwriter of registry.kinwriters) if (!kinwriter.archived) open(kinwriter);
+
+  // ---------------------------------------------------- shared settings
+
+  const pick = (settings: Partial<Settings>, keys: readonly (keyof Settings)[]): Partial<Settings> =>
+    Object.fromEntries(keys.filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
+
+  /** Give a kinwriter the shared settings, except in their own sections. */
+  function applyShared(app: App): void {
+    const own = ownKeys(app.store);
+    app.store.updateSettings(pick(registry.settings ?? {}, UNIVERSAL_KEYS.filter((k) => !own.has(k))));
+  }
+
+  /**
+   * Bring a kinwriter into the shared settings (on the first start since
+   * settings were shared, or imported, or restored), changing nothing about
+   * how they write: their profiles and roulettes join the shared ones
+   * (`mergeProfiles`), a section where their settings differ becomes their
+   * own, and their hard limits join everyone's (none is dropped).
+   * `others` are the kinwriters already sharing; the first kinwriter in
+   * becomes what everyone shares.
+   */
+  function adopt(app: App, others: App[]): string[] {
+    const [shared] = others;
+    if (shared) {
+      mergeProfiles(shared.store.db, app.store.db, app.store.getSettings().kinwriterName);
+      for (const other of [...others.slice(1), app]) syncProfiles(shared.store.db, other.store.db);
+    }
+    const settings = app.store.getSettings();
+    if (!registry.settings) {
+      registry.settings = pick(settings, UNIVERSAL_KEYS);
+      return [];
+    }
+    for (const group of OWN_GROUPS) {
+      if (SETTING_GROUPS[group].some((k) => registry.settings![k] !== undefined && !same(settings[k], registry.settings![k]))) {
+        setOwnGroup(app.store, group, true);
+      }
+    }
+    const limits = unionLines(registry.settings.hardLimits ?? "", settings.hardLimits);
+    if (limits !== (registry.settings.hardLimits ?? "")) {
+      registry.settings.hardLimits = limits;
+      for (const other of others) other.store.updateSettings({ hardLimits: limits });
+    }
+    applyShared(app);
+    return ownGroups(app.store);
+  }
+
+  /** Every kinwriter in sidebar order: the first server's first kinwriter first. */
+  const inOrder = () => registry.servers.flatMap((s) => s.kinwriters).flatMap((id) => (apps.has(id) ? [apps.get(id)!] : []));
+
+  // A hub from before settings were shared: everyone's become one set, from the first kinwriter's.
+  if (!registry.settings) {
+    const sharing: App[] = [];
+    for (const app of inOrder()) {
+      const own = adopt(app, sharing);
+      if (sharing.length && own.length) console.log(`[hub] settings are shared now; kept just for ${app.store.getSettings().kinwriterName}: ${own.join(", ")}`);
+      sharing.push(app);
+    }
+    save();
+  } else {
+    // A setting added since settings were shared: shared from the first
+    // kinwriter who doesn't keep that section as their own (or the default).
+    const missing = UNIVERSAL_KEYS.filter((k) => registry.settings![k] === undefined);
+    if (missing.length) {
+      const defaults = defaultSettings();
+      const shared = registry.settings as Record<string, unknown>;
+      for (const k of missing) shared[k] = inOrder().find((app) => !ownKeys(app.store).has(k))?.store.getSettings()[k] ?? defaults[k];
+      save();
+    }
+  }
+
+  /** Ask a kinwriter's app to change settings, as Settings → Save does (so the heartbeat and summaries catch up). */
+  async function putSettings(app: App, update: Partial<Settings>): Promise<void> {
+    if (Object.keys(update).length === 0) return;
+    const response = await app.fetch(
+      new Request("http://localhost/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update) }),
+    );
+    if (!response.ok) console.error(`[hub] couldn't share settings with ${app.store.getSettings().kinwriterName}: ${await response.text()}`);
+  }
+
+  /**
+   * Settings were saved while looking at one kinwriter: everyone shares the
+   * change, unless it's in a section that's that kinwriter's own (then it's
+   * just theirs), and except anyone who has that section as their own.
+   * One save is shared at a time, so two at once can't leave kinwriters
+   * disagreeing.
+   */
+  let spreading: Promise<void> = Promise.resolve();
+  function spreadSettings(sourceId: string, keys: string[]): Promise<void> {
+    const next = spreading.then(() => spreadNow(sourceId, keys));
+    spreading = next.catch(() => {});
+    return next;
+  }
+
+  async function spreadNow(sourceId: string, keys: string[]): Promise<void> {
+    const source = apps.get(sourceId);
+    if (!source || !registry.settings) return;
+    const own = ownKeys(source.store);
+    const settings = source.store.getSettings();
+    const changed = UNIVERSAL_KEYS.filter((k) => keys.includes(k) && !own.has(k) && !same(settings[k], registry.settings![k]));
+    if (changed.length === 0) return;
+    Object.assign(registry.settings, pick(settings, changed));
+    save();
+    for (const [id, app] of apps) {
+      if (id === sourceId) continue;
+      const theirs = ownKeys(app.store);
+      await putSettings(app, pick(settings, changed.filter((k) => !theirs.has(k))));
+    }
+  }
+
+  /** Profiles or roulettes changed while looking at one kinwriter: everyone gets the same. */
+  function spreadProfiles(sourceId: string): void {
+    const source = apps.get(sourceId);
+    if (!source) return;
+    for (const [id, app] of apps) if (id !== sourceId) syncProfiles(source.store.db, app.store.db);
+    // Shared choices of something deleted go back to the default, as each kinwriter's did.
+    let changed = false;
+    for (const key of ASSIGNMENT_KEYS) {
+      const value = registry.settings?.[key];
+      if (!value) continue;
+      try {
+        source.store.profiles.checkAssignment(value);
+      } catch {
+        registry.settings![key] = "";
+        changed = true;
+      }
+    }
+    if (changed) save();
+  }
+
+  /** Send a request to a kinwriter's app; settings and profiles it changes are shared with everyone. */
+  async function forward(id: string, app: App, request: Request): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    const settings = request.method === "PUT" && path === "/api/settings";
+    const profiles = request.method !== "GET" && /^\/api\/(profiles|roulettes)(\/[^/]+)?$/.test(path);
+    let keys: string[] = [];
+    if (settings) {
+      const sent = (await request
+        .clone()
+        .json()
+        .catch(() => null)) as unknown;
+      if (typeof sent === "object" && sent !== null) keys = Object.keys(sent);
+    }
+    const response = await app.fetch(request);
+    if (response.ok && settings) await spreadSettings(id, keys);
+    if (response.ok && profiles) spreadProfiles(id);
+    return response;
+  }
 
   function startApp(app: App): void {
     app.summarizer.scheduleAll(15_000);
@@ -224,7 +431,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     app.stop();
   }
 
-  const defaultApp = () => apps.get(registry.servers[0]!.friends[0]!)!;
+  const defaultApp = () => apps.get(registry.servers[0]!.kinwriters[0]!)!;
   const server = (id: string) => {
     const found = registry.servers.find((s) => s.id === id);
     if (!found) throw new HubError(404, "There's no such server.");
@@ -245,9 +452,9 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     const channels = store.listChannels().filter((c) => !isShared(c));
     return {
       id,
-      name: settings.friendName,
-      avatar: settings.friendAvatar,
-      color: settings.friendColor,
+      name: settings.kinwriterName,
+      avatar: settings.kinwriterAvatar,
+      color: settings.kinwriterColor,
       channels: channels.map((c) => ({ id: c.id, name: c.name, kind: c.kind, categoryId: c.categoryId, position: c.position })),
       categories: store.listCategories().map((c) => ({ id: c.id, name: c.name, position: c.position, collapsed: c.collapsed })),
       activity: Object.fromEntries(
@@ -268,26 +475,26 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       .filter((g) => g.serverId === serverId)
       .map((g) => {
         // Its newest message and who's writing there, from any member's copy.
-        const copies = g.friends.map((id) => apps.get(id)).filter((a): a is App => a !== undefined && a.store.hasChannel(g.id));
+        const copies = g.kinwriters.map((id) => apps.get(id)).filter((a): a is App => a !== undefined && a.store.hasChannel(g.id));
         const last = g.visible || g.kind === "group" ? copies[0]?.store.lastMessage(g.id) : undefined;
         return {
           id: g.id,
           kind: g.kind,
-          name: g.kind === "dm" ? g.friends.map((id) => apps.get(id)?.store.getSettings().friendName ?? "?").join(" & ") : g.name,
-          friends: g.friends,
+          name: g.kind === "dm" ? g.kinwriters.map((id) => apps.get(id)?.store.getSettings().kinwriterName ?? "?").join(" & ") : g.name,
+          kinwriters: g.kinwriters,
           visible: g.kind === "group" || g.visible,
           activity: last ? { lastId: last.id, author: last.author, at: last.createdAt } : null,
-          writing: copies.filter((a) => a.kinwriter.isBusy(g.id)).map((a) => a.store.getSettings().friendName),
+          writing: copies.filter((a) => a.kinwriter.isBusy(g.id)).map((a) => a.store.getSettings().kinwriterName),
         };
       });
   }
 
   function view() {
     return {
-      servers: registry.servers.map((s) => ({ ...s, friends: s.friends.map(summary), groups: registry.together ? groupViews(s.id) : [] })),
+      servers: registry.servers.map((s) => ({ ...s, kinwriters: s.kinwriters.map(summary), groups: registry.together ? groupViews(s.id) : [] })),
       together: registry.together === true,
       // Retired kinwriters, with the note they left.
-      archived: registry.friends.filter((f) => f.archived).map((f) => ({ id: f.id, ...f.archived! })),
+      archived: registry.kinwriters.filter((f) => f.archived).map((f) => ({ id: f.id, ...f.archived! })),
     };
   }
 
@@ -295,7 +502,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
 
   /** Make a kinwriter, copying profiles and preferences from another. */
   function makeKinwriter(input: Record<string, unknown>): string {
-    const source = kinwriterApp(typeof input.copyFrom === "string" ? input.copyFrom : registry.servers[0]!.friends[0]!);
+    const source = kinwriterApp(typeof input.copyFrom === "string" ? input.copyFrom : registry.servers[0]!.kinwriters[0]!);
     // From a seed (src/seeds.ts): checked before anything is made.
     let seed: Seed | null = null;
     if (input.seed !== undefined) {
@@ -308,33 +515,50 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       delete input.prompt;
     }
     const identity = validateSettings({
-      friendName: input.name ?? "New kinwriter",
-      ...(input.prompt !== undefined ? { friendPrompt: input.prompt } : {}),
-      ...(input.avatar !== undefined ? { friendAvatar: input.avatar } : {}),
-      ...(input.color !== undefined ? { friendColor: input.color } : {}),
+      kinwriterName: input.name ?? "New kinwriter",
+      ...(input.prompt !== undefined ? { kinwriterPrompt: input.prompt } : {}),
+      ...(input.avatar !== undefined ? { kinwriterAvatar: input.avatar } : {}),
+      ...(input.color !== undefined ? { kinwriterColor: input.color } : {}),
     });
     const id = `p-${crypto.randomUUID().slice(0, 8)}`;
-    const kinwriter: HubKinwriter = { id, dir: join("friends", id) };
+    const kinwriter: HubKinwriter = { id, dir: join("kinwriters", id) };
     const app = open(kinwriter);
-    copyProfiles(source.store.db, app.store.db);
-    const preferences = Object.fromEntries(
-      Object.entries(source.store.getSettings()).filter(([key]) => !KINWRITER_KEYS.includes(key as keyof Settings)),
-    );
-    app.store.updateSettings({ ...(preferences as Partial<Settings>), ...identity });
-    // Who they were made as is the first version of their identity, which
-    // is theirs from now on (src/identity.ts). Their first turn is the
-    // orientation their store queued (src/orientation.ts).
-    if (seed) beginFromSeed(app.store, seed, id);
-    else app.store.identity.begin(identity.friendPrompt ?? app.store.getSettings().friendPrompt, typeof input.tastes === "string" ? input.tastes : "");
+    try {
+      syncProfiles(source.store.db, app.store.db);
+      const preferences = Object.fromEntries(
+        Object.entries(source.store.getSettings()).filter(([key]) => !KINWRITER_KEYS.includes(key as keyof Settings)),
+      );
+      app.store.updateSettings({ ...(preferences as Partial<Settings>), ...identity });
+      // The shared settings, not what was just the other kinwriter's own.
+      applyShared(app);
+      // Who they were made as is the first version of their identity, which
+      // is theirs from now on (src/identity.ts). Their first turn is the
+      // orientation their store queued (src/orientation.ts).
+      if (seed) beginFromSeed(app.store, seed, id);
+      else app.store.identity.begin(identity.kinwriterPrompt ?? app.store.getSettings().kinwriterPrompt, typeof input.tastes === "string" ? input.tastes : "");
+    } catch (error) {
+      unmake(kinwriter);
+      throw error;
+    }
+    // Opened before their settings were copied: keep the phone awake for their heartbeat too.
+    if (started && app.store.getSettings().heartbeatHours > 0) keepAwake();
     if (started) void app.rhythms.tick();
-    registry.friends.push(kinwriter);
+    registry.kinwriters.push(kinwriter);
     return id;
+  }
+
+  /** A kinwriter whose making failed partway: their app stopped, their brand-new folder gone. */
+  function unmake(kinwriter: HubKinwriter): void {
+    const app = apps.get(kinwriter.id);
+    if (app) stopApp(app);
+    apps.delete(kinwriter.id);
+    rmSync(resolve(root, kinwriter.dir), { recursive: true, force: true });
   }
 
   // ------------------------------------------------------------- routes
 
   async function body(request: Request): Promise<Record<string, unknown>> {
-    if (!(request.headers.get("content-type") ?? "").includes("application/json")) {
+    if (!(request.headers.get("content-type") ?? "").startsWith("application/json")) {
       throw new HubError(415, "API requests that change data must be sent as JSON.");
     }
     try {
@@ -351,12 +575,18 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
   /** A kinwriter from an exported file, or an old folder: a new kinwriter, on a server of their own. */
   function importKinwriter(bundle: KinwriterBundle): string {
     const id = `p-${crypto.randomUUID().slice(0, 8)}`;
-    const entry: HubKinwriter = { id, dir: join("friends", id) };
+    const entry: HubKinwriter = { id, dir: join("kinwriters", id) };
     writeKinwriter(resolve(root, entry.dir), bundle);
     // Opening upgrades their database to the current layout.
-    open(entry);
-    registry.friends.push(entry);
-    registry.servers.push({ id: crypto.randomUUID(), name: "", friends: [id] });
+    const others = inOrder();
+    try {
+      adopt(open(entry), others);
+    } catch (error) {
+      unmake(entry);
+      throw error;
+    }
+    registry.kinwriters.push(entry);
+    registry.servers.push({ id: crypto.randomUUID(), name: "", kinwriters: [id] });
     save();
     return id;
   }
@@ -367,15 +597,31 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     groups.stop();
     for (const app of apps.values()) stopApp(app);
     apps.clear();
-    const result = startFresh(root, { kinwriterKeys: KINWRITER_KEYS, copyProfiles });
+    let result: ReturnType<typeof startFresh> | null = null;
+    let failed: unknown = null;
+    try {
+      result = startFresh(root, { kinwriterKeys: KINWRITER_KEYS });
+    } catch (error) {
+      // Nothing was set aside (the list is still here): everyone back, as they were.
+      if (existsSync(registryPath)) {
+        for (const kinwriter of registry.kinwriters) if (!kinwriter.archived) open(kinwriter);
+        throw error;
+      }
+      // Set aside, but the new start didn't finish: the new hub opens anyway (so the app works), then the error.
+      failed = error;
+    }
     // A new hub: one kinwriter to make, on one server, kept apart.
-    registry.friends = [{ id: "home", dir: "." }];
-    registry.servers = [{ id: crypto.randomUUID(), name: "", friends: ["home"] }];
+    registry.kinwriters = [{ id: "home", dir: "." }];
+    registry.servers = [{ id: crypto.randomUUID(), name: "", kinwriters: ["home"] }];
     registry.groups = [];
     delete registry.together;
-    save();
+    // Their settings (carried over by startFresh) are what's shared now.
+    delete registry.settings;
     setWordingOverrides(join(root, "prompts.json"));
-    open(registry.friends[0]!);
+    mkdirSync(root, { recursive: true });
+    adopt(open(registry.kinwriters[0]!), []);
+    save();
+    if (!result) throw failed;
     return result;
   }
 
@@ -394,7 +640,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       const current = plain(() => describeFolder(root, "current")) as ReturnType<typeof describeFolder>;
       for (const k of current.kinwriters) {
         const live = apps.get(k.id)?.store.getSettings();
-        if (live) Object.assign(k, { name: live.friendName, avatar: live.friendAvatar });
+        if (live) Object.assign(k, { name: live.kinwriterName, avatar: live.kinwriterAvatar });
       }
       return json({ current, old: oldFolderNames(root).map((name) => plain(() => describeFolder(root, name))) });
     }
@@ -414,15 +660,17 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       const id = decodeURIComponent(parts[3]);
       const path = plain(() => folderPath(root, folder)) as string;
       const dir = plain(() => kinwriterDir(path, id)) as string;
-      if (method === "GET" && parts.length === 4) return json(plain(() => browseKinwriter(root, folder, id)));
+      // A current kinwriter's open database, for a consistent copy of it.
+      const open = folder === "current" ? apps.get(id)?.store.db : undefined;
+      if (method === "GET" && parts.length === 4) return json(plain(() => browseKinwriter(root, folder, id, open)));
       if (method === "GET" && parts.length === 6 && parts[4] === "channels") {
         const before = new URL(request.url).searchParams.get("before") ?? undefined;
-        return json(plain(() => browseMessages(root, folder, id, decodeURIComponent(parts[5]!), before)));
+        return json(plain(() => browseMessages(root, folder, id, decodeURIComponent(parts[5]!), before, undefined, open)));
       }
       if (method === "GET" && parts.length === 5 && parts[4] === "export") {
         // The current kinwriter's database is open: a snapshot of it, as it is now.
         const live = folder === "current" ? apps.get(id) : undefined;
-        const name = live ? live.store.getSettings().friendName : (describeFolder(root, folder).kinwriters.find((k) => k.id === id)?.name ?? id);
+        const name = live ? live.store.getSettings().kinwriterName : kinwriterNameIn(root, folder, id);
         const bundle = plain(() => exportKinwriter(dir, name, live?.store.db)) as KinwriterBundle;
         const file = `${name.replace(/[^\w-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "kinwriter"}.kinwriter.json`;
         return new Response(JSON.stringify(bundle), {
@@ -431,7 +679,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       }
       if (method === "POST" && parts.length === 5 && parts[4] === "import") {
         if (folder === "current") throw new HubError(400, "They're already here.");
-        const name = describeFolder(root, folder).kinwriters.find((k) => k.id === id)?.name ?? id;
+        const name = kinwriterNameIn(root, folder, id);
         const kinwriterId = plain(() => importKinwriter(exportKinwriter(dir, name))) as string;
         return json({ kinwriterId, ...view() });
       }
@@ -454,9 +702,9 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
 
   /** Remove a kinwriter from everywhere; their files go to the trash. */
   function deleteKinwriter(id: string): void {
-    const kinwriter = registry.friends.find((p) => p.id === id);
+    const kinwriter = registry.kinwriters.find((p) => p.id === id);
     if (!kinwriter) throw new HubError(404, "There's no such kinwriter.");
-    if (!kinwriter.archived && registry.friends.filter((p) => !p.archived).length === 1) {
+    if (!kinwriter.archived && registry.kinwriters.filter((p) => !p.archived).length === 1) {
       throw new HubError(400, "You need at least one kinwriter, so the last one can't be deleted.");
     }
     if (!kinwriter.archived) {
@@ -464,10 +712,10 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       apps.delete(id);
     }
     removeKinwriterFiles(kinwriter);
-    registry.friends = registry.friends.filter((p) => p.id !== id);
+    registry.kinwriters = registry.kinwriters.filter((p) => p.id !== id);
     groups.kinwriterGone(id);
-    for (const s of registry.servers) s.friends = s.friends.filter((p) => p !== id);
-    registry.servers = registry.servers.filter((s) => s.friends.length > 0);
+    for (const s of registry.servers) s.kinwriters = s.kinwriters.filter((p) => p !== id);
+    registry.servers = registry.servers.filter((s) => s.kinwriters.length > 0);
   }
 
   async function hubRoute(request: Request, path: string): Promise<Response> {
@@ -506,7 +754,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
         // A new server, with a new kinwriter of its own.
         const input = await body(request);
         const kinwriterId = makeKinwriter(input);
-        const created: HubServer = { id: crypto.randomUUID(), name: typeof input.serverName === "string" ? input.serverName.trim().slice(0, 100) : "", friends: [kinwriterId] };
+        const created: HubServer = { id: crypto.randomUUID(), name: typeof input.serverName === "string" ? input.serverName.trim().slice(0, 100) : "", kinwriters: [kinwriterId] };
         registry.servers.push(created);
         save();
         return json({ server: created, kinwriterId, ...view() });
@@ -527,28 +775,29 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
           if (typeof input.name !== "string" || input.name.length > 100) throw new HubError(400, "A server's name is text, 100 characters at most.");
           target.name = input.name.trim();
         }
-        if (input.friends !== undefined) {
+        if (input.kinwriters !== undefined) {
           // Reorder its kinwriters.
-          const ids = input.friends;
-          if (!Array.isArray(ids) || ids.length !== target.friends.length || !target.friends.every((p) => ids.includes(p))) {
+          const ids = input.kinwriters;
+          if (!Array.isArray(ids) || ids.length !== target.kinwriters.length || !target.kinwriters.every((p) => ids.includes(p))) {
             throw new HubError(400, "kinwriters must list the server's kinwriters, in the new order.");
           }
-          target.friends = ids as string[];
+          target.kinwriters = ids as string[];
         }
         save();
         return json(view());
       }
-      if (method === "POST" && parts[2] === "friends" && parts.length === 3) {
+      if (method === "POST" && parts[2] === "kinwriters" && parts.length === 3) {
         // Another kinwriter in this server.
         const kinwriterId = makeKinwriter(await body(request));
-        target.friends.push(kinwriterId);
+        target.kinwriters.push(kinwriterId);
         save();
         return json({ kinwriterId, ...view() });
       }
       if (method === "DELETE" && parts.length === 2) {
         if (registry.servers.length === 1) throw new HubError(400, "You need at least one server, so the last one can't be deleted.");
-        if (registry.friends.length === target.friends.length) throw new HubError(400, "That would delete every kinwriter.");
-        for (const id of [...target.friends]) deleteKinwriter(id);
+        // (A server lists only kinwriters who aren't archived.)
+        if (registry.kinwriters.filter((f) => !f.archived).length === target.kinwriters.length) throw new HubError(400, "That would delete every kinwriter.");
+        for (const id of [...target.kinwriters]) deleteKinwriter(id);
         registry.servers = registry.servers.filter((s) => s.id !== target.id);
         save();
         return json(view());
@@ -576,11 +825,11 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       const input = await body(request);
       const name = typeof input.name === "string" ? input.name.trim().toLowerCase().replace(/\s+/g, "-").slice(0, 100) : "";
       if (!name) throw new HubError(400, "A group channel needs a name.");
-      const friends = input.friends;
-      if (!Array.isArray(friends) || new Set(friends).size !== friends.length || friends.length < 2 || !friends.every((f) => typeof f === "string" && target.friends.includes(f))) {
+      const kinwriters = input.kinwriters;
+      if (!Array.isArray(kinwriters) || new Set(kinwriters).size !== kinwriters.length || kinwriters.length < 2 || !kinwriters.every((f) => typeof f === "string" && target.kinwriters.includes(f))) {
         throw new HubError(400, "A group channel needs two or more kinwriters from this server.");
       }
-      const group = groups.create("group", target.id, friends as string[], name);
+      const group = groups.create("group", target.id, kinwriters as string[], name);
       return json({ group, ...view() });
     }
     if (parts[0] === "groups" && parts[1]) {
@@ -605,9 +854,9 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       }
     }
 
-    if (parts[0] === "friends" && parts[1]) {
+    if (parts[0] === "kinwriters" && parts[1]) {
       const id = parts[1];
-      const entry = registry.friends.find((f) => f.id === id);
+      const entry = registry.kinwriters.find((f) => f.id === id);
       if (!entry) throw new HubError(404, "There's no such kinwriter.");
       if (method === "DELETE" && parts.length === 2) {
         deleteKinwriter(id);
@@ -616,15 +865,15 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       }
       if (method === "POST" && parts[2] === "archive" && !entry.archived) {
         // Retire them: one last turn for a note, then set aside, whole.
-        if (registry.friends.filter((f) => !f.archived).length === 1) throw new HubError(400, "You need at least one kinwriter who isn't archived.");
+        if (registry.kinwriters.filter((f) => !f.archived).length === 1) throw new HubError(400, "You need at least one kinwriter who isn't archived.");
         const app = kinwriterApp(id);
         const note = await app.farewell();
         const settings = app.store.getSettings();
-        entry.archived = { at: new Date().toISOString(), note, name: settings.friendName, avatar: settings.friendAvatar, color: settings.friendColor };
+        entry.archived = { at: new Date().toISOString(), note, name: settings.kinwriterName, avatar: settings.kinwriterAvatar, color: settings.kinwriterColor };
         stopApp(app);
         apps.delete(id);
-        for (const s of registry.servers) s.friends = s.friends.filter((p) => p !== id);
-        registry.servers = registry.servers.filter((s) => s.friends.length > 0);
+        for (const s of registry.servers) s.kinwriters = s.kinwriters.filter((p) => p !== id);
+        registry.servers = registry.servers.filter((s) => s.kinwriters.length > 0);
         save();
         return json({ note, ...view() });
       }
@@ -633,20 +882,35 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
         const to = (await body(request)).serverId;
         const into = typeof to === "string" ? server(to) : null; // 404 before anything changes
         delete entry.archived;
-        open(entry);
-        if (into) into.friends.push(id);
-        else registry.servers.push({ id: crypto.randomUUID(), name: "", friends: [id] });
+        // Set aside, they missed changes to the settings and profiles: they catch up, keeping what was theirs.
+        const others = inOrder();
+        adopt(open(entry), others);
+        if (into) into.kinwriters.push(id);
+        else registry.servers.push({ id: crypto.randomUUID(), name: "", kinwriters: [id] });
         save();
         return json(view());
       }
-      kinwriterApp(id);
+      const app = kinwriterApp(id);
+      if (method === "PUT" && parts[2] === "own" && parts.length === 3) {
+        // A section of Settings just for this kinwriter, or shared again (back to everyone's values).
+        const input = await body(request);
+        const group = input.group as SettingGroup;
+        if (!OWN_GROUPS.includes(group) || typeof input.own !== "boolean") {
+          throw new HubError(400, `"group" is one of ${OWN_GROUPS.join(", ")}, and "own" is true or false.`);
+        }
+        setOwnGroup(app.store, group, input.own);
+        if (!input.own) await putSettings(app, pick(registry.settings ?? {}, SETTING_GROUPS[group]));
+        return json({ own: ownGroups(app.store), settings: pick(app.store.getSettings(), SETTING_GROUPS[group]) });
+      }
       if (method === "POST" && parts[2] === "move") {
         // Move a kinwriter to another server, or into a server of their own.
         const to = (await body(request)).serverId;
-        for (const s of registry.servers) s.friends = s.friends.filter((p) => p !== id);
-        if (typeof to === "string") server(to).friends.push(id);
-        else registry.servers.push({ id: crypto.randomUUID(), name: "", friends: [id] });
-        registry.servers = registry.servers.filter((s) => s.friends.length > 0);
+        // Check where they're going before taking them out of where they are.
+        const target = typeof to === "string" ? server(to) : null;
+        for (const s of registry.servers) s.kinwriters = s.kinwriters.filter((p) => p !== id);
+        if (target) target.kinwriters.push(id);
+        else registry.servers.push({ id: crypto.randomUUID(), name: "", kinwriters: [id] });
+        registry.servers = registry.servers.filter((s) => s.kinwriters.length > 0);
         save();
         return json(view());
       }
@@ -664,13 +928,15 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       // /p/<id>/...: that kinwriter's app, with the rest of the path.
       const scoped = url.pathname.match(/^\/p\/([^/]+)(\/.*)$/);
       if (scoped) {
-        const app = kinwriterApp(decodeURIComponent(scoped[1]!));
+        const id = decodeURIComponent(scoped[1]!);
+        const app = kinwriterApp(id);
         url.pathname = scoped[2]!;
-        return await app.fetch(new Request(url.toString(), request));
+        return await forward(id, app, new Request(url.toString(), request));
       }
-      return await defaultApp().fetch(request);
+      return await forward(registry.servers[0]!.kinwriters[0]!, defaultApp(), request);
     } catch (error) {
       if (error instanceof HubError) return json({ error: error.message }, error.status);
+      if (error instanceof URIError) return json({ error: "That address isn't written right." }, 400);
       const message = error instanceof Error ? error.message : String(error);
       if (/must be|is too long|non-empty/.test(message)) return json({ error: message }, 400);
       console.error("[hub]", error);
@@ -693,30 +959,6 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     },
     groups,
   };
-}
-
-/** Copy connection profiles and roulettes from one kinwriter's database to another's (same ids, so assignments carry over). */
-export function copyProfiles(source: Database, target: Database): void {
-  const rows = (table: string) => source.query(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
-  const copy = (table: string, list: Record<string, unknown>[]) => {
-    for (const row of list) {
-      const columns = Object.keys(row);
-      target
-        .query(`INSERT INTO ${table} (${columns.join(", ")}) VALUES (${columns.map((c) => `$${c}`).join(", ")})`)
-        .run(Object.fromEntries(columns.map((c) => [c, row[c] as string | number | null])));
-    }
-  };
-  const profiles = rows("profiles");
-  const roulettes = rows("roulettes");
-  const entries = rows("roulette_profiles");
-  target.transaction(() => {
-    target.query("DELETE FROM roulette_profiles").run();
-    target.query("DELETE FROM roulettes").run();
-    target.query("DELETE FROM profiles").run();
-    copy("profiles", profiles);
-    copy("roulettes", roulettes);
-    copy("roulette_profiles", entries);
-  })();
 }
 
 /**

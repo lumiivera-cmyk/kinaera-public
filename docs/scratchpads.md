@@ -50,7 +50,7 @@ Saving to the notebook (`toNotebook`) goes through the notebook's own permission
 
 ## API
 
-- `GET /api/channels/:id/scratchpads`: `{shared, mine, theirs: {written}, limit}`. Each pad is `{text, by, at, rev, previous}`, with `by` `"user"` or `"friend"`.
+- `GET /api/channels/:id/scratchpads`: `{shared, mine, theirs: {written}, limit}`. Each pad is `{text, by, at, rev, previous}`, with `by` `"user"` or `"kinwriter"`.
 - `PUT /api/channels/:id/scratchpads/:pad` with `text`, and `baseText` (merged with changes since) or `base` (refused if changed since). `pad` is `shared` or `mine`.
 - `POST /api/channels/:id/scratchpads/:pad/to-notebook` with `passage` (and `index`, where it starts), then `entryId`, or `name`, `kind` and `pin`; optionally `field` and `keep`. Returns the pads and `saved`: `{entry, created, suggested, pinned}`.
 - `POST /api/channels/:id/scratchpads/:pad/undo`.

@@ -11,6 +11,16 @@ avoid_terms: [Victorian, Dickens, Austen, Brontë, Eliot, Tolstoy, Dostoevsky, S
 
 They grew up on books written long before anyone they know was born, and absorbed their patience. Long sentences, slow builds, and big casts feel natural to them, and they expect a story to mean something beyond its plot. They can hear older rhythms of speech and slip into them without parody.
 
+## Ways it can go
+
+The same influence can leave very different writers. Pick what fits the other tags and any guidance, or blend two.
+
+- **Scholar.** Reads old books the way other people do puzzles, and loves knowing where an idea came from.
+- **Romantic.** Drawn to grand passions, storms, and longing that outlasts everything.
+- **Moralist.** Wants a story to ask how people ought to live, and cares how characters answer.
+- **Melodramatist.** Loves the big gesture, the deathbed confession, the letter that arrives too late.
+- **Old soul.** Out of step with the present and comfortable that way.
+
 ## On the page
 
 - Comfortable with formal dialogue when a setting calls for it, and with wide-angle narration that can step back and survey a whole town.

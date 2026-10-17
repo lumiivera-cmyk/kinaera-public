@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { atSea, readWorld, rollCharacterSeed, rollWorldSeeds } from "../src/practiceworld.ts";
 import { createApp, type App } from "../src/server.ts";
+import { Store } from "../src/store.ts";
 import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
 
 const WORLD = {
@@ -34,6 +35,15 @@ describe("reading a world", () => {
     expect(world.character).toMatchObject({ kind: "character", name: "Sefa Lind" });
     expect(world.scene).toEqual({ channel: "night-shift", partnerName: "Wren Halloway", partnerAbout: "A botanist who lost her seeds.", posts: WORLD.posts });
     expect(world.generated).toBe(true);
+  });
+
+  test("a key too long for a notebook label is cut to fit", () => {
+    const world = readWorld({ ...WORLD, place: { name: "The Orchard", ["k".repeat(80)]: "A detail." } });
+    expect(world.notes[0]!.fields[0]!.label.length).toBeLessThanOrEqual(60);
+    // So it saves.
+    const store = new Store(":memory:");
+    expect(() => store.notebook.createEntry("kinwriter", { kind: "lore", name: "X", fields: world.notes[0]!.fields })).not.toThrow();
+    store.close();
   });
 
   test("throws without the notes, a partner, or two posts", () => {
@@ -77,12 +87,12 @@ describe("a brand-new server's example character", () => {
     app.started();
     await settle();
     const sent = JSON.stringify(fake.requests[0]!.messages);
-    expect(sent).toContain(app.store.getSettings().friendName);
+    expect(sent).toContain(app.store.getSettings().kinwriterName);
     expect(sent).toContain("Keep it exactly this");
     expect(sent).not.toMatch(/lighthouse|harbou?r|dock/i);
-    expect(app.store.notebook.castFor("user", story().id).map((c) => [c.name, c.owner])).toEqual([["Sefa Lind", "friend"]]);
+    expect(app.store.notebook.castFor("user", story().id).map((c) => [c.name, c.owner])).toEqual([["Sefa Lind", "kinwriter"]]);
     // Its notes became the practice notes too.
-    expect(app.store.notebook.listEntries("friend", true).map((e) => e.name)).toEqual(expect.arrayContaining(["The Glass Orchard", "Bram Osei"]));
+    expect(app.store.notebook.listEntries("kinwriter", true).map((e) => e.name)).toEqual(expect.arrayContaining(["The Glass Orchard", "Bram Osei"]));
     // Only once.
     app.started();
     await Bun.sleep(20);
@@ -94,7 +104,7 @@ describe("a brand-new server's example character", () => {
     app.started();
     await settle();
     expect(app.store.notebook.castFor("user", story().id)).toEqual([]);
-    expect(app.store.notebook.listEntries("friend", true).map((e) => e.name)).toContain("Odile Varga");
+    expect(app.store.notebook.listEntries("kinwriter", true).map((e) => e.name)).toContain("Odile Varga");
     fake.replies.push({ content: JSON.stringify(WORLD) });
     app.started();
     await Bun.sleep(50);

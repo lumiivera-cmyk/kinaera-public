@@ -10,8 +10,8 @@ import { renderAll } from "./channels.js";
 import { highlightThreads, newComment, openThread, threadsOn } from "./comments.js";
 import { highlightRewrites, openRewrite, rewritesOn, rewriteSummary } from "./rewrites.js";
 import { autoGrow, renderAttachments } from "./composer.js";
-import { $, api, channelPath, currentChannel, els, hideError, showError, state } from "./core.js";
-import { badge, formatText, formatTime, hueFor, initial } from "./format.js";
+import { $, api, channelPath, currentChannel, els, hideError, readLocal, showError, state, writeLocal } from "./core.js";
+import { badge, formatText, formatTime, hueFor, initial, quietSummary } from "./format.js";
 import { branchesAt, goBack, openBranches } from "./branches.js";
 import { openHistory } from "./history.js";
 import { checkForUpdate } from "./live.js";
@@ -76,18 +76,30 @@ function abandonRequest(channelId) {
   return request;
 }
 
+/**
+ * Take in a channel's messages and what's shown with them (its tool calls,
+ * reasoning, comment threads, rewrites, flags and branches), as
+ * GET /api/channels/:id/messages sends them.
+ */
+export function acceptChannelData(data) {
+  state.messages = data.messages;
+  state.toolCalls = data.toolCalls ?? [];
+  state.reasoning = data.reasoning ?? [];
+  state.threads = data.threads ?? [];
+  state.rewrites = data.rewrites ?? [];
+  state.flags = data.flags ?? { voice: [], notMe: {} };
+  state.branches = data.branches ?? [];
+}
+
 /** Reload the open channel's messages, e.g. after a turn was stopped. */
 export async function refreshMessages(onAbandon) {
   const channelId = state.channelId;
   if (!channelId) return;
   try {
-    const { messages, flags, rewrites, branches } = await api("GET", channelPath("messages", channelId));
+    const data = await api("GET", channelPath("messages", channelId));
     if (state.channelId !== channelId) return;
-    state.messages = messages;
-    state.branches = branches ?? state.branches;
-    state.rewrites = rewrites ?? state.rewrites;
-    if (flags) state.flags = flags;
-    onAbandon?.(messages);
+    acceptChannelData(data);
+    onAbandon?.(data.messages);
   } catch (error) {
     showError(`Couldn't reload this channel: ${error.message}`, () => refreshMessages());
   }
@@ -148,6 +160,8 @@ async function checkBusy() {
     busyWatch = null;
     return;
   }
+  // Not while the app is in the background; it catches up when you come back.
+  if (document.visibilityState !== "visible") return;
 
   let serverBusy;
   try {
@@ -372,7 +386,7 @@ function acceptTurn(data) {
   state.toolCalls.push(...(data.toolCalls ?? []));
   state.reasoning.push(...(data.reasoning ?? []));
   if (data.channels) state.channels = data.channels;
-  const skippedNotice = `${state.settings.friendName} chose not to reply this time.`;
+  const skippedNotice = `${state.settings.kinwriterName} chose not to reply this time.`;
   if (data.skipped && data.kinwriterMessages.length === 0) {
     showNotice(skippedNotice);
   } else if ($("notice-text").textContent === skippedNotice) {
@@ -380,22 +394,11 @@ function acceptTurn(data) {
   }
   if (data.toolCalls?.length) {
     refreshNotebook().catch(() => {});
-    // Your kinwriter may have commented on messages.
-    if (data.toolCalls.some((c) => c.name.includes("comment"))) refreshThreads().catch(() => {});
-    // …or marked, flagged, or posted something here mid-turn (a draft).
-    if (data.toolCalls.some((c) => ["mark_my_voice", "flag_not_me", "post_draft"].includes(c.name))) {
-      refreshMessages().then(renderMessages).catch(() => {});
-    }
+    // Your kinwriter may have commented on messages, or marked, flagged, or
+    // posted something here mid-turn (a draft): reload the channel.
+    const reload = ["mark_my_voice", "flag_not_me", "post_draft"];
+    if (data.toolCalls.some((c) => c.name.includes("comment") || reload.includes(c.name))) refreshMessages();
   }
-}
-
-/** Reload the open channel's comment threads. */
-async function refreshThreads() {
-  const channelId = state.channelId;
-  const { threads } = await api("GET", channelPath("messages", channelId));
-  if (state.channelId !== channelId) return;
-  state.threads = threads;
-  renderMessages();
 }
 
 /** Replace a channel in `state.channels` with a fresh copy from the server. */
@@ -464,8 +467,56 @@ export function currentSceneIsEmpty() {
   return true;
 }
 
+/*
+ * Redrawing the message list rebuilds it from `state`, which would wipe
+ * two things you might be in the middle of: what you're typing in an edit
+ * box (kept, with the cursor), and text you've selected to comment on or
+ * suggest new words for (the redraw waits until the selection is gone).
+ */
+
+/** A redraw was skipped while you had text selected. */
+let redrawWhenUnselected = false;
+
+/** Whether you've selected text in the message list (not in an edit box, which keeps its own). */
+function selectingInMessages() {
+  if (document.activeElement?.matches?.("textarea, input")) return false;
+  const selection = document.getSelection();
+  return Boolean(selection && !selection.isCollapsed && els.messages.contains(selection.anchorNode));
+}
+
+document.addEventListener("selectionchange", () => {
+  if (redrawWhenUnselected && !selectingInMessages()) renderMessages();
+});
+
 /** Redraw the message list from `state.messages`. */
 export function renderMessages() {
+  if (selectingInMessages()) {
+    redrawWhenUnselected = true;
+    return;
+  }
+  redrawWhenUnselected = false;
+  // Edit boxes (marked `data-draft`): what's typed in them, and where the cursor is.
+  const drafts = new Map();
+  for (const box of els.messages.querySelectorAll("textarea[data-draft]")) {
+    drafts.set(box.dataset.draft, { value: box.value, start: box.selectionStart, end: box.selectionEnd, focused: document.activeElement === box });
+  }
+  drawMessages();
+  for (const box of els.messages.querySelectorAll("textarea[data-draft]")) {
+    const draft = drafts.get(box.dataset.draft);
+    // Just opened: ready to type in.
+    if (!draft) {
+      box.focus();
+      continue;
+    }
+    box.value = draft.value;
+    if (draft.focused) {
+      box.focus({ preventScroll: true });
+      box.setSelectionRange(draft.start, draft.end);
+    }
+  }
+}
+
+function drawMessages() {
   const channel = currentChannel();
   els.messages.replaceChildren();
 
@@ -494,12 +545,24 @@ export function renderMessages() {
     return parts;
   };
 
+  // Branches from the very start of the chat (their first message was deleted).
+  const fromStart = branchesAt("start").length;
+  if (fromStart > 0) {
+    const tree = document.createElement("button");
+    tree.type = "button";
+    tree.className = "message-history branches-from-start";
+    tree.textContent = `⑂ ${fromStart + 1} from the start`;
+    tree.title = `${fromStart} other ${fromStart === 1 ? "branch" : "branches"} from the start of the chat. Tap to see them.`;
+    tree.addEventListener("click", () => openBranches("start"));
+    els.messages.append(tree);
+  }
+
   if (state.messages.length === 0 && loose.length === 0) {
     els.messages.append(
       emptyNote(
         channel.kind === "ooc"
-          ? `Nothing here yet. Say hi, or press “${state.settings.friendName}'s turn” to let them start the conversation.`
-          : `No messages yet. Write the first post, or press “${state.settings.friendName}'s turn” to let them open the story.`,
+          ? `Nothing here yet. Say hi, or press “${state.settings.kinwriterName}'s turn” to let them start the conversation.`
+          : `No messages yet. Write the first post, or press “${state.settings.kinwriterName}'s turn” to let them open the story.`,
       ),
     );
     return;
@@ -510,14 +573,22 @@ export function renderMessages() {
   const last = state.messages.at(-1);
   // Not in a group channel or DM: the others have already seen it.
   const canBranch = !isShared(currentChannel());
-  const canRegenerate = last?.kind === "post" && last.author === "friend" && canBranch;
+  const canRegenerate = last?.kind === "post" && last.author === "kinwriter" && canBranch;
+
+  // A run of turns that wrote nothing, in a row: one line each, or folded
+  // into a single line when there are enough of them to bury the chat.
+  const appendQuiet = (run) => {
+    if (run.length >= FOLD_QUIET_AT && foldQuietOn()) els.messages.append(renderQuietRun(run, turns, afterTurn));
+    else for (const turnId of run) els.messages.append(...afterTurn(turnId));
+  };
 
   let previous = null;
   state.messages.forEach((message, index) => {
     // Actions from turns that wrote nothing, before this message.
-    while (loose.length && loose[0][1] <= message.createdAt) {
-      const [turnId] = loose.shift();
-      els.messages.append(...afterTurn(turnId));
+    const run = [];
+    while (loose.length && loose[0][1] <= message.createdAt) run.push(loose.shift()[0]);
+    if (run.length) {
+      appendQuiet(run);
       previous = null;
     }
     const element =
@@ -530,7 +601,7 @@ export function renderMessages() {
             // last bubble of it), keeping what came after as a branch.
             branch: canBranch && message !== last,
             regenerateEarlier:
-              canBranch && message !== last && message.author === "friend" && (!message.turnId || state.messages[index + 1]?.turnId !== message.turnId),
+              canBranch && message !== last && message.author === "kinwriter" && (!message.turnId || state.messages[index + 1]?.turnId !== message.turnId),
           });
     els.messages.append(element);
     previous = message;
@@ -538,7 +609,51 @@ export function renderMessages() {
     const next = state.messages[index + 1];
     if (message.turnId && next?.turnId !== message.turnId) els.messages.append(...afterTurn(message.turnId));
   });
-  for (const [turnId] of loose) els.messages.append(...afterTurn(turnId));
+  if (loose.length) appendQuiet(loose.map(([turnId]) => turnId));
+}
+
+/** How many quiet turns in a row get folded into one line. */
+const FOLD_QUIET_AT = 3;
+const FOLD_QUIET_KEY = "kinaera.foldQuiet"; // "0" turns folding off on this device
+
+/** Whether runs of quiet turns are folded on this device (on unless turned off in Appearance). */
+export function foldQuietOn() {
+  return readLocal(FOLD_QUIET_KEY) !== "0";
+}
+
+export function setFoldQuiet(on) {
+  writeLocal(FOLD_QUIET_KEY, on ? null : "0");
+  renderMessages();
+}
+
+/**
+ * Several turns in a row that wrote nothing (checked in, chose not to
+ * reply, read the channel): one line that opens into each turn's own line.
+ * The run is remembered by its first turn, so it stays open as more arrive.
+ */
+function renderQuietRun(run, turns, afterTurn) {
+  const root = document.createElement("div");
+  root.className = "activity quiet-run";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "activity-summary";
+  const key = run[0];
+  const open = state.openQuiet.has(key);
+  toggle.setAttribute("aria-expanded", String(open));
+  const summary = quietSummary(run.map((turnId) => turns.get(turnId) ?? []));
+  if (summary.includes(" error")) root.classList.add("has-errors");
+  toggle.textContent = `${open ? "▾" : "▸"} ⚙ ${state.settings.kinwriterName} · ${summary}`;
+  toggle.addEventListener("click", () => {
+    if (state.openQuiet.has(key)) state.openQuiet.delete(key);
+    else state.openQuiet.add(key);
+    renderMessages();
+  });
+  root.append(toggle);
+  if (!open) return root;
+  const fragment = document.createDocumentFragment();
+  fragment.append(root);
+  for (const turnId of run) fragment.append(...afterTurn(turnId));
+  return fragment;
 }
 
 /**
@@ -595,19 +710,10 @@ function renderSceneBreak(sceneBreak) {
   return root;
 }
 
-/**
- * Who a message shows as written by.
- *
- *   - Your posts: "You", or in casual mode the character you posted as,
- *     with "You" as a small badge.
- *   - Kinwriter posts that voice characters: the character names, with the
- *     kinwriter's name as a badge (it's them writing the character).
- *   - Kinwriter posts voicing no one (OOC): the kinwriter's name.
- */
 // ------------------------------------------------------------------ replies
 
 /** Reply to a message: shown above where you write until you send (or ✕). */
-export function startReply(message) {
+function startReply(message) {
   state.replyingTo = { channelId: state.channelId, messageId: message.id };
   renderReplyBar();
   els.input.focus();
@@ -622,7 +728,7 @@ export function takeReply(channelId) {
 }
 
 /** "Replying to Arlo: …" above the box you write in. */
-export function renderReplyBar() {
+function renderReplyBar() {
   const bar = $("reply-bar");
   const reply = state.replyingTo?.channelId === state.channelId ? state.messages.find((m) => m.id === state.replyingTo.messageId) : null;
   bar.hidden = !reply;
@@ -651,8 +757,17 @@ function renderReplyPreview(message) {
   return preview;
 }
 
+/**
+ * Who a message shows as written by.
+ *
+ *   - Your posts: "You", or in casual mode the character you posted as,
+ *     with "You" as a small badge.
+ *   - Kinwriter posts that voice characters: the character names, with the
+ *     kinwriter's name as a badge (it's them writing the character).
+ *   - Kinwriter posts voicing no one (OOC): the kinwriter's name.
+ */
 function authorOf(message) {
-  const writer = message.author === "user" ? "You" : message.author === "peer" ? (message.speaker?.name ?? "A kinwriter") : state.settings.friendName;
+  const writer = message.author === "user" ? "You" : message.author === "peer" ? (message.speaker?.name ?? "A kinwriter") : state.settings.kinwriterName;
   if (message.characters.length > 0) return { name: message.characters.join(" & "), badge: writer };
   return { name: writer, badge: null };
 }
@@ -702,12 +817,12 @@ function renderMessage(message, { continued = false, regenerate: showRegenerate 
   } else if (message.author === "peer") {
     // Another kinwriter (a group channel or DM): their face and colour.
     paintPeer(avatar, root, message);
-  } else if (message.author === "friend") {
+  } else if (message.author === "kinwriter") {
     // Your kinwriter as themselves: their avatar and colour (the Kinwriter menu).
-    if (state.settings.friendAvatar) avatar.textContent = state.settings.friendAvatar;
-    if (state.settings.friendColor >= 0) {
+    if (state.settings.kinwriterAvatar) avatar.textContent = state.settings.kinwriterAvatar;
+    if (state.settings.kinwriterColor >= 0) {
       root.classList.add("has-character");
-      root.style.setProperty("--avatar-hue", String(state.settings.friendColor));
+      root.style.setProperty("--avatar-hue", String(state.settings.kinwriterColor));
     }
   }
 
@@ -786,7 +901,7 @@ function renderMessage(message, { continued = false, regenerate: showRegenerate 
     const voice = document.createElement("span");
     voice.className = "message-voice";
     voice.textContent = " ♪";
-    voice.title = `${state.settings.friendName} marked this as sounding like them`;
+    voice.title = `${state.settings.kinwriterName} marked this as sounding like them`;
     content.append(voice);
   }
   root.append(content);
@@ -795,7 +910,7 @@ function renderMessage(message, { continued = false, regenerate: showRegenerate 
   if (notMe) {
     const flag = document.createElement("p");
     flag.className = "message-flag";
-    flag.textContent = `🚩 ${state.settings.friendName}: this doesn't sound like me. “${notMe.note}”${notMe.profile ? ` (written by ${notMe.profile})` : ""}`;
+    flag.textContent = `🚩 ${state.settings.kinwriterName}: this doesn't sound like me. “${notMe.note}”${notMe.profile ? ` (written by ${notMe.profile})` : ""}`;
     root.append(flag);
   }
   if (message.attachments?.length) root.append(renderAttachments(message));
@@ -833,7 +948,7 @@ function renderMessage(message, { continued = false, regenerate: showRegenerate 
     actionButton("Reply", () => startReply(message)),
     actionButton("Comment", () => newComment(message.id)),
     // Their messages: suggest new words for part of it (js/rewrites.js).
-    ...(message.author === "friend" ? [actionButton("Suggest", () => openRewrite(message.id, message.content))] : []),
+    ...(message.author === "kinwriter" ? [actionButton("Suggest", () => openRewrite(message.id, message.content))] : []),
     actionButton("React", (event) => openReactionPicker(message.id, event.currentTarget)),
   );
   if (showRegenerate) {
@@ -852,6 +967,8 @@ function renderEditor(message) {
   const box = document.createElement("textarea");
   box.className = "edit-box";
   box.value = message.content;
+  // Kept through redraws (see `renderMessages`).
+  box.dataset.draft = `message:${message.id}`;
 
   const actions = document.createElement("div");
   actions.className = "message-actions";
@@ -866,8 +983,6 @@ function renderEditor(message) {
   );
 
   wrapper.append(box, actions);
-  // Focus the box once it's on the page.
-  queueMicrotask(() => box.focus());
   return wrapper;
 }
 
@@ -881,8 +996,21 @@ export function actionButton(label, onClick, disabled = false) {
 }
 
 export function scrollToBottom() {
+  // Not while you've text selected further up (its redraw is waiting too).
+  if (redrawWhenUnselected) return;
   els.messages.scrollTop = els.messages.scrollHeight;
 }
+
+/** Whether the list is scrolled to the newest message, as of its last scroll. */
+let atBottom = true;
+els.messages.addEventListener(
+  "scroll",
+  () => (atBottom = els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight < 24),
+  { passive: true },
+);
+// The on-screen keyboard (or turning the phone) changes the list's height:
+// if you were at the newest message, stay there.
+new ResizeObserver(() => atBottom && scrollToBottom()).observe(els.messages);
 
 // ---------------------------------------------------- regenerate with...
 
@@ -898,7 +1026,7 @@ function openRegenerateWith() {
   $("regenerate-dialog").showModal();
 }
 
-/** The assignment that writes in a channel: its own, or the server-wide one for its kind. */
+/** The assignment that writes in a channel: its own, or the one in Settings for its kind. */
 function channelAssignment(channel) {
   if (channel.assignment) return channel.assignment;
   return channel.kind === "ooc" ? state.settings.oocAssignment : state.settings.rpAssignment;
@@ -907,7 +1035,7 @@ function channelAssignment(channel) {
 // ------------------------------------------------ your kinwriter's actions
 
 /*
- * Stage 6: your kinwriter acts through tools. Each turn's tool calls are
+ * Your kinwriter acts through tools. Each turn's tool calls are
  * shown under the messages it wrote, as one line ("Arlo read Ilse Marrow,
  * pinned Tamsin to #story") that opens into the details: every call, its
  * arguments exactly as the model wrote them, and what it was told back.
@@ -947,7 +1075,7 @@ function renderReasoning(turnId, rounds) {
   const open = state.openReasoning.has(turnId);
   toggle.setAttribute("aria-expanded", String(open));
   const words = rounds.reduce((n, r) => n + r.text.split(/\s+/).filter(Boolean).length, 0);
-  toggle.textContent = `💭 ${state.settings.friendName}'s reasoning · ${words} word${words === 1 ? "" : "s"}`;
+  toggle.textContent = `💭 ${state.settings.kinwriterName}'s reasoning · ${words} word${words === 1 ? "" : "s"}`;
   toggle.addEventListener("click", () => {
     if (state.openReasoning.has(turnId)) state.openReasoning.delete(turnId);
     else state.openReasoning.add(turnId);
@@ -988,7 +1116,7 @@ function renderActivity(turnId, calls) {
   toggle.setAttribute("aria-expanded", String(open));
   // Only the actions that did something, once each ("read X" twice is noise).
   const done = [...new Set(calls.filter((c) => c.status === "ok").map((c) => c.summary))];
-  const text = done.length ? `${state.settings.friendName} ${done.join(", ")}` : `${state.settings.friendName} tried to act`;
+  const text = done.length ? `${state.settings.kinwriterName} ${done.join(", ")}` : `${state.settings.kinwriterName} tried to act`;
   toggle.textContent = `⚙ ${text}${errors ? ` · ${errors} error${errors === 1 ? "" : "s"}` : ""}`;
   toggle.addEventListener("click", () => {
     if (state.openActivity.has(turnId)) state.openActivity.delete(turnId);
@@ -1009,7 +1137,7 @@ function renderActivity(turnId, calls) {
     const flag = document.createElement("p");
     flag.className = "activity-flag";
     const why = typeof settled.kept === "string" ? ` They said: “${settled.kept}”` : "";
-    flag.textContent = `⚠ Jev read this as ${state.settings.friendName} saying they'd ${settled.flagged.join(", and ")}. They were reminded, and posted it without doing it.${why}`;
+    flag.textContent = `⚠ Jev read this as ${state.settings.kinwriterName} saying they'd ${settled.flagged.join(", and ")}. They were reminded, and posted it without doing it.${why}`;
     root.append(flag);
   }
 
@@ -1063,7 +1191,7 @@ export function renderToolCall(call) {
 }
 
 /** JSON text, indented if it parses, as-is if it doesn't (broken arguments stay visible). */
-export function prettyJson(text) {
+function prettyJson(text) {
   try {
     return JSON.stringify(JSON.parse(text), null, 2);
   } catch {

@@ -63,7 +63,7 @@ function renderLibrary() {
       badges.append(
         badge(`${doc.passages} passage${doc.passages === 1 ? "" : "s"}`),
         badge(formatSize(doc.chars)),
-        badge(where.length ? where.map((n) => `#${n}`).join(", ") : "everywhere"),
+        badge(doc.nowhere ? "no roleplay channel (its channel was deleted)" : where.length ? where.map((n) => `#${n}`).join(", ") : "everywhere"),
       );
       button.append(name, badges);
       if (doc.description) {
@@ -106,6 +106,16 @@ export function openLibraryDoc(doc = null) {
       return label;
     }),
   );
+  // Its only channel was deleted: in no roleplay channel until you choose, or say every one.
+  if (doc?.nowhere) {
+    const label = document.createElement("label");
+    label.className = "check-inline";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = "library-doc-everywhere";
+    label.append(box, "Every channel (its channel was deleted, so it's in none right now)");
+    $("library-doc-channels").append(label);
+  }
   dialog.showModal();
 }
 
@@ -153,7 +163,7 @@ function looksLikeText(s) {
  * who says them, when it says so), and any other text in it. Returns null
  * if it isn't JSON after all.
  */
-export function jsonText(raw) {
+function jsonText(raw) {
   let data;
   try {
     data = JSON.parse(raw);
@@ -192,7 +202,8 @@ export async function saveLibraryDoc(event) {
   const body = {
     title: $("library-doc-name").value,
     description: $("library-doc-description").value,
-    channelIds: [...$("library-doc-channels").querySelectorAll("input:checked:not(:disabled)")].map((box) => box.value),
+    channelIds: [...$("library-doc-channels").querySelectorAll("input:checked:not(:disabled):not(#library-doc-everywhere)")].map((box) => box.value),
+    everywhere: $("library-doc-everywhere")?.checked === true,
   };
   const save = $("library-doc-save");
   try {

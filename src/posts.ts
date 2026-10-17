@@ -80,7 +80,7 @@ export function postToMessages(
 export function mentionedCharacters(content: string, kinwriterCharacters: Voice[]): string[] {
   const lower = content.toLowerCase();
   const mentioned = kinwriterCharacters
-    .filter((c) => [c.name, ...kinwriterAliases(c.name)].some((n) => new RegExp(`\\b${escapeRegExp(n.toLowerCase())}\\b`).test(lower)))
+    .filter((c) => [c.name, ...kinwriterAliases(c.name)].some((n) => new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(n.toLowerCase())}(?![\\p{L}\\p{N}_])`, "u").test(lower)))
     .map((c) => c.name);
   if (mentioned.length > 0) return mentioned;
   return kinwriterCharacters.length === 1 ? [kinwriterCharacters[0]!.name] : [];
@@ -108,7 +108,7 @@ export function replyToMessages(
   model: string,
   kinwriterCharacters: Voice[],
 ): TurnMessage[] {
-  const base = { channelId: channel.id, author: "friend" as const, model };
+  const base = { channelId: channel.id, author: "kinwriter" as const, model };
   // OOC: a burst of texts, split at <cht> (src/texting.ts).
   if (channel.kind !== "rp") {
     const texts = splitTexts(content);

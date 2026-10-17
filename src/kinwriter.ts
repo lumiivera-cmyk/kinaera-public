@@ -5,19 +5,20 @@
  * message*. There is one "kinwriter takes a turn" function, and anything can
  * call it:
  *
- *   - you sending a message         (stage 1)
- *   - you pressing "Kinwriter's turn" (stage 1)
- *   - you asking for a regeneration (stage 1)
- *   - you commenting on their post  (stage 6: they reply in the thread)
- *   - an event like opening the app (stage 8)
- *   - a timer, the "heartbeat"      (endgame)
+ *   - you sending a message
+ *   - you pressing "Kinwriter's turn"
+ *   - you asking for a regeneration
+ *   - you commenting on their post (they reply in the thread)
+ *   - an event like opening the app (src/wakeups.ts)
+ *   - a timer, the "heartbeat" (src/heartbeat.ts)
+ *   - another turn they asked for (take_another_turn, a script queue)
  *
  * The turn itself only ever looks at what's already saved: it reads the
  * channel, builds the prompt stack, asks the model, and saves the reply. It
  * never receives your message as an argument. That's what keeps proactive
  * turns an add-on instead of a rewrite later.
  *
- * ## Tools (stage 6)
+ * ## Tools
  *
  * If the turn's connection profile can use tools, the model is offered them
  * (src/tools.ts), and a turn becomes a small loop:
@@ -36,11 +37,12 @@
  * a tool ran, the action stays done; the log shows it.
  */
 
+import { ago } from "./ago.ts";
 import { CancelledError, createChatCompletion, type ApiOptions, type ToolSpec } from "./nanogpt.ts";
 import type { Decider } from "./jev.ts";
 import { replyToMessages } from "./posts.ts";
 import { parseExtraParams } from "./profiles.ts";
-import { buildPromptStack, isNothing, type PromptMemory, type PromptReview, type PromptThread, type WakeContext } from "./prompt.ts";
+import { buildCheckPrompt, buildPromptStack, isNothing, whoWrote, type PromptMemory, type PromptReview, type PromptThread, type WakeContext } from "./prompt.ts";
 import { channelSummaryText, splitScenes, windowStart, type SeqMessage } from "./summaries.ts";
 import { splitTexts } from "./texting.ts";
 import { VERBATIM_SLOTS } from "./verbatim.ts";
@@ -52,6 +54,7 @@ import type { Store } from "./store.ts";
 import { extractTextToolCalls, parseArguments, type ParsedCall } from "./toolcalls.ts";
 import { bookmarks } from "./bookmarks.ts";
 import { isPrivateTool, runScriptSteps, runTool, toolSpecs, type ToolContext, type ToolOutcome } from "./tools.ts";
+import { toolMap } from "./toolmap.ts";
 import { findScript, INTRODUCED, needsIntroduction, noSuchScript, queueReady, reportSummary, runNextQueued, ScriptError, scriptsOn, type ScriptReport } from "./scripts.ts";
 import {
   fromOrientation,
@@ -78,11 +81,11 @@ export const MAX_ROUNDS = 6;
  * Rounds for a turn of their own (orientation, the look back): trying
  * several tools one after another takes more, and it messages no one.
  */
-export const OWN_TIME_ROUNDS = 16;
+const OWN_TIME_ROUNDS = 16;
 
 /**
  * What caused a turn. Used for the server log. "wake" is a turn on their
- * own (stage 8, see src/wakeups.ts).
+ * own (see src/wakeups.ts).
  */
 export type TurnTrigger = "user-message" | "continue" | "regenerate" | "comment" | "wake" | "group";
 
@@ -101,7 +104,7 @@ export interface TurnOptions {
    * channel's assignment ("Regenerate with...").
    */
   profileId?: string;
-  /** A wake-up (stage 8): why your kinwriter is taking a turn on their own. */
+  /** A wake-up: why your kinwriter is taking a turn on their own. */
   wake?: WakeContext;
   /** A turn in a group channel's round (src/groups.ts): doing nothing is the default. */
   group?: boolean;
@@ -116,7 +119,7 @@ export interface TurnOptions {
  * The most turns in a row they can take by asking for another
  * (take_another_turn, a script queue) before one has to come from you.
  */
-export const CHAIN_LIMIT = 30;
+const CHAIN_LIMIT = 30;
 
 /** Everything one turn produced. */
 export interface TurnResult {
@@ -156,14 +159,14 @@ export class BusyError extends Error {
 
 /**
  * The connection profile for one turn in a channel: the channel's own
- * assignment if it has one, otherwise the server-wide one for its kind.
+ * assignment if it has one, otherwise the one in Settings for its kind.
  * A roulette picks at random each time (pass `random` to choose).
  *
  * OOC chat is an agentic job, so its roulettes prefer tool-capable profiles.
  */
 export function pickProfile(store: Store, channel: Channel, random?: number, job: "turn" | "summary" = "turn"): Profile {
   const settings = store.getSettings();
-  // Summaries (stage 7) have their own assignment, or use roleplay's.
+  // Summaries have their own assignment, or use roleplay's.
   if (job === "summary") return store.profiles.pick(settings.summaryAssignment || settings.rpAssignment, false, random);
   // The practice channel is written like OOC: as themselves, with tools.
   const assignment = channel.assignment ?? (channel.kind === "rp" ? settings.rpAssignment : settings.oocAssignment);
@@ -174,12 +177,16 @@ export function pickProfile(store: Store, channel: Channel, random?: number, job
 export interface PromptOptions {
   /** Messages to leave out (the ones being regenerated). */
   excludeIds?: string[];
-  /** The profile writing: its model notes (layer 4), and whether tools are offered. */
+  /** The profile writing: its model notes, and whether tools are offered. */
   profile?: Profile;
   /** A comment thread your kinwriter is replying to. */
   replyingTo?: string;
-  /** A wake-up (stage 8). */
+  /** A wake-up. */
   wake?: WakeContext;
+  /** For the heartbeat's check: its short prompt instead of a turn's (see `buildCheckPrompt`). */
+  checkOnly?: boolean;
+  /** For the heartbeat's check: the tools the turn would have, with their own note on each. */
+  checkTools?: { name: string; note: string | null }[];
   /**
    * For the app's "Preview prompt": the journal is private, so its entries
    * are replaced with a line saying so (the prompt itself still has them).
@@ -214,20 +221,9 @@ export function promptForChannel(store: Store, channelId: string, options: Promp
   // Everything from the notebook is as *your kinwriter* may see it: entries
   // hidden from them never reach the prompt.
   const notebook = channel.kind !== "ooc" ? store.notebook.forPrompt(channelId) : undefined;
-  const practice = channel.kind === "practice";
 
-  // Which messages are sent in full, and the summaries of those before
-  // them (stage 7).
-  const seqMessages = store.summaries.withSeq(channelId, messages);
-  const current = store.summaries.all(channelId).find((s) => s.kind === "current") ?? null;
-  const start = windowStart(seqMessages, channel.kind, {
-    historyLimit: settings.historyLimit,
-    summaryEvery: settings.summaryEvery,
-    // The practice channel is never summarized.
-    enabled: settings.summaries && !practice,
-    current,
-  });
-  const memory = settings.summaries && !practice ? memoryFor(store, channel, seqMessages, start) : undefined;
+  // Which messages are sent in full, and the summaries of those before them.
+  const { start, memory } = promptWindow(store, channel, messages);
   // Moments kept in full that have scrolled out of the recent messages.
   const kept = new Set(store.verbatim.ids(channelId));
   const verbatim = messages.slice(0, start).filter((m) => kept.has(m.id));
@@ -253,10 +249,12 @@ export function promptForChannel(store: Store, channelId: string, options: Promp
     .forPromptEntries(window.flatMap((m) => m.attachments))
     .filter((p) => !inPrompt.has(p.entry.id));
 
-  const tools = options.profile?.supportsTools ?? false;
+  // The heartbeat's check decides for the model that writes OOC, which has
+  // tools (the rules make sure), so it sees what that model would.
+  const tools = options.checkOnly || (options.profile?.supportsTools ?? false);
   const replying = options.replyingTo ? store.comments.thread(options.replyingTo) : undefined;
 
-  return buildPromptStack({
+  return (options.checkOnly ? buildCheckPrompt : buildPromptStack)({
     settings,
     channel,
     channels,
@@ -296,10 +294,11 @@ export function promptForChannel(store: Store, channelId: string, options: Promp
           threadId: replying.id,
           quote: replying.quote,
           note: replying.comments.at(-1)?.note ?? "",
-          onYourMessage: byId.get(replying.messageId)?.author === "friend",
+          onYourMessage: byId.get(replying.messageId)?.author === "kinwriter",
         }
       : undefined,
     wake: options.wake,
+    checkTools: options.checkTools,
     library: (() => {
       const marks = bookmarks(store);
       return store.library.forChannel(channel).map((d) => ({ ...d, readTo: marks[d.id]?.to }));
@@ -375,6 +374,25 @@ export function promptForChannel(store: Store, channelId: string, options: Promp
   });
 }
 
+/**
+ * Which of a channel's messages are sent in full (from `start`), and the
+ * summaries of those before them (`memory`). The practice channel is never
+ * summarized.
+ */
+function promptWindow(store: Store, channel: Channel, messages: Message[]): { start: number; memory: PromptMemory | undefined } {
+  const settings = store.getSettings();
+  const summarized = settings.summaries && channel.kind !== "practice";
+  const seqMessages = store.summaries.withSeq(channel.id, messages);
+  const current = store.summaries.all(channel.id).find((s) => s.kind === "current") ?? null;
+  const start = windowStart(seqMessages, channel.kind, {
+    historyLimit: settings.historyLimit,
+    summaryEvery: settings.summaryEvery,
+    enabled: summarized,
+    current,
+  });
+  return { start, memory: summarized ? memoryFor(store, channel, seqMessages, start) : undefined };
+}
+
 /** Their note on the profile writing this turn, if they wrote one. */
 function profileNoteFor(store: Store, profile: Profile | undefined): { profile: string; note: string } | undefined {
   if (!profile) return undefined;
@@ -386,7 +404,7 @@ function profileNoteFor(store: Store, profile: Profile | undefined): { profile: 
  * Things your kinwriter should know this turn: their orientation request
  * waiting for you, a DM waiting, a new profile (once).
  */
-export function noticesFor(store: Store, tools = true, channel?: Pick<Channel, "kind">): string[] {
+function noticesFor(store: Store, tools = true, channel?: Pick<Channel, "kind">): string[] {
   const notices: string[] = [];
   const words = wording("orientation");
   // Scratchpads are new: told once, on a turn that could use them (src/scratchpads.ts).
@@ -411,10 +429,10 @@ export function noticesFor(store: Store, tools = true, channel?: Pick<Channel, "
 }
 
 /** How many finished scenes' summaries are sent in full (besides the story so far). */
-export const RECENT_SCENES = 2;
+const RECENT_SCENES = 2;
 
 /**
- * Layer 5's summaries for a channel whose prompt starts at `start`: only
+ * The prompt's summaries for a channel whose prompt starts at `start`: only
  * what covers messages that aren't sent in full.
  *
  * - The story so far, if anything before the recent messages is missing.
@@ -423,7 +441,7 @@ export const RECENT_SCENES = 2;
  * - What happened earlier in the current scene (or OOC conversation), if
  *   its oldest messages were folded into a summary.
  */
-export function memoryFor(store: Store, channel: Channel, messages: SeqMessage[], start: number): PromptMemory {
+function memoryFor(store: Store, channel: Channel, messages: SeqMessage[], start: number): PromptMemory {
   if (start === 0) return {};
   const scenes = splitScenes(messages, channel.kind);
   const firstSent = messages[start]?.seq ?? Infinity;
@@ -465,11 +483,11 @@ const MENTION_WINDOW = 6;
  * name as a word), with their fuller summary: the story so far, the last
  * scene, and what's happened in the scene still going. At most two.
  *
- * A bare word ("story") may not be about the channel at all. Rather than
- * asking Jev, the summary is simply included, and your kinwriter can tell for
- * themselves whether it's relevant.
+ * A bare word ("story") may not be about the channel at all: the summary is
+ * simply included, and your kinwriter can tell for themselves whether it's
+ * relevant.
  */
-export function mentionedChannels(store: Store, ooc: Channel, channels: Channel[], window: Message[]): { name: string; summary: string }[] {
+function mentionedChannels(store: Store, ooc: Channel, channels: Channel[], window: Message[]): { name: string; summary: string }[] {
   const found: { name: string; summary: string }[] = [];
   for (const { channel, explicit } of mentionCandidates(ooc, channels, window)) {
     if (found.length >= 2) break;
@@ -480,8 +498,7 @@ export function mentionedChannels(store: Store, ooc: Channel, channels: Channel[
     else if (explicit) {
       const posts = store.getMessages(channel.id).filter((m) => m.kind === "post").slice(-3);
       if (posts.length) {
-        const who = (m: Message) => (m.author === "friend" ? "You" : m.author === "peer" ? (m.speaker?.name ?? "Another kinwriter") : "The user");
-        found.push({ name: channel.name, summary: `No summary yet. Its newest posts:\n${posts.map((m) => `${who(m)}: ${m.content.length > 600 ? `${m.content.slice(0, 600)}…` : m.content}`).join("\n\n")}` });
+        found.push({ name: channel.name, summary: `No summary yet. Its newest posts:\n${posts.map((m) => `${whoWrote(m, true)}: ${m.content.length > 600 ? `${m.content.slice(0, 600)}…` : m.content}`).join("\n\n")}` });
       }
     }
   }
@@ -520,7 +537,7 @@ function openThreads(store: Store, channelId: string, byId: Map<string, Message>
     .map((t) => ({
       id: t.id,
       quote: t.quote,
-      onYourMessage: byId.get(t.messageId)!.author === "friend",
+      onYourMessage: byId.get(t.messageId)!.author === "kinwriter",
       comments: t.comments.map((c) => ({ author: c.author, note: c.note })),
     }));
 }
@@ -567,8 +584,8 @@ function safeMessage(store: Store, id: string): Message | null {
 
 /** Notebook suggestions waiting for your kinwriter, described. */
 function notebookReviews(store: Store): PromptReview[] {
-  return store.notebook.waitingFor("friend").flatMap((suggestion) => {
-    const entry = store.notebook.listEntries("friend", true).find((e) => e.id === suggestion.entryId);
+  return store.notebook.waitingFor("kinwriter").flatMap((suggestion) => {
+    const entry = store.notebook.listEntries("kinwriter", true).find((e) => e.id === suggestion.entryId);
     if (!entry) return [];
     const change = suggestion.change;
     const parts: string[] = [];
@@ -637,17 +654,6 @@ export function inboxFor(store: Store, now = Date.now()): { lines: string[]; del
   return { lines, deliver };
 }
 
-/** "5 minutes ago", "2 hours ago", "3 days ago". */
-function ago(iso: string, now = Date.now()): string {
-  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
-}
-
 /**
  * The characters your kinwriter plays in a channel's cast (their own and
  * shared ones they can see), in cast order.
@@ -684,7 +690,7 @@ export class Kinwriter {
    */
   private readonly writingIn = new Map<string, AbortController>();
 
-  /** Jev, for the `check` tool, once the server has set it up. */
+  /** Jev, once the server has set it up: for the `check` tool, and for reading drafts for their reflexes. */
   decider: Decider | null = null;
 
   /** The other kinwriters on their server (names only), from the hub. */
@@ -727,6 +733,11 @@ export class Kinwriter {
     return Object.fromEntries(this.busyChannels().map((id) => [id, this.readingIn.has(id) ? "reading" : "writing"]));
   }
 
+  /** Stop every turn running, in every channel (before the kinwriter stops). */
+  cancelAll(): void {
+    for (const channelId of this.busyChannels()) this.cancel(channelId);
+  }
+
   /**
    * Stop the turn running in a channel, if there is one (the Stop button).
    *
@@ -736,11 +747,6 @@ export class Kinwriter {
    *
    * @returns `true` if a turn was stopped, `false` if none was running.
    */
-  /** Stop every turn running, in every channel (before the kinwriter stops). */
-  cancelAll(): void {
-    for (const channelId of this.busyChannels()) this.cancel(channelId);
-  }
-
   cancel(channelId: string): boolean {
     const controller = this.writingIn.get(channelId);
     if (!controller) return false;
@@ -843,6 +849,44 @@ export class Kinwriter {
     return result;
   }
 
+  /**
+   * The heartbeat's check (Settings → Heartbeat check): before the model
+   * that writes OOC is asked, a cheaper profile reads a short version of
+   * the wake-up prompt (`buildCheckPrompt`) and says whether your kinwriter
+   * would use this moment at all. One request, no tools, nothing saved.
+   * Anything but a clear yes is a no.
+   */
+  async heartbeatCheck(channelId: string, wake: WakeContext): Promise<{ yes: boolean; profile: Profile; answer: string }> {
+    const profile = this.store.profiles.pick(this.store.getSettings().heartbeatAssignment, false);
+    // What the turn could do with the moment: its tools, by name (the
+    // check sends none), so a yes isn't only for texting you.
+    const channel = this.store.getChannel(channelId);
+    const writer = pickProfile(this.store, channel);
+    const map = toolMap(this.store);
+    const checkTools = toolSpecs({
+      store: this.store,
+      channel,
+      mode: "post",
+      decider: this.decider ?? undefined,
+      api: this.api,
+      wake: wake.reason,
+      model: writer.model,
+      profileName: writer.name,
+      profileId: writer.id,
+      peers: this.peers(),
+      groups: this.groups ?? undefined,
+    })
+      // Letting the moment pass is the check's no, not a tool.
+      .filter((t) => t.function.name !== "do_nothing")
+      .map((t) => ({ name: t.function.name, note: map[t.function.name]?.when ?? null }));
+    const conversation: ApiMessage[] = promptForChannel(this.store, channelId, { profile, wake, checkOnly: true, checkTools, peers: this.peers(), groups: this.groups });
+    appendToLastUser(conversation, wording("time")["heartbeat-check"] ?? "");
+    console.log(`[kinwriter] heartbeat check using "${profile.name}" (${profile.model})`);
+    const response = await createChatCompletion(this.api, { ...profileRequest(profile), messages: conversation });
+    const answer = response.content.trim();
+    return { yes: checkSaysYes(answer), profile, answer };
+  }
+
   private async run(channelId: string, trigger: TurnTrigger, options: TurnOptions, replyingTo?: string): Promise<TurnResult> {
     if (this.writingIn.has(channelId)) throw new BusyError();
     const channel = this.store.getChannel(channelId); // throws if missing
@@ -879,6 +923,7 @@ export class Kinwriter {
         groups: this.groups ?? undefined,
         isBusy: (id) => this.isBusy(id),
         onPosted: (where, messages) => this.onPostedElsewhere?.(where, messages),
+        signal: controller.signal,
       };
       const tools = profile.supportsTools ? toolSpecs(context) : [];
       const turnId = crypto.randomUUID();
@@ -936,7 +981,7 @@ export class Kinwriter {
 
       if (replyingTo) {
         // A comment is one note: any texting markers become line breaks.
-        result.thread = this.store.comments.reply("friend", replyingTo, splitTexts(loop.content).join("\n") || loop.content);
+        result.thread = this.store.comments.reply("kinwriter", replyingTo, splitTexts(loop.content).join("\n") || loop.content);
         return result;
       }
 
@@ -1018,18 +1063,25 @@ export class Kinwriter {
     let draft = "";
     // The round after a reminder: they must call a tool, or choose keep_my_draft.
     let requireTool = false;
+    // What they're answering, for their reflexes: the prompt's last message
+    // to them, not tool results or reminders added during the turn.
+    const lastUser = [...conversation].reverse().find((m) => m.role === "user");
+    const userMessage = typeof lastUser?.content === "string" ? lastUser.content : "";
 
     for (let round = 0; round < maxRounds; round++) {
       if (signal.aborted) throw new CancelledError();
-      // The last round offers no tools, so the model has to write.
-      const offered = round < maxRounds - 1 ? tools : [];
+      // The last round offers no tools, so the model has to write. The tools
+      // are still sent, with tool_choice "none": some providers reject a
+      // conversation with tool calls in it and no tools.
+      const last = round === maxRounds - 1;
+      const offered = last ? [] : tools;
       const deciding = requireTool && offered.length > 0;
       requireTool = false;
       const response = await createChatCompletion(this.api, {
         ...profileRequest(profile),
         messages: conversation,
-        tools: deciding ? [...offered, keepDraftSpec()] : offered,
-        toolChoice: deciding ? "required" : "auto",
+        tools: deciding ? [...offered, keepDraftSpec()] : last ? tools : offered,
+        toolChoice: deciding ? "required" : last && tools.length > 0 ? "none" : "auto",
         // After acting, the model may have nothing more to say.
         allowEmpty: round > 0,
         signal,
@@ -1063,10 +1115,9 @@ export class Kinwriter {
         // yes, a reminder and one more round; they act, rewrite, or keep it.
         if (!reflexed && tools.length > 0 && round < maxRounds - 2 && content && !isNothing(content) && context.mode === "post") {
           reflexed = true;
-          const userMessage = [...conversation].reverse().find((m) => m.role === "user");
           const reminders = await reflexReminders(this.store, context.decider, {
             kind: context.channel.kind,
-            userMessage: typeof userMessage?.content === "string" ? userMessage.content : "",
+            userMessage,
             draft: content,
             usedTools: toolCalls.filter((c) => c.status === "ok").map((c) => c.name),
           });
@@ -1117,7 +1168,9 @@ export class Kinwriter {
         // After a reminder: their choice to post the draft as it was, without acting.
         const keeping = deciding && call.name === KEEP_DRAFT && Boolean(draft);
         if (keeping) keepDraft = true;
-        const reason = keeping ? (JSON.parse(call.arguments || "{}") as { reason?: string }).reason : undefined;
+        const parsed = keeping ? parseArguments(call.arguments) : undefined;
+        // Their arguments are only a reason: a garbled one still keeps the draft.
+        const reason = parsed?.ok && typeof parsed.value.reason === "string" ? parsed.value.reason : undefined;
         const outcome: ToolOutcome = keeping
           ? { ok: true, result: { kept: true }, summary: reason ? `kept their draft (${reason})` : "kept their draft" }
           : offered.length === 0
@@ -1154,7 +1207,7 @@ export class Kinwriter {
       // The last round ran nothing; whatever text it had is the reply.
       if (offered.length === 0) return { content, toolCalls, reasoning, stopped: false, rounds: round + 1 };
     }
-    return { content, toolCalls, reasoning, stopped: false, rounds: MAX_ROUNDS };
+    return { content, toolCalls, reasoning, stopped: false, rounds: maxRounds };
   }
 
   /**
@@ -1192,6 +1245,8 @@ export class Kinwriter {
         isBusy: (id) => this.isBusy(id),
         onPosted: (where, messages) => this.onPostedElsewhere?.(where, messages),
         logStep: this.stepLogger(channel, turnId, profile.name),
+        // Stop (or the app shutting down) ends it between steps.
+        signal: controller.signal,
       };
       console.log(`[scripts] running "${script.name}" in #${channel.name} as a tools-only turn`);
       const report = await runScriptSteps(context, script, fromStep);
@@ -1201,7 +1256,7 @@ export class Kinwriter {
       return report;
     } finally {
       if (this.writingIn.get(channelId) === controller) this.writingIn.delete(channelId);
-      if (followUp !== null) this.anotherTurn(channelId, followUp, 0);
+      if (followUp !== null && !controller.signal.aborted) this.anotherTurn(channelId, followUp, 0);
     }
   }
 
@@ -1236,6 +1291,11 @@ export class Kinwriter {
       this.readingIn.delete(context.channel.id);
     }
   }
+}
+
+/** Whether the heartbeat check's answer is a yes: the first YES or NO in it decides, and neither is a no. */
+export function checkSaysYes(answer: string): boolean {
+  return answer.match(/\b(yes|no)\b/i)?.[1]?.toLowerCase() === "yes";
 }
 
 /** Add text to the end of the conversation: to its last message if that's yours (the nudge), or as a new one. */
@@ -1376,7 +1436,6 @@ export interface PromptManifest {
  */
 export function promptManifest(store: Store, channelId: string, profile?: Profile): PromptManifest {
   const channel = store.getChannel(channelId);
-  const settings = store.getSettings();
   const system = promptForChannel(store, channelId, { profile, preview: true, keepSelfNotes: true })[0]!.content;
   const layers = system
     .split(/^## /m)
@@ -1386,16 +1445,7 @@ export function promptManifest(store: Store, channelId: string, profile?: Profil
       return { title: title!.trim(), characters: rest.join("\n").trim().length };
     });
   const messages = store.getMessages(channelId);
-  const seqMessages = store.summaries.withSeq(channelId, messages);
-  const current = store.summaries.all(channelId).find((s) => s.kind === "current") ?? null;
-  const practice = channel.kind === "practice";
-  const start = windowStart(seqMessages, channel.kind, {
-    historyLimit: settings.historyLimit,
-    summaryEvery: settings.summaryEvery,
-    enabled: settings.summaries && !practice,
-    current,
-  });
-  const memory = settings.summaries && !practice ? memoryFor(store, channel, seqMessages, start) : {};
+  const { start, memory = {} } = promptWindow(store, channel, messages);
   const summarized = [
     ...(memory.story ? ["the story so far"] : []),
     ...(memory.scenes ?? []).map((s) => s.heading),

@@ -12,6 +12,9 @@ import { join } from "node:path";
 import { createHub, type Hub } from "../src/hub.ts";
 import { rpFraming } from "../src/prompt.ts";
 import { fill, setWordingOverrides, wording } from "../src/wording.ts";
+import { buildSeedPrompt, generatorSystemPrompt } from "../src/generator.ts";
+import { loadTags } from "../src/tags.ts";
+import { SEED_HEADINGS } from "../src/seeds.ts";
 import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
 
 let fake: FakeNanoGpt;
@@ -77,6 +80,23 @@ describe("editing the wording", () => {
     expect((await call("PUT", "/api/hub/prompts/turns/no-such-section", { text: "x" })).status).toBe(400);
     expect((await call("PUT", "/api/hub/prompts/../etc/passwd", { text: "x" })).status).not.toBe(200);
     expect((await call("PUT", "/api/hub/prompts/turns/new-scene", { text: 5 })).status).toBe(400);
+  });
+
+  test("the prompts that create kinwriters are listed, and an edit reaches the generator", async () => {
+    const { data } = await call("GET", "/api/hub/prompts");
+    const generator = data.files.find((f: any) => f.file === "generator");
+    expect(generator.sections.map((s: any) => s.name)).toEqual(["system", "name-username", "name-given", "idea-context", "idea-question"]);
+    // The headings the checks need are filled in, not written in the file (they'd split it into sections).
+    expect(generator.sections[0].text).toContain("{headings}");
+    expect(generatorSystemPrompt()).toContain(SEED_HEADINGS.map((h) => `## ${h}`).join("\n"));
+    expect(generatorSystemPrompt()).toContain("### Working notes");
+    expect(generatorSystemPrompt()).toStartWith("You're writing a seed");
+
+    await call("PUT", "/api/hub/prompts/generator/system", { text: "Write a seed.\n{headings}" });
+    await call("PUT", "/api/hub/prompts/generator/name-given", { text: "Call them {name}, exactly." });
+    const prompt = buildSeedPrompt(loadTags(), { tags: {}, naming: { kind: "given", name: "Ilse" } });
+    expect(prompt.system).toBe(`Write a seed.\n${SEED_HEADINGS.map((h) => `## ${h}`).join("\n")}`);
+    expect(prompt.user).toContain("# Name\nCall them Ilse, exactly.");
   });
 
   test("placeholders are filled; unknown ones are left alone", () => {

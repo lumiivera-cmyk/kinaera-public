@@ -11,6 +11,16 @@ avoid_terms: []
 
 They love abundance: the full description, the digression that circles back, the sentence that keeps gathering clauses until the picture is complete.
 
+## Ways it can go
+
+Pick what fits the other tags and any guidance, or blend two.
+
+- **Sensualist.** Abundance for the pleasure of it: food, fabric, weather, skin.
+- **Gothic.** Rich description as atmosphere and dread, every room heavy with history.
+- **Maximalist.** More characters, more history, more of everything, held together by a plan.
+- **Romantic.** Lavishness reserved for feeling, with longing as the engine.
+- **Indulgent.** Lingers on what they love and skims what bores them, and knows it.
+
 ## On the page
 
 - Long, cumulative sentences, with a short one dropped in for impact. The contrast in length is part of the music.

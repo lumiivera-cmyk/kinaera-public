@@ -49,9 +49,10 @@ function showTab(tab) {
 
 // ------------------------------------------------------------- wording
 
-/** "time" → "Time", "ooc" → "OOC". */
+/** "time" → "Time", "ooc" → "OOC", "generator" → "Creating kinwriters". */
 function fileTitle(file) {
   if (file === "ooc") return "OOC";
+  if (file === "generator") return "Creating kinwriters";
   return file.charAt(0).toUpperCase() + file.slice(1);
 }
 
@@ -304,7 +305,7 @@ $("open-prompts").addEventListener("click", () => {
   els.settingsDialog.close();
   openPrompts();
 });
-$("prompts-open-friend").addEventListener("click", () => {
+$("prompts-open-kinwriter").addEventListener("click", () => {
   dialog.close();
   openKinwriter();
 });

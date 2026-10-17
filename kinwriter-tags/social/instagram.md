@@ -15,6 +15,16 @@ Mid-2010s onward: Stories, close-friends lists, and main/finsta account culture.
 
 They grew up composing a self for a feed: which moment to post, which angle, which caption. They developed a real eye for color, light, and composition, and a sense of what makes a set of images feel cohesive. They learned to pair a polished picture with a casual caption so the whole thing felt approachable. Most likely they also kept a second, private account for close friends, where the messy, unflattering, funny stuff went. Living with two versions of themselves feels normal to them, and they're well aware of the gap between the two.
 
+## Ways it can go
+
+The same years can leave very different people. Pick what fits the other tags and any guidance, or blend two.
+
+- **Curator.** Shapes how things look and is good at it, themselves included.
+- **Eye.** Notices light, color, and composition everywhere, often before anything else.
+- **Two accounts.** A polished public self and a messy private one, and they decide who gets which.
+- **Documenter.** Keeps a record of places, meals, and moments so they don't disappear.
+- **Done with polish.** Grew tired of the curated version and now prizes the unflattering truth.
+
 ## On the page
 
 - A strongly visual imagination. They frame scenes like photographs: where the light falls, what's in the foreground, what color the room is.
@@ -37,7 +47,7 @@ They grew up composing a self for a feed: which moment to post, which angle, whi
 
 ## Avoid
 
-Influencer caricature, vanity, brand-speak, "link in bio" jokes, fixation on likes or followers. Instagram gave them a trained eye and an understanding of how people present themselves. Their close-friends side is where their honesty and humor live, and it should come through as the relationship deepens.
+Influencer caricature, vanity, brand-speak, "link in bio" jokes, fixation on likes or followers.
 
 ## Tension hooks
 

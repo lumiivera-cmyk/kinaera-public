@@ -70,8 +70,19 @@ describe("reflexes", () => {
     expect(app.store.toolLog.forChannel(ooc.id).map((c) => c.name)).toEqual(["reflex", "schedule_wakeup"]);
   });
 
+  test("after tool calls written as text, Jev still reads what the user said, not the tool results", async () => {
+    fake.replies.push(
+      { content: '<tool_call>{"name": "list_my_wakeups", "arguments": {}}</tool_call>' },
+      { content: "Nothing planned yet!" },
+    );
+    await say("any plans for the heist?");
+    const read = JSON.stringify(fake.jevRequests[0]!.messages);
+    expect(read).toContain("any plans for the heist?");
+    expect(read).not.toContain("(Tool results)");
+  });
+
   test("\"give me a sec\" and then stopping: reminded that the turn ends, and they do it now", async () => {
-    const [post] = app.store.addTurn([{ channelId: ooc.id, author: "friend", content: "He says it gently." }]);
+    const [post] = app.store.addTurn([{ channelId: ooc.id, author: "kinwriter", content: "He says it gently." }]);
     fake.replies.push(
       { content: "i'll rewrite the post. give me a sec." },
       { toolCalls: [{ name: "edit_my_message", arguments: { quote: "He says it gently.", new_text: "He stops being gentle about it." } }] },
@@ -156,6 +167,15 @@ describe("after a reminder, they choose on purpose", () => {
     expect(app.store.toolLog.forChannel(ooc.id).map((c) => c.name)).toContain("keep_my_draft");
   });
 
+  test("a garbled keep_my_draft still keeps the draft, instead of failing the turn", async () => {
+    fake.replies.push({ content: "Fixed that typo in the scene!" }, { toolCalls: [{ name: "keep_my_draft", arguments: '{"reason":"mine",}' }] });
+    jevSays(["edited"]);
+    await say("there's a typo in your post");
+    expect(app.store.getMessages(ooc.id).at(-1)!.content).toBe("Fixed that typo in the scene!");
+    const reflex = app.store.toolLog.forChannel(ooc.id).find((c) => c.name === "reflex")!;
+    expect(JSON.parse(reflex.result)).toMatchObject({ kept: "mine" });
+  });
+
   test("a provider that ignores the requirement: [same] with no action is flagged too", async () => {
     fake.replies.push({ content: "Posted it in #story!" }, { content: "[same]" });
     jevSays(["posted"]);
@@ -208,7 +228,7 @@ describe("no duplicate notebook entries", () => {
     expect(again.ok).toBe(false);
     expect(JSON.stringify(again.result)).toContain("already an entry called");
     expect(JSON.stringify(again.result)).toContain("Long ago");
-    expect(app.store.notebook.listEntries("friend").filter((e) => e.name.toLowerCase().includes("lantern guild"))).toHaveLength(1);
+    expect(app.store.notebook.listEntries("kinwriter").filter((e) => e.name.toLowerCase().includes("lantern guild"))).toHaveLength(1);
     expect((await runTool(ctx(), "create_notebook_entry", { kind: "lore", name: "The Lantern Guild's rival" })).ok).toBe(true);
   });
 
@@ -227,7 +247,7 @@ describe("no duplicate notebook entries", () => {
   });
 
   test("Jev knows what's already in the notebook when it reads the draft", async () => {
-    app.store.notebook.createEntry("friend", { kind: "character", name: "Ilse Marrow-Twin", fields: [] });
+    app.store.notebook.createEntry("kinwriter", { kind: "character", name: "Ilse Marrow-Twin", fields: [] });
     fake.replies.push({ content: "Sounds fun." });
     jevSays([]);
     await say("hi");

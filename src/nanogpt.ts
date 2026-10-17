@@ -58,10 +58,11 @@ export interface CompletionRequest {
   tools?: ToolSpec[];
   /**
    * "required": the model must call a tool this round (after a reflex
-   * reminder: act, or choose not to). Default "auto". Some providers ignore
-   * it, so the caller still handles a reply with no tool calls.
+   * reminder: act, or choose not to). "none": the tools are sent, but it
+   * can't call them (a turn's last round). Default "auto". Some providers
+   * ignore it, so the caller still handles a reply with or without calls.
    */
-  toolChoice?: "auto" | "required";
+  toolChoice?: "auto" | "required" | "none";
   /**
    * Accept a reply with no text and no tool calls instead of treating it as
    * an error. Used after tool calls, when the model may have nothing more
@@ -137,6 +138,15 @@ export async function createChatCompletion(
 
   // Dig the text out of the response. Everything is checked because a model
   // provider having a bad day can return all sorts of shapes.
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw new ApiError("nanoGPT sent back a reply with nothing in it.");
+  }
+  // Some providers send an error with HTTP 200: never mistake it for an empty reply.
+  const error = (json as { error?: { message?: unknown } | string }).error;
+  if (error && !(json as { choices?: unknown }).choices) {
+    const detail = typeof error === "string" ? error : typeof error.message === "string" ? error.message : "";
+    throw new ApiError(`nanoGPT returned an error${detail ? ` (${detail})` : "."}`);
+  }
   const choice = (json as { choices?: unknown[] })?.choices?.[0] as
     | { message?: { content?: unknown; tool_calls?: unknown } & ReasoningFields; finish_reason?: string }
     | undefined;
@@ -187,7 +197,32 @@ export function readReasoning(message: ReasoningFields | undefined, rawContent: 
       .filter((t): t is string => typeof t === "string" && t.trim() !== "");
     if (pieces.length) return pieces.join("\n\n").trim();
   }
-  return [...rawContent.matchAll(/<think>([\s\S]*?)<\/think>/gi)].map((m) => m[1]!.trim()).filter(Boolean).join("\n\n");
+  return thinkParts(rawContent).reasoning.join("\n\n");
+}
+
+/**
+ * A reply's text split into its `<think>` reasoning and the rest. Besides
+ * whole `<think>...</think>` pairs: a reply with only the closing tag (the
+ * provider ate the opening one) thinks up to it, and an opening tag never
+ * closed (cut off at Max tokens) thinks to the end.
+ */
+function thinkParts(text: string): { reasoning: string[]; rest: string } {
+  const reasoning: string[] = [];
+  let rest = text.replace(/<think>([\s\S]*?)<\/think>/gi, (_m, inside: string) => {
+    reasoning.push(inside);
+    return "";
+  });
+  const end = rest.toLowerCase().lastIndexOf("</think>");
+  if (end >= 0) {
+    reasoning.unshift(rest.slice(0, end).replace(/<\/think>/gi, ""));
+    rest = rest.slice(end + "</think>".length);
+  }
+  const open = rest.search(/<think>/i);
+  if (open >= 0) {
+    reasoning.push(rest.slice(open + "<think>".length));
+    rest = rest.slice(0, open);
+  }
+  return { reasoning: reasoning.map((r) => r.trim()).filter(Boolean), rest: rest.trim() };
 }
 
 /**
@@ -206,8 +241,7 @@ export function requestBody(request: CompletionRequest): Record<string, unknown>
     ...(request.minP != null ? { min_p: request.minP } : {}),
     ...(request.reasoningEffort ? { reasoning_effort: request.reasoningEffort } : {}),
     ...(request.tools && request.tools.length > 0 ? { tools: request.tools, tool_choice: request.toolChoice ?? "auto" } : {}),
-    // We wait for the whole reply rather than streaming it word by word.
-    // Streaming is a nice later improvement but adds complexity.
+    // The whole reply at once, not streamed word by word.
     stream: false,
   };
 }
@@ -235,17 +269,42 @@ function readToolCalls(value: unknown): NativeToolCall[] {
 }
 
 /**
- * List the model ids available to your key, for the settings panel.
- * Returns them sorted alphabetically.
+ * What nanoGPT says a model can do (its `capabilities` and limits, from
+ * `GET /models?detailed=true`). A field is left out when the API didn't
+ * say, so "unknown" never reads as "can't". The API says nothing about
+ * sampling settings (temperature, Top P, Min P), so those aren't here.
  */
-export async function listModels(options: ApiOptions): Promise<string[]> {
-  const json = await request(options, "/models", { method: "GET" });
+export interface ModelInfo {
+  id: string;
+  /** It can think before answering, so the reasoning setting applies. */
+  reasoning?: boolean;
+  /** It can call tools. */
+  toolCalling?: boolean;
+  /** The most tokens it can write in one reply. */
+  maxOutputTokens?: number;
+}
+
+/**
+ * List the models available to your key, for the settings panel, with what
+ * each one supports. Sorted alphabetically by id.
+ */
+export async function listModels(options: ApiOptions): Promise<ModelInfo[]> {
+  const json = await request(options, "/models?detailed=true", { method: "GET" });
   const data = (json as { data?: unknown })?.data;
   if (!Array.isArray(data)) return [];
   return data
-    .map((entry) => (entry as { id?: unknown })?.id)
-    .filter((id): id is string => typeof id === "string")
-    .sort((a, b) => a.localeCompare(b));
+    .flatMap((raw) => {
+      const entry = raw as { id?: unknown; capabilities?: Record<string, unknown>; max_output_tokens?: unknown };
+      if (typeof entry?.id !== "string") return [];
+      const info: ModelInfo = { id: entry.id };
+      const caps = entry.capabilities;
+      if (typeof caps?.reasoning === "boolean") info.reasoning = caps.reasoning;
+      if (typeof caps?.tool_calling === "boolean") info.toolCalling = caps.tool_calling;
+      const max = entry.max_output_tokens;
+      if (typeof max === "number" && Number.isFinite(max) && max > 0) info.maxOutputTokens = max;
+      return [info];
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**
@@ -253,11 +312,12 @@ export async function listModels(options: ApiOptions): Promise<string[]> {
  *
  * Some reasoning models put their private reasoning inside
  * `<think>...</think>` tags at the start of the reply. That's not part of the
- * post, so it's removed. (It's kept apart as the reply's `reasoning`; see
+ * post, so it's removed (a lone closing tag, or an opening tag never closed,
+ * too: see `thinkParts`). (It's kept apart as the reply's `reasoning`; see
  * `readReasoning`.)
  */
 export function stripReasoning(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  return thinkParts(text).rest;
 }
 
 // ------------------------------------------------------------------ helpers

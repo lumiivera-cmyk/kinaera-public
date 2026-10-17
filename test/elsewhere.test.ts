@@ -59,8 +59,8 @@ describe("posting in another channel", () => {
     expect(data.kinwriterMessages.map((m: Message) => m.content)).toEqual(["done! go look in #story"]);
     const inStory = app.store.getMessages(story.id);
     expect(inStory.map((m) => [m.kind, m.author, m.content])).toEqual([
-      ["scene_break", "friend", "The Storm"],
-      ["post", "friend", "Ilse Marrow bars the door as the first wave hits."],
+      ["scene_break", "kinwriter", "The Storm"],
+      ["post", "kinwriter", "Ilse Marrow bars the door as the first wave hits."],
     ]);
     expect(inStory[1]!.characters).toEqual(["Ilse Marrow"]);
     expect(app.store.toolLog.forChannel(ooc.id)[0]!.summary).toBe('started a scene ("The Storm") and posted in #story: "Ilse Marrow bars the door as the first wave hits."');
@@ -103,7 +103,7 @@ describe("posting in another channel", () => {
 describe("reading another channel", () => {
   test("the newest messages, oldest first", async () => {
     app.store.addTurn([{ channelId: story.id, author: "user", content: "Kestrel knocks." }]);
-    app.store.addTurn([{ channelId: story.id, author: "friend", content: "Ilse opens the door.", characters: ["Ilse Marrow"] }]);
+    app.store.addTurn([{ channelId: story.id, author: "kinwriter", content: "Ilse opens the door.", characters: ["Ilse Marrow"] }]);
     const { result } = await runTool(ctx(ooc), "read_recent_messages", { channel: "#story", count: 5 });
     expect((result as any).messages).toEqual([
       { from: "the user", when: expect.any(String), text: "Kestrel knocks." },

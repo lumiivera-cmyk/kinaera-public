@@ -123,6 +123,12 @@
  *
  * Theme files themselves are served at /themes/<id>/<file> (see src/themes.ts).
  *
+ *   GET    /api/backgrounds                    Your background pictures
+ *   POST   /api/backgrounds                    Add one (and show it)
+ *   DELETE /api/backgrounds/:file              Remove one
+ *
+ * Background pictures are served at /backgrounds/<file> (see src/backgrounds.ts).
+ *
  * Run it with `bun start`.
  */
 
@@ -141,14 +147,15 @@ import { developerView } from "./developer.ts";
 import { acceptedSeed, beginFromSeed, checkHeadings, loadDefaultSeeds, parseSeed, writeSeed } from "./seeds.ts";
 import { requestSelfNotes, selfFile, selfShared, selfWordCount, shareRequest, SELF_WORDS_CAP, withdrawRequest } from "./selfnotes.ts";
 import { stillSeedDraft } from "./handoff.ts";
-import { buildSeedPrompt, generateSeed, ideaTags, SeedError, type Generation, type SeedSelection } from "./generator.ts";
-import { allAvoidTerms, CATEGORIES, loadTags, pickerView, readTagFiles, TAGS_DIR, type CategoryId } from "./tags.ts";
+import { buildSeedPrompt, generateSeed, ideaTags, SeedError, type Generation, type Naming, type SeedSelection } from "./generator.ts";
+import { allAvoidTerms, allowsMultiple, CATEGORIES, loadTags, pickerView, readTagFiles, TAGS_DIR, type CategoryId } from "./tags.ts";
 import { validateSeed } from "./seeds.ts";
 import type { WakeContext, WakeReason } from "./prompt.ts";
 import { Heartbeat } from "./heartbeat.ts";
 import { addExampleCharacter, exampleCharacterPending, freshWorld, type PracticeWorld } from "./practiceworld.ts";
 import { keepAwake, Presence, TermuxNotifier, type Notifier } from "./notify.ts";
 import { DEFAULT_THEME, ThemeLibrary } from "./themes.ts";
+import { BackgroundLibrary } from "./backgrounds.ts";
 import { ENTRY_TEMPLATES } from "./notebook.ts";
 import { rollCommand } from "./dice.ts";
 import { applyRewrite } from "./rewrites.ts";
@@ -190,6 +197,8 @@ import {
 import type { CastMember, Channel, Message, Settings } from "./types.ts";
 import { PermissionError } from "./errors.ts";
 import { getPad, hasScratchpads, mergeText, PAD_LIMIT, PadChangedError, toNotebook, undoPad, writePad, type PadName } from "./scratchpads.ts";
+import { ownGroups } from "./universal.ts";
+import { ASSIGNMENT_KEYS, splitAssignment } from "./profiles.ts";
 import {
   isShared,
   SETUP_PENDING,
@@ -206,13 +215,13 @@ export type ChannelView = Channel & { cast: CastMember[] };
 
 /** Settings that are about your kinwriter: changing one goes in the intervention log. */
 const SETTINGS_THEY_SEE: Partial<Record<keyof Settings, string>> = {
-  friendName: "your name",
-  friendPrompt: "your identity (who you are)",
+  kinwriterName: "your name",
+  kinwriterPrompt: "your identity (who you are)",
   literaryPrompt: "how you write in literary scenes",
   casualPrompt: "how you write in casual scenes",
   oocPrompt: "how you talk out of character",
-  friendAvatar: "your avatar",
-  friendColor: "your colour",
+  kinwriterAvatar: "your avatar",
+  kinwriterColor: "your colour",
   oocBubbles: "whether you text in short bubbles out of character",
   matchPace: "whether you match the length of the user's posts in literary scenes",
 };
@@ -228,6 +237,8 @@ class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** More for the response body, beside `error`. */
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -321,13 +332,13 @@ export function appVersion(publicDir: string): string {
   return hasher.digest("hex").slice(0, 12);
 }
 
+/** The turns of their own a dry run can show. */
+const DRY_RUN_WAKES: WakeReason[] = ["opened", "away", "scene-ended", "review", "heartbeat", "answer", "scheduled", "orientation", "lookback", "farewell", "aside"];
+
 /**
  * Wire everything together: open the store, create the kinwriter, and build the
  * request handler. Nothing is listening yet; `main()` does that.
  */
-/** The turns of their own a dry run can show. */
-const DRY_RUN_WAKES: WakeReason[] = ["opened", "away", "scene-ended", "review", "heartbeat", "answer", "scheduled", "orientation", "lookback", "farewell", "aside"];
-
 export function createApp(config: Config): App {
   const store = new Store(config.dataDir, { example: config.example ?? true });
   const api: ApiOptions = {
@@ -340,8 +351,6 @@ export function createApp(config: Config): App {
   // channels and DMs (src/groups.ts).
   if (config.peers) kinwriter.peers = config.peers;
   if (config.groups) kinwriter.groups = config.groups;
-
-  /** A DM you chose not to see: no screen, no messages. */
 
   /** A story channel's scratchpads, as you see them (src/scratchpads.ts). */
   function scratchpadsView(channelId: string) {
@@ -364,18 +373,31 @@ export function createApp(config: Config): App {
     throw new HttpError(404, 'A scratchpad is "shared" or "mine".');
   }
 
+  /** A DM you chose not to see: no screen, no messages. */
   function hiddenDm(channelId: string): boolean {
     const channel = store.hasChannel(channelId) ? store.getChannel(channelId) : null;
     // With kinwriters kept apart, every group channel and DM is out of sight.
     if (channel && isShared(channel) && store.hideShared()) return true;
     return channel?.kind === "dm" && config.groups?.info(channelId)?.visible === false;
   }
+
+  /** The channel of the message (or comment) an /api/messages/:id or /api/comments/:id address is about, if there is one. */
+  function channelOfMessageOrComment(path: string): string | null {
+    const [, kind, raw] = path.match(/^\/api\/(messages|comments)\/([^/]+)/) ?? [];
+    if (!kind || !raw) return null;
+    const id = decodeURIComponent(raw);
+    const sql =
+      kind === "messages"
+        ? "SELECT channel_id FROM messages WHERE id = $id"
+        : "SELECT m.channel_id FROM comments c JOIN messages m ON m.id = c.message_id WHERE c.id = $id";
+    return (store.db.query(sql).get({ id }) as { channel_id: string } | null)?.channel_id ?? null;
+  }
   const summarizer = new Summarizer(store, api, config.summaryDelayMs);
   const decider = new Decider(
     api,
     () => {
       const settings = store.getSettings();
-      const [kind, id] = settings.decisionFallback.split(":");
+      const [kind, id] = splitAssignment(settings.decisionFallback);
       let fallback = null;
       try {
         fallback = kind === "profile" && id ? store.profiles.get(id) : null;
@@ -397,7 +419,7 @@ export function createApp(config: Config): App {
   wakeups.onPosted = (channel, messages) => {
     if (presence.isVisible() || !notifier.available()) return;
     const text = messages.map((m) => m.content).join("\n");
-    notifier.notify({ title: `${store.getSettings().friendName} in #${channel.name}`, text, channelId: channel.id, kinwriterId: config.kinwriterId });
+    notifier.notify({ title: `${store.getSettings().kinwriterName} in #${channel.name}`, text, channelId: channel.id, kinwriterId: config.kinwriterId });
   };
   // …and so does a post in another channel (post_in_channel), whatever
   // started the turn: you weren't looking there.
@@ -435,7 +457,7 @@ export function createApp(config: Config): App {
   /** You made a suggestion for your kinwriter to review: that's a wake-up. */
   function maybeReview<T>(result: T): T {
     const suggestion = (result as { suggestion?: Parameters<typeof store.notebook.reviewerOf>[0] }).suggestion;
-    if (autoWake && suggestion && store.notebook.reviewerOf(suggestion) === "friend") void wakeups.event("review");
+    if (autoWake && suggestion && store.notebook.reviewerOf(suggestion) === "kinwriter") wakeups.requestReview();
     return result;
   }
   const version = appVersion(config.publicDir);
@@ -444,6 +466,8 @@ export function createApp(config: Config): App {
     config.userThemesDir ?? join(config.dataDir, "themes"),
     readFileSync(join(config.publicDir, "style.css"), "utf8"),
   );
+
+  const backgrounds = new BackgroundLibrary(config.userBackgroundsDir ?? join(config.dataDir, "backgrounds"));
 
   /** Refuse a theme id that doesn't exist (for settings and channels). */
   function ensureTheme(id: string | null | undefined): void {
@@ -457,6 +481,18 @@ export function createApp(config: Config): App {
 
   function channelViews(): ChannelView[] {
     return store.listChannels().filter((c) => !hiddenDm(c.id)).map(channelView);
+  }
+
+  /** Each channel's newest message (and the practice channel's), for noticing new ones; not DMs you chose not to see. */
+  function activityNow() {
+    const practice = store.practiceChannel();
+    const channels = [...store.listChannels().filter((c) => !hiddenDm(c.id)), ...(practice ? [practice] : [])];
+    return Object.fromEntries(
+      channels.map((c) => {
+        const last = store.lastMessage(c.id);
+        return [c.id, last ? { lastId: last.id, author: last.author, at: last.createdAt } : null];
+      }),
+    );
   }
 
   /** Presence, from the real state: writing, reading (a tool call), quiet (quiet hours), or idle. */
@@ -551,7 +587,7 @@ export function createApp(config: Config): App {
       words: shared ? selfWordCount(store) : null,
       cap: SELF_WORDS_CAP,
       file: shared ? selfFile(store, config.kinwriterId ?? null) : null,
-      pronouns: store.getSettings().friendPronouns,
+      pronouns: store.getSettings().kinwriterPronouns,
     };
   }
 
@@ -581,7 +617,14 @@ export function createApp(config: Config): App {
     if (typeof given !== "object" || given === null) throw new HttpError(400, '"tags" must be an object.');
     for (const c of CATEGORIES) {
       const value = given[c.id];
-      if (value !== undefined && value !== null && typeof value !== "string") throw new HttpError(400, `"tags.${c.id}" must be a tag id or null.`);
+      if (Array.isArray(value) && allowsMultiple(c.id)) {
+        if (!value.every((v) => typeof v === "string")) throw new HttpError(400, `"tags.${c.id}" must be a list of tag ids.`);
+        tags[c.id as CategoryId] = value.length ? (value as string[]) : null;
+        continue;
+      }
+      if (value !== undefined && value !== null && typeof value !== "string") {
+        throw new HttpError(400, allowsMultiple(c.id) ? `"tags.${c.id}" must be a tag id, a list of them, or null.` : `"tags.${c.id}" must be a tag id or null.`);
+      }
       tags[c.id as CategoryId] = (value as string | null | undefined) || null;
     }
     const strings = (value: unknown, field: string): string[] => {
@@ -591,7 +634,18 @@ export function createApp(config: Config): App {
     };
     const pockets = (body.pockets ?? {}) as Record<string, unknown>;
     if (typeof pockets !== "object" || pockets === null || Object.values(pockets).some((v) => typeof v !== "string")) throw new HttpError(400, '"pockets" must map tag ids to pockets.');
-    return { tags, rolledTags: strings(body.rolledTags, "rolledTags"), pockets: pockets as Record<string, string> };
+    return { tags, rolledTags: strings(body.rolledTags, "rolledTags"), pockets: pockets as Record<string, string>, naming: readNaming(body.naming) };
+  }
+
+  /** What they'll be called: "name" (random, the default), "username" (random), or { given: "…" }. */
+  function readNaming(value: unknown): Naming {
+    if (value === undefined || value === null || value === "name") return { kind: "name" };
+    if (value === "username") return { kind: "username" };
+    const given = typeof value === "object" && typeof (value as { given?: unknown }).given === "string" ? (value as { given: string }).given.trim() : null;
+    if (given === null) throw new HttpError(400, '"naming" must be "name", "username", or { "given": "<their name>" }.');
+    if (!given) throw new HttpError(400, "Give them a name, or pick a random one.");
+    if (given.length > 40 || given.includes("\n")) throw new HttpError(400, "That name is too long (40 characters at most, on one line).");
+    return { kind: "given", name: given };
   }
 
   /** One seed from an assembled prompt, with the generator profile. A failure twice over is a readable 422. */
@@ -608,9 +662,14 @@ export function createApp(config: Config): App {
     } catch (error) {
       if (error instanceof SeedError) {
         console.log(`[seeds] couldn't make a seed with "${profile.name}": ${error.message}`);
-        throw new HttpError(422, error.message);
+        // What it needed, and what each try wrote, so you can see the difference (not only in dev mode).
+        const attempts = error.generation.attempts.map((a) => ({ raw: a.raw, error: a.error, problems: a.problems.map((p) => p.message) }));
+        throw new HttpError(422, error.message, { expected: error.expected, attempts });
       }
-      throw error;
+      if (error instanceof HttpError || error instanceof ApiError) throw error;
+      // A bug, but say what it was: "something went wrong" doesn't help you tell anyone.
+      console.error("[seeds] unexpected error making a seed", error);
+      throw new HttpError(500, `Something went wrong making their seed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -640,7 +699,9 @@ export function createApp(config: Config): App {
 
   /** Settings as the app gets them: who they are only if they share it. */
   function clientSettings(settings = store.getSettings()) {
-    return selfShared(store) ? settings : { ...settings, friendPrompt: "" };
+    // A picture removed while another kinwriter was showing it: back to the theme's own.
+    const shown = settings.appBackground && !backgrounds.exists(settings.appBackground) ? { ...settings, appBackground: "" } : settings;
+    return selfShared(store) ? shown : { ...shown, kinwriterPrompt: "" };
   }
 
   /** In the interview, how many messages each of you has written in #practice since it began. */
@@ -833,7 +894,7 @@ export function createApp(config: Config): App {
   function ensureNotOrienting(channelId: string): void {
     const session = orientationRunning(store);
     if (session && !orientationChannels(session).includes(channelId)) {
-      throw new HttpError(409, `${store.getSettings().friendName} is in an orientation. Their other channels open again when it's done.`);
+      throw new HttpError(409, `${store.getSettings().kinwriterName} is in an orientation. Their other channels open again when it's done.`);
     }
   }
 
@@ -871,7 +932,7 @@ export function createApp(config: Config): App {
     const ids = new Set<string>();
     for (const id of picked) {
       const entry = store.notebook.getEntry("user", id); // 404 if you can't see it
-      if (!store.notebook.canSeeEntry("friend", id)) {
+      if (!store.notebook.canSeeEntry("kinwriter", id)) {
         throw new HttpError(400, `${entry.name} is hidden from your kinwriter, so it can't be sent to them.`);
       }
       ids.add(id);
@@ -881,7 +942,7 @@ export function createApp(config: Config): App {
     const entries = store.notebook.listEntries("user");
     for (const [, name] of content.matchAll(/\[\[([^\]|\n]{1,100})(?:\|[^\]\n]*)?\]\]/g)) {
       const entry = entries.find((e) => e.name.toLowerCase() === name!.trim().toLowerCase());
-      if (entry && store.notebook.canSeeEntry("friend", entry.id)) ids.add(entry.id);
+      if (entry && store.notebook.canSeeEntry("kinwriter", entry.id)) ids.add(entry.id);
     }
     return [...ids];
   }
@@ -921,7 +982,7 @@ export function createApp(config: Config): App {
    */
   function branchAfterTurn(channelId: string, messageId: string) {
     const reply = store.getLiveMessage(messageId);
-    if (reply.channelId !== channelId || reply.author !== "friend" || reply.kind !== "post") {
+    if (reply.channelId !== channelId || reply.author !== "kinwriter" || reply.kind !== "post") {
       throw new HttpError(400, '"messageId" must be one of your kinwriter\'s replies in this channel.');
     }
     const turn = reply.turnId ? store.getMessages(channelId).filter((m) => m.turnId === reply.turnId) : [reply];
@@ -937,13 +998,15 @@ export function createApp(config: Config): App {
   // (`/api/channels/order`) must come before patterns that would also match
   // them (`/api/channels/:id`).
   const routes: Route[] = [
-    // ------------------------------------------------------- server-wide
+    // ---------------------------------------------------------- the whole app
     {
       method: "GET",
       pattern: "/api/state",
       handler: () =>
         json({
           settings: clientSettings(),
+          // Sections of Settings just for this kinwriter; the rest are shared (src/universal.ts).
+          ownSettings: ownGroups(store),
           selfNotes: selfNotesView(),
           channels: channelViews(),
           // Your kinwriter's own practice channel, shown apart (src/orientation.ts).
@@ -973,12 +1036,8 @@ export function createApp(config: Config): App {
           // For noticing messages the app didn't ask for (a wake-up): a
           // number that changes with any message, and each channel's newest.
           revision: store.revision,
-          activity: Object.fromEntries(
-            [...store.listChannels(), ...(store.practiceChannel() ? [store.practiceChannel()!] : [])].map((c) => {
-              const last = store.lastMessage(c.id);
-              return [c.id, last ? { lastId: last.id, author: last.author, at: last.createdAt } : null];
-            }),
-          ),
+          // (Not DMs you chose not to see.)
+          activity: activityNow(),
         }),
     },
     {
@@ -1074,36 +1133,49 @@ export function createApp(config: Config): App {
       handler: async (request) => {
         const update = validateSettings(await readJson(request));
         ensureTheme(update.appTheme);
+        if (update.appBackground && !backgrounds.exists(update.appBackground)) {
+          throw new HttpError(400, "That background picture doesn't exist.");
+        }
         // Their self-notes are theirs (src/selfnotes.ts): you can read them
         // if they share them, never change them.
-        const suggestion = null;
-        if (update.friendPrompt !== undefined) {
+        if (update.kinwriterPrompt !== undefined) {
           const current = store.identity.current();
-          if (selfShared(store) && update.friendPrompt.trim() !== (current?.identity ?? "").trim()) {
+          if (selfShared(store) && update.kinwriterPrompt.trim() !== (current?.identity ?? "").trim()) {
             throw new HttpError(400, "Who they are is their self-notes: theirs to write. You can read them while they share them, not change them.");
           }
-          delete update.friendPrompt;
+          delete update.kinwriterPrompt;
         }
-        for (const assignment of [update.rpAssignment, update.oocAssignment, update.summaryAssignment, update.decisionFallback]) {
+        for (const key of ASSIGNMENT_KEYS) {
+          const assignment = update[key];
           if (assignment) store.profiles.checkAssignment(assignment);
         }
         const before = store.getSettings();
         const settings = store.updateSettings(update);
         noteSettingsChanges(before, settings);
         // Turning summaries on, or changing when they're written: catch up.
-        if (update.summaries || update.summaryEvery || update.historyLimit) summarizer.scheduleAll();
+        if (
+          (update.summaries && !before.summaries) ||
+          (update.summaryEvery !== undefined && update.summaryEvery !== before.summaryEvery) ||
+          (update.historyLimit !== undefined && update.historyLimit !== before.historyLimit)
+        ) {
+          summarizer.scheduleAll();
+        }
         // The heartbeat's pace changed: start counting again from now.
-        if (update.heartbeatHours !== undefined) {
+        if (update.heartbeatHours !== undefined && update.heartbeatHours !== before.heartbeatHours) {
           heartbeat.reset();
           if (update.heartbeatHours > 0) keepAwake();
         }
-        return json({ settings: clientSettings(settings), suggestion });
+        return json({ settings: clientSettings(settings) });
       },
     },
     {
       method: "GET",
       pattern: "/api/models",
-      handler: async () => json({ models: await listModels(api) }),
+      handler: async () => {
+        // `models` stays a plain list of ids; `info` says what each supports.
+        const info = await listModels(api);
+        return json({ models: info.map((m) => m.id), info });
+      },
     },
 
     // ---------------------------------------------------------- channels
@@ -1214,7 +1286,7 @@ export function createApp(config: Config): App {
           writePad(store, id!, name, text, "user", typeof body.baseText === "string" ? undefined : (body.base as number | undefined));
         } catch (error) {
           if (error instanceof PadChangedError) {
-            const by = error.pad.by === "friend" ? store.getSettings().friendName : "you";
+            const by = error.pad.by === "kinwriter" ? store.getSettings().kinwriterName : "you";
             throw new HttpError(409, `${by === "you" ? "You" : by} changed this scratchpad since you opened it. Your text is still in the box: copy what you need, then reload.`);
           }
           throw error;
@@ -1529,7 +1601,7 @@ export function createApp(config: Config): App {
       method: "POST",
       pattern: "/api/dry-run",
       handler: async (request) => {
-        const body = (await readJson(request)) as Record<string, unknown>;
+        const body = await readObject(request);
         const turn = typeof body.turn === "string" ? body.turn : "turn";
         if (turn !== "turn" && !DRY_RUN_WAKES.includes(turn as WakeReason)) throw new HttpError(400, `There's no kind of turn called "${turn}".`);
         const reason = turn === "turn" ? null : (turn as WakeReason);
@@ -1552,7 +1624,7 @@ export function createApp(config: Config): App {
               ? store
                   .listChannels()
                   .filter((c) => c.kind === "rp")
-                  .map((c) => ({ c, at: store.getMessages(c.id).filter((m) => m.author === "friend").at(-1)?.createdAt ?? "" }))
+                  .map((c) => ({ c, at: store.getMessages(c.id).filter((m) => m.author === "kinwriter").at(-1)?.createdAt ?? "" }))
                   .sort((a, b) => b.at.localeCompare(a.at))[0]?.c
               : undefined;
           if (reason === "aside" && !story) throw new HttpError(400, "There's no story channel for an aside to be about yet.");
@@ -1719,7 +1791,7 @@ export function createApp(config: Config): App {
       handler: async (request, { id }) => {
         const body = await readObject(request);
         const message = store.getMessage(id!);
-        if (message.author !== "friend") throw new HttpError(400, "Rewrites are for your kinwriter's messages: yours, you can just edit.");
+        if (message.author !== "kinwriter") throw new HttpError(400, "Rewrites are for your kinwriter's messages: yours, you can just edit.");
         if (hiddenDm(message.channelId)) throw new HttpError(403, "You chose not to see this DM.");
         if (typeof body.quote !== "string" || typeof body.replacement !== "string") throw new HttpError(400, '"quote" and "replacement" must be text.');
         // The words must be in the message (formatting aside), or there's nothing to replace.
@@ -1797,8 +1869,8 @@ export function createApp(config: Config): App {
           }
           store.updateSettings(
             validateSettings({
-              ...(body.avatar !== undefined ? { friendAvatar: body.avatar } : {}),
-              ...(body.color !== undefined ? { friendColor: body.color } : {}),
+              ...(body.avatar !== undefined ? { kinwriterAvatar: body.avatar } : {}),
+              ...(body.color !== undefined ? { kinwriterColor: body.color } : {}),
             }),
           );
           beginFromSeed(store, seed, config.kinwriterId ?? "home");
@@ -1810,18 +1882,18 @@ export function createApp(config: Config): App {
         const tastes = body.tastes === undefined ? "" : body.tastes;
         if (typeof tastes !== "string") throw new HttpError(400, '"tastes" must be text.');
         const update = validateSettings({
-          friendName: body.name,
-          ...(body.avatar !== undefined ? { friendAvatar: body.avatar } : {}),
-          ...(body.color !== undefined ? { friendColor: body.color } : {}),
-          friendPrompt: body.prompt,
+          kinwriterName: body.name,
+          ...(body.avatar !== undefined ? { kinwriterAvatar: body.avatar } : {}),
+          ...(body.color !== undefined ? { kinwriterColor: body.color } : {}),
+          kinwriterPrompt: body.prompt,
         });
-        if (!update.friendName?.trim()) throw new HttpError(400, "Give them a name.");
-        if (!update.friendPrompt?.trim()) throw new HttpError(400, "Write who they are, or roll someone with Surprise me.");
+        if (!update.kinwriterName?.trim()) throw new HttpError(400, "Give them a name.");
+        if (!update.kinwriterPrompt?.trim()) throw new HttpError(400, "Write who they are, or roll someone with Surprise me.");
         store.updateSettings(update);
-        store.identity.begin(update.friendPrompt, tastes);
+        store.identity.begin(update.kinwriterPrompt, tastes);
         store.appState.set(SETUP_PENDING, null);
         // The app offers their orientation next (together, on their own, or skip).
-        console.log(`[setup] made ${update.friendName}`);
+        console.log(`[setup] made ${update.kinwriterName}`);
         writeExampleCharacter();
         return json({ settings: clientSettings() });
       },
@@ -1857,16 +1929,19 @@ export function createApp(config: Config): App {
       },
     },
     {
-      // Generate from idea: your words as the guidance, with the tags Jev
-      // finds obvious in them (or one to three rolled), and nothing else.
+      // Generate from idea: your words as the guidance, with any tags you
+      // attached (`tags`, `pockets`, as /api/seeds/generate takes them), the
+      // ones Jev finds obvious in the rest (or one to three rolled if you
+      // attached none), and nothing else.
       method: "POST",
       pattern: "/api/seeds/idea",
       handler: async (request) => {
         const body = await readObject(request);
         if (typeof body.text !== "string" || !body.text.trim()) throw new HttpError(400, "Write a little about who they are first.");
         const idea = body.text.trim().slice(0, 4000);
+        const { tags: attached, pockets } = readSelection({ tags: body.tags, pockets: body.pockets });
         const tags = currentTags();
-        const { selection } = await ideaTags(tags, idea, decider.enabled() ? decider : null, store.getSettings().decisionConfidence);
+        const { selection } = await ideaTags(tags, idea, decider.enabled() ? decider : null, store.getSettings().decisionConfidence, Math.random, { tags: attached, pockets });
         return json(await makeSeed(buildSeedPrompt(tags, selection, idea, { fill: false }), "prompted", tags));
       },
     },
@@ -1928,7 +2003,7 @@ export function createApp(config: Config): App {
       },
     },
     {
-      // Saving an edit in the preview: the seven headings checked again (not the length).
+      // Saving an edit in the preview: the headings checked again (not the length).
       method: "POST",
       pattern: "/api/seeds/check",
       handler: async (request) => {
@@ -1938,7 +2013,7 @@ export function createApp(config: Config): App {
         const problems = [
           ...(seed.header.name.trim() ? [] : ["Give them a name."]),
           ...(seed.header.pronouns.trim() ? [] : ["Give them pronouns."]),
-          ...[checkHeadings(seed.body)].filter((p): p is string => p !== null),
+          ...[checkHeadings(seed.body, seed.header.seed_version)].filter((p): p is string => p !== null),
         ];
         return json({ ok: problems.length === 0, problems });
       },
@@ -1947,20 +2022,13 @@ export function createApp(config: Config): App {
     // ------------------------------------------------------- kinwriter page
     {
       method: "GET",
-      pattern: "/api/friend-page",
+      pattern: "/api/kinwriter-page",
       handler: () => json(kinwriterPage()),
     },
     {
       // Suggesting a change to who they are is gone: their self-notes are
       // theirs (src/selfnotes.ts), readable if they share them, never changed
       // by you. Suggestions made before stay theirs to answer, and yours to withdraw.
-      method: "POST",
-      pattern: "/api/identity/suggestions",
-      handler: () => {
-        throw new HttpError(400, "Who they are is their self-notes: theirs to write. You can ask to read them, not change them.");
-      },
-    },
-    {
       method: "POST",
       pattern: "/api/identity/suggestions/:id/withdraw",
       handler: (_request, { id }) => {
@@ -2045,7 +2113,7 @@ export function createApp(config: Config): App {
       pattern: "/api/orientation/next",
       handler: () => {
         if (orientationRunning(store)?.version !== "full") throw new HttpError(409, "There's no orientation together running.");
-        if (kinwriter.isBusy(orientationRunning(store)!.channelId)) throw new HttpError(409, `${store.getSettings().friendName} is still writing. Next, when they're done.`);
+        if (kinwriter.isBusy(orientationRunning(store)!.channelId)) throw new HttpError(409, `${store.getSettings().kinwriterName} is still writing. Next, when they're done.`);
         const step = advanceOrientation(store);
         if (step) background("orientation", enterStep());
         else console.log("[orientation] finished (the last step)");
@@ -2079,7 +2147,7 @@ export function createApp(config: Config): App {
         const session = orientationRunning(store);
         if (session?.version !== "full") throw new HttpError(409, "There's no orientation together running.");
         if (!waitingForYou(session)) throw new HttpError(409, "This step is already theirs.");
-        if (kinwriter.isBusy(session.channelId)) throw new HttpError(409, `${store.getSettings().friendName} is still writing.`);
+        if (kinwriter.isBusy(session.channelId)) throw new HttpError(409, `${store.getSettings().kinwriterName} is still writing.`);
         handOver(store);
         background("orientation", handedOver());
         return json({ orientation: orientationState(), page: kinwriterPage() });
@@ -2416,6 +2484,35 @@ export function createApp(config: Config): App {
       pattern: "/api/themes/:id/files/:name",
       handler: (_request, { id, name }) => json({ files: themes.removeFile(id!, name!) }),
     },
+
+    // ------------------------------------------------------- backgrounds
+    {
+      method: "GET",
+      pattern: "/api/backgrounds",
+      handler: () => json({ backgrounds: backgrounds.list() }),
+    },
+    {
+      method: "POST",
+      pattern: "/api/backgrounds",
+      handler: async (request) => {
+        // Base64 inside JSON, like theme files.
+        const body = (await readJson(request)) as { data?: unknown } | null;
+        if (typeof body?.data !== "string") throw new HttpError(400, '"data" (base64) is required.');
+        const added = backgrounds.add(Buffer.from(body.data, "base64"));
+        // A new picture is one you want to see.
+        const settings = store.updateSettings({ appBackground: added.file });
+        return json({ background: added, backgrounds: backgrounds.list(), settings: clientSettings(settings) });
+      },
+    },
+    {
+      method: "DELETE",
+      pattern: "/api/backgrounds/:file",
+      handler: (_request, { file }) => {
+        backgrounds.remove(file!);
+        if (store.getSettings().appBackground === file) store.updateSettings({ appBackground: "" });
+        return json({ backgrounds: backgrounds.list(), settings: clientSettings() });
+      },
+    },
   ];
 
   /**
@@ -2437,6 +2534,12 @@ export function createApp(config: Config): App {
       return themes.serve(themeFile[1]!, themeFile[2]!) ?? new Response("Not found", { status: 404 });
     }
 
+    // Background pictures: /backgrounds/<file>.
+    const backgroundFile = url.pathname.match(/^\/backgrounds\/([^/]+)$/);
+    if (backgroundFile && (request.method === "GET" || request.method === "HEAD")) {
+      return backgrounds.serve(backgroundFile[1]!) ?? new Response("Not found", { status: 404 });
+    }
+
     if (!url.pathname.startsWith("/api/")) {
       return serveStatic(config.publicDir, url.pathname);
     }
@@ -2446,16 +2549,20 @@ export function createApp(config: Config): App {
       // A DM you chose not to see has no screen: nothing about it is served.
       const channelId = url.pathname.match(/^\/api\/channels\/([^/]+)/)?.[1];
       if (channelId && hiddenDm(decodeURIComponent(channelId))) return errorResponse(403, "You chose not to see this DM.");
+      // Nor its messages, or the comments on them.
+      const messageChannel = channelOfMessageOrComment(url.pathname);
+      if (messageChannel && hiddenDm(messageChannel)) return errorResponse(403, "You chose not to see this DM.");
       for (const route of routes) {
         const params = matchRoute(route, request.method, url.pathname);
         if (params) return await route.handler(request, params);
       }
       return errorResponse(404, "No such API route.");
     } catch (error) {
-      if (error instanceof HttpError) return errorResponse(error.status, error.message);
+      if (error instanceof HttpError) return json({ ...error.details, error: error.message }, error.status);
       if (error instanceof NotFoundError) return errorResponse(404, error.message);
       if (error instanceof BusyError) return errorResponse(409, error.message);
       if (error instanceof ValidationError) return errorResponse(400, error.message);
+      if (error instanceof URIError) return errorResponse(400, "That address isn't written right.");
       if (error instanceof PermissionError) return errorResponse(403, error.message);
       // A turn you stopped isn't an error: the request that started it just
       // learns that nothing was written.

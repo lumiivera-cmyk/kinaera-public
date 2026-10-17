@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { gatherEvidence } from "../src/check.ts";
 import { pickProfile, promptForChannel } from "../src/kinwriter.ts";
 import { JOURNAL_RECENT } from "../src/journal.ts";
-import { addLibraryExample, LOOKBACK_DAYS, Rhythms } from "../src/orientation.ts";
+import { addLibraryExample, declineOrientation, LOOKBACK_DAYS, orientationState, requestOrientation, Rhythms } from "../src/orientation.ts";
 import { toolMap } from "../src/toolmap.ts";
 import { setSelfShared } from "../src/selfnotes.ts";
 import { asScript } from "../scripts/fetch-library-example.ts";
@@ -68,7 +68,7 @@ describe("identity", () => {
   test("a kinwriter from before identities had versions keeps theirs, however long", () => {
     // What an older version left: a long identity in settings, no versions.
     const long = "You are Arlo. ".repeat(2000); // 28,000 characters
-    app.store.updateSettings({ friendPrompt: long });
+    app.store.updateSettings({ kinwriterPrompt: long });
     app.store.db.exec("DELETE FROM identity_versions");
     app.store.close();
     app = createApp(testConfig(dir.path, fake.baseUrl));
@@ -79,7 +79,7 @@ describe("identity", () => {
   test("a new kinwriter starts with who they were made as, and their tastes", () => {
     const [first] = app.store.identity.history();
     expect(first).toMatchObject({ author: "user", status: "accepted" });
-    expect(first!.identity).toBe(app.store.getSettings().friendPrompt);
+    expect(first!.identity).toBe(app.store.getSettings().kinwriterPrompt);
     expect(first!.tastes).not.toBe("");
     expect(systemPrompt()).toContain("Your tastes");
   });
@@ -87,22 +87,23 @@ describe("identity", () => {
   test("they rewrite it themselves, and every version is kept", async () => {
     const outcome = await run("revise_identity", { identity: "I'm Arlo, and I write lighthouses.", note: "Found my thing." });
     expect(outcome).toMatchObject({ ok: true, summary: "revised their self-notes" });
-    expect(app.store.getSettings().friendPrompt).toBe("I'm Arlo, and I write lighthouses.");
-    expect(app.store.identity.history().map((v) => v.author)).toEqual(["user", "friend"]);
+    expect(app.store.getSettings().kinwriterPrompt).toBe("I'm Arlo, and I write lighthouses.");
+    expect(app.store.identity.history().map((v) => v.author)).toEqual(["user", "kinwriter"]);
     expect(systemPrompt()).toContain("I write lighthouses");
   });
 
   test("your change in settings never changes them: ignored while private, refused while shared", async () => {
-    const before = app.store.getSettings().friendPrompt;
-    const { data } = await call("PUT", "/api/settings", { friendPrompt: "You are someone else." });
-    expect(data.suggestion).toBeNull();
-    expect(app.store.getSettings().friendPrompt).toBe(before);
+    const before = app.store.getSettings().kinwriterPrompt;
+    const { data } = await call("PUT", "/api/settings", { kinwriterPrompt: "You are someone else." });
+    expect(data.suggestion).toBeUndefined();
+    expect(app.store.getSettings().kinwriterPrompt).toBe(before);
     expect(app.store.identity.pending()).toEqual([]);
     setSelfShared(app.store, true);
-    expect((await call("PUT", "/api/settings", { friendPrompt: "You are someone else." })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { kinwriterPrompt: "You are someone else." })).status).toBe(400);
     // Sending back what's there (the kinwriter menu does) is fine.
-    expect((await call("PUT", "/api/settings", { friendPrompt: before, historyLimit: 30 })).status).toBe(200);
-    expect((await call("POST", "/api/identity/suggestions", { tastes: "Loves opera." })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { kinwriterPrompt: before, historyLimit: 30 })).status).toBe(200);
+    // There's no suggesting a change to who they are.
+    expect((await call("POST", "/api/identity/suggestions", { tastes: "Loves opera." })).status).toBe(404);
   });
 
   test("a suggestion made before stays theirs to answer, and yours to withdraw", async () => {
@@ -139,7 +140,7 @@ describe("the self-page", () => {
   });
 
   test("edit markers are theirs to turn on", async () => {
-    const message = app.store.addTurn([{ channelId: ooc.id, author: "friend", content: "Its late." }])[0]!;
+    const message = app.store.addTurn([{ channelId: ooc.id, author: "kinwriter", content: "Its late." }])[0]!;
     app.store.editMessage(message.id, "It's late.", "user");
     expect(JSON.stringify(promptForChannel(app.store, ooc.id))).not.toContain("(edited by the user)");
     await run("write_self_page", { edit_markers: true });
@@ -160,7 +161,7 @@ describe("the journal", () => {
     expect(log).toContain("write_journal");
     expect(log).not.toContain("SECRET-THOUGHT");
     expect(JSON.stringify((await call("GET", `/api/channels/${ooc.id}/prompt`)).data)).not.toContain("SECRET-THOUGHT");
-    const page = (await call("GET", "/api/friend-page")).data;
+    const page = (await call("GET", "/api/kinwriter-page")).data;
     expect(JSON.stringify(page)).not.toContain("SECRET-THOUGHT");
     expect(page.journal).toEqual({ entries: 1, kept: 0 });
   });
@@ -199,7 +200,7 @@ describe("seeing their own prompt", () => {
     app.store.updateSettings({ historyLimit: 2, summaries: false });
     app.store.addTurn([{ channelId: story.id, author: "user", content: "The KEEPSAKE is a brass key." }]);
     expect((await run("keep_verbatim", { quote: "KEEPSAKE is a brass" }, story)).ok).toBe(true);
-    for (let i = 0; i < 5; i++) app.store.addTurn([{ channelId: story.id, author: i % 2 ? "friend" : "user", content: `line ${i}` }]);
+    for (let i = 0; i < 5; i++) app.store.addTurn([{ channelId: story.id, author: i % 2 ? "kinwriter" : "user", content: `line ${i}` }]);
     expect(systemPrompt(story.id)).toContain("KEEPSAKE");
     await run("release_verbatim", { quote: "KEEPSAKE" }, story);
     expect(systemPrompt(story.id)).not.toContain("KEEPSAKE");
@@ -236,13 +237,13 @@ describe("the practice channel", () => {
     const question = { question: "Is Odile Varga the clockmaker?", rephrased: "Does Odile Varga mend clocks?" };
     expect(gatherEvidence(app.store, practice(), question).some((p) => p.source === "notebook")).toBe(true);
     expect(gatherEvidence(app.store, story, question).some((p) => p.text.includes("Odile Varga"))).toBe(false);
-    expect(app.store.notebook.listEntries("friend").map((e) => e.name)).toEqual(["Ilse Marrow"]);
+    expect(app.store.notebook.listEntries("kinwriter").map((e) => e.name)).toEqual(["Ilse Marrow"]);
     expect(systemPrompt(practice().id)).toContain("Odile Varga");
     expect(systemPrompt(story.id)).not.toContain("Odile Varga");
   });
 
   test("nothing in it reaches other channels", () => {
-    app.store.addTurn([{ channelId: practice().id, author: "friend", content: "PRACTICE-ONLY words" }]);
+    app.store.addTurn([{ channelId: practice().id, author: "kinwriter", content: "PRACTICE-ONLY words" }]);
     expect(JSON.stringify(promptForChannel(app.store, ooc.id))).not.toContain("PRACTICE-ONLY");
     expect(JSON.stringify(promptForChannel(app.store, story.id))).not.toContain("PRACTICE-ONLY");
   });
@@ -338,10 +339,10 @@ describe("orientation", () => {
     // First, their practice world: written from who they are, with rolled ingredients.
     const world = JSON.stringify(fake.requests[0]!.messages);
     expect(world).toContain("practice world");
-    expect(world).toContain(app.store.getSettings().friendName);
+    expect(world).toContain(app.store.getSettings().kinwriterName);
     expect(world).toContain("Genre:");
-    expect(app.store.notebook.listEntries("friend", true).map((e) => e.name)).toEqual(expect.arrayContaining(["The Glass Orchard", "Bram Osei", "The Frost Vigil"]));
-    expect(app.store.notebook.listEntries("friend", true).map((e) => e.name)).not.toContain("Odile Varga");
+    expect(app.store.notebook.listEntries("kinwriter", true).map((e) => e.name)).toEqual(expect.arrayContaining(["The Glass Orchard", "Bram Osei", "The Frost Vigil"]));
+    expect(app.store.notebook.listEntries("kinwriter", true).map((e) => e.name)).not.toContain("Odile Varga");
     const sent = fake.requests.slice(1).map((r) => JSON.stringify(r.messages));
     expect(sent[0]).toContain("This is your orientation, on your own");
     expect(sent[0]).toContain("for a short practice scene");
@@ -350,7 +351,7 @@ describe("orientation", () => {
     expect(sent[1]).toContain("Your partner here is a canned one, Wren Halloway");
     expect(sent[2]).toContain("The canned partner's next post is in #night-shift");
     const scene = waiting.session.scene;
-    expect(app.store.getMessages(scene).map((m) => m.author)).toEqual(["user", "friend", "user", "friend"]);
+    expect(app.store.getMessages(scene).map((m) => m.author)).toEqual(["user", "kinwriter", "user", "kinwriter"]);
     expect(sent[3]).toContain("The lesson is editing");
     expect(sent[4]).toContain("next part of the editing lesson");
     // Linking, alone: on the practice scene, never your channels.
@@ -368,7 +369,7 @@ describe("orientation", () => {
     expect((await status()).status).toBe("done");
     expect(app.store.notebook.castFor("user", scene).map((e) => e.name)).toContain("Wren Halloway");
     expect(app.store.notebook.listEntries("user").find((e) => e.name === "Wren Halloway")!.owner).toBe("user");
-    expect(app.store.getMessages(ooc.id).at(-1)).toMatchObject({ author: "friend", content: expect.stringContaining("- Hero, trouble or narrator?") });
+    expect(app.store.getMessages(ooc.id).at(-1)).toMatchObject({ author: "kinwriter", content: expect.stringContaining("- Hero, trouble or narrator?") });
   });
 
   test("on their own, by default the practice scene goes, with its partner", async () => {
@@ -434,7 +435,7 @@ describe("orientation", () => {
     expect(made).toMatchObject({ yours: [{ name: "Kestrel" }], theirs: [{ name: "Mara" }], yourSecrets: 1, theirSecrets: 1 });
     expect(JSON.stringify(made)).not.toContain("MARA-SECRET");
     // Your secret is kept from them, the notebook's own way.
-    expect(JSON.stringify(app.store.notebook.listEntries("friend"))).not.toContain("KESTREL-SECRET");
+    expect(JSON.stringify(app.store.notebook.listEntries("kinwriter"))).not.toContain("KESTREL-SECRET");
 
     // The starter scene: its own story channel, both characters in its cast, they open it.
     expect((await next([{ content: "*Rain on the ferry deck.*" }])).id).toBe("scene");
@@ -505,10 +506,10 @@ describe("orientation", () => {
     expect((await call("POST", "/api/orientation/keep", { note: "YOUR-KEPT-NOTE" })).status).toBe(200);
     expect(app.store.getMessages(practice().id).at(-1)!.content).toBe("(I'm keeping something to myself.)");
     expect(app.store.notebook.listEntries("user").map((e) => e.name)).toContain("Kept to myself");
-    expect(JSON.stringify(app.store.notebook.listEntries("friend"))).not.toContain("YOUR-KEPT-NOTE");
+    expect(JSON.stringify(app.store.notebook.listEntries("kinwriter"))).not.toContain("YOUR-KEPT-NOTE");
     expect((await status()).interview).toMatchObject({ yours: 2, theirs: 1 });
     // After a handful each way, the card nudges toward wrapping up.
-    for (let i = 0; i < 4; i++) app.store.addTurn([{ channelId: practice().id, author: "user", content: `q${i}?` }, { channelId: practice().id, author: "friend", content: `a${i}.` }]);
+    for (let i = 0; i < 4; i++) app.store.addTurn([{ channelId: practice().id, author: "user", content: `q${i}?` }, { channelId: practice().id, author: "kinwriter", content: `a${i}.` }]);
     expect((await status()).interview.wrapUp).toContain("Next ends the interview");
     // The write-up: their quiet turn, before your choices.
     const writeup = await next([
@@ -547,7 +548,7 @@ describe("orientation", () => {
     expect(prompt).toContain("USER-NOTE: loves a slow burn.");
     expect(prompt).toContain("You said you'd like to be quiet about reaching out");
     expect(prompt).toContain("(from an orientation)");
-    const page = (await call("GET", "/api/friend-page")).data;
+    const page = (await call("GET", "/api/kinwriter-page")).data;
     expect(page).toMatchObject({ proactivity: { preference: { level: "quiet" }, chattiness: "quiet" }, noteOnYou: true });
     expect(JSON.stringify(page)).not.toContain("USER-NOTE");
     expect(page.toolMap).toContainEqual({ tool: "edit_my_message", when: "I'd reach for this when a post of mine reads wrong." });
@@ -610,9 +611,33 @@ describe("orientation", () => {
     expect(app.store.interventions.recent()[0]!.summary).toContain("not now to your request for an orientation");
   });
 
+  test("asking again while a request waits: not now still goes back to how it was before", () => {
+    app.store.appState.set("orientation.status", "done");
+    requestOrientation(app.store, "first");
+    requestOrientation(app.store, "again");
+    expect(orientationState(app.store).request?.note).toBe("again");
+    declineOrientation(app.store);
+    expect(orientationState(app.store).status).toBe("done");
+  });
+
+  test("a scheduled wake-up held by a rule doesn't hold back the look back", async () => {
+    app.store.appState.set("orientation.pending", null);
+    expect(await rhythms.tick()).toBeNull(); // starts counting
+    app.store.journal.write("WEEK-TWO thought");
+    now = new Date(now.getTime() + LOOKBACK_DAYS * 86_400_000 + 60_000);
+    // A wake-up they set, due now, that a rule holds (there's no OOC channel).
+    app.store.schedule.add("in 1 hour", "check in");
+    app.store.db.query("UPDATE schedule SET at = $at").run({ at: new Date(now.getTime() - 60_000).toISOString() });
+    for (const channel of app.store.listChannels().filter((c) => c.kind === "ooc")) app.store.deleteChannel(channel.id);
+    const result = await rhythms.tick();
+    expect(result).toMatchObject({ reason: "lookback" });
+    expect(JSON.stringify(fake.requests.at(-1)!.messages)).toContain("WEEK-TWO");
+    expect(app.store.schedule.waiting()).toHaveLength(1);
+  });
+
   test("skip means skip: nothing runs, and their page says so", async () => {
     await call("POST", "/api/orientation/skip", {});
-    expect((await call("GET", "/api/friend-page")).data.orientation.status).toBe("skipped");
+    expect((await call("GET", "/api/kinwriter-page")).data.orientation.status).toBe("skipped");
     expect(fake.requests).toHaveLength(0);
   });
 

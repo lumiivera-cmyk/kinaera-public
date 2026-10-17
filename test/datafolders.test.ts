@@ -5,9 +5,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createHub, type Hub } from "../src/hub.ts";
+import { serverState } from "../src/datafolders.ts";
 import { SETUP_PENDING } from "../src/store.ts";
 import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
 
@@ -56,9 +57,9 @@ const home = () => hub.apps.get("home")!;
 /** Give the home kinwriter a name, a message and an emoji, so there's something to find later. */
 function liveIn() {
   const store = home().store;
-  store.updateSettings({ friendName: "Wren" });
+  store.updateSettings({ kinwriterName: "Wren" });
   const story = store.listChannels().find((c) => c.kind === "rp")!;
-  store.addTurn([{ channelId: story.id, author: "friend", content: "*The OLD-FOLDER lighthouse blinks.*" }]);
+  store.addTurn([{ channelId: story.id, author: "kinwriter", content: "*The OLD-FOLDER lighthouse blinks.*" }]);
   store.reactions.addEmoji("blob_wave", PNG);
   return story;
 }
@@ -88,6 +89,65 @@ describe("data folders", () => {
     expect(folders.old[0].kinwriters[0].messages).toBeGreaterThan(0);
   });
 
+  test("start fresh: the shared settings carry over, not what was just the first kinwriter's own", async () => {
+    await call("PUT", "/api/settings", { heartbeatHours: 6, historyLimit: 40 });
+    await call("PUT", "/api/hub/kinwriters/home/own", { group: "reaching", own: true });
+    await call("PUT", "/api/settings", { heartbeatHours: 2 });
+    expect(home().store.getSettings().heartbeatHours).toBe(2);
+    await call("POST", "/api/hub/dev/fresh", {});
+    expect(home().store.getSettings()).toMatchObject({ heartbeatHours: 6, historyLimit: 40 });
+    // A kinwriter made next gets the shared value too.
+    const made = (await call("POST", "/api/hub/servers", { name: "Sol", prompt: "You are Sol." })).data.kinwriterId;
+    expect(hub.apps.get(made)!.store.getSettings().heartbeatHours).toBe(6);
+  });
+
+  test("start fresh with the first kinwriter deleted: profiles come from the next one", async () => {
+    const sol = (await call("POST", "/api/hub/servers", { name: "Sol" })).data.kinwriterId;
+    await call("POST", `/p/${sol}/api/profiles`, { name: "Kept-Profile", model: "zeta/model" });
+    expect((await call("DELETE", "/api/hub/kinwriters/home", {})).status).toBe(200);
+    const { status, data } = await call("POST", "/api/hub/dev/fresh", {});
+    expect(status).toBe(200);
+    expect(home().store.profiles.list().map((p) => p.name)).toContain("Kept-Profile");
+    // Nothing was made in the folder set aside.
+    expect(existsSync(join(dir.path, data.aside, "kinaera.db"))).toBe(false);
+  });
+
+  test("start fresh with the first kinwriter archived: the profiles they missed carry over", async () => {
+    const sol = (await call("POST", "/api/hub/servers", { name: "Sol" })).data.kinwriterId;
+    await call("PUT", "/api/hub/servers/order", { ids: [...hub.servers().map((s) => s.id)].reverse() });
+    expect((await call("POST", "/api/hub/kinwriters/home/archive", {})).status).toBe(200);
+    await call("POST", `/p/${sol}/api/profiles`, { name: "Newer-Profile", model: "zeta/model" });
+    expect((await call("POST", "/api/hub/dev/fresh", {})).status).toBe(200);
+    expect(home().store.profiles.list().map((p) => p.name)).toContain("Newer-Profile");
+  });
+
+  test("start fresh that fails: everyone is back, and the app still answers", async () => {
+    liveIn();
+    // No kinwriter's database to start from.
+    for (const name of ["kinaera.db", "kinaera.db-wal", "kinaera.db-shm"]) rmSync(join(dataDir, name), { force: true });
+    expect((await call("POST", "/api/hub/dev/fresh", {})).status).toBe(400);
+    expect(hub.apps.has("home")).toBe(true);
+    expect((await call("GET", "/api/hub")).status).toBe(200);
+    expect((await call("GET", "/api/state")).status).toBe(200);
+  });
+
+  test("browsing a current kinwriter shows them as they are now", async () => {
+    const story = liveIn();
+    const path = `/api/hub/dev/folders/current/kinwriters/home/channels/${story.id}`;
+    expect((await call("GET", path)).data.messages).toHaveLength(1);
+    home().store.addTurn([{ channelId: story.id, author: "kinwriter", content: "A NEWER line." }]);
+    expect((await call("GET", path)).data.messages.map((m: any) => m.content)).toContain("A NEWER line.");
+  });
+
+  test("bun run fresh: only a refused connection counts as stopped", async () => {
+    const listening = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+    const port = listening.port!;
+    expect(await serverState("127.0.0.1", port)).toBe("running");
+    expect(await serverState("0.0.0.0", port)).toBe("running");
+    listening.stop(true);
+    expect(await serverState("127.0.0.1", port)).toBe("stopped");
+  });
+
   test("browse an old kinwriter read-only, then bring them back as a new kinwriter", async () => {
     const story = liveIn();
     const { data: fresh } = await call("POST", "/api/hub/dev/fresh", {});
@@ -104,11 +164,11 @@ describe("data folders", () => {
     const imported = await call("POST", `/api/hub/dev/folders/${folder}/kinwriters/home/import`, {});
     expect(imported.status).toBe(200);
     const app = hub.apps.get(imported.data.kinwriterId)!;
-    expect(app.store.getSettings().friendName).toBe("Wren");
+    expect(app.store.getSettings().kinwriterName).toBe("Wren");
     expect(app.store.getMessages(story.id).map((m) => m.content)).toContain("*The OLD-FOLDER lighthouse blinks.*");
     expect(app.store.reactions.listEmojis().map((e) => e.name)).toEqual(["blob_wave"]);
     // On a server of their own.
-    expect(imported.data.servers.map((s: any) => s.friends.map((f: any) => f.name))).toContainEqual(["Wren"]);
+    expect(imported.data.servers.map((s: any) => s.kinwriters.map((f: any) => f.name))).toContainEqual(["Wren"]);
   });
 
   test("export a kinwriter as one file, and import it", async () => {
@@ -121,8 +181,8 @@ describe("data folders", () => {
     const imported = await call("POST", "/api/hub/dev/import", exported.data);
     expect(imported.status).toBe(200);
     const app = hub.apps.get(imported.data.kinwriterId)!;
-    expect(app.store.getSettings().friendName).toBe("Wren");
-    expect(existsSync(join(dataDir, "friends", imported.data.kinwriterId, "emojis"))).toBe(true);
+    expect(app.store.getSettings().kinwriterName).toBe("Wren");
+    expect(existsSync(join(dataDir, "kinwriters", imported.data.kinwriterId, "emojis"))).toBe(true);
     // Something that isn't one is refused, and nothing is made.
     const kinwriters = hub.apps.size;
     expect((await call("POST", "/api/hub/dev/import", { format: "something-else" })).status).toBe(400);

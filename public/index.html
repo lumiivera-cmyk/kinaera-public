@@ -125,6 +125,8 @@
       whole app. Hidden unless a theme shows them. See docs/theme-reference.md.
     -->
     <div class="theme-layers" aria-hidden="true"><i class="layer-1"></i><i class="layer-2"></i><i class="layer-3"></i><i class="layer-4"></i></div>
+    <!-- Your own background picture, when you've chosen one (Appearance): it replaces the layers above. -->
+    <div id="user-background" class="user-background" aria-hidden="true" hidden></div>
 
     <div class="app" id="app">
       <!-- ============================================================ sidebar -->
@@ -147,11 +149,11 @@
         <ul class="channel-list" id="channel-list"></ul>
 
         <footer class="sidebar-footer">
-          <div class="friend-card" id="friend-card" role="button" tabindex="0" title="Your kinwriter: who they are, how they write">
-            <div class="avatar friend-avatar" id="friend-avatar" aria-hidden="true"></div>
-            <div class="friend-card-text">
-              <div class="friend-card-name" id="friend-name"></div>
-              <div class="friend-card-role" id="friend-role">your kinwriter</div>
+          <div class="kinwriter-card" id="kinwriter-card" role="button" tabindex="0" title="Your kinwriter: who they are, how they write">
+            <div class="avatar kinwriter-avatar" id="kinwriter-avatar" aria-hidden="true"></div>
+            <div class="kinwriter-card-text">
+              <div class="kinwriter-card-name" id="kinwriter-name"></div>
+              <div class="kinwriter-card-role" id="kinwriter-role">your kinwriter</div>
             </div>
           </div>
           <button id="notebook-button" class="icon-button" type="button" aria-label="Notebook" title="Notebook">
@@ -172,7 +174,7 @@
       <!-- ======================================================= channel view -->
       <!--
         data-channel-id and data-channel-kind are set by the app (js/channels.js). They are what
-        per-channel themes (stage 3.5) will hook onto.
+        per-channel themes hook onto.
       -->
       <section class="channel-view" id="channel-view">
         <!-- The same, for a channel theme: only shown when the channel has its own theme. -->
@@ -312,15 +314,22 @@
     <!-- ============================================================ dialogs -->
     <!-- A <dialog> gives us a modal with Escape-to-close for free. -->
 
-    <!-- Server-wide settings. -->
+    <!-- Settings: shared by every kinwriter, with some sections settable just for one (js/settings.js). -->
     <dialog id="settings-dialog" class="dialog surface">
       <form id="settings-form" method="dialog">
         <h2 class="dialog-title">Settings</h2>
 
         <p class="hint">
-          Settings for this kinwriter's space. Who they are, and how they write, is in their own menu:
-          <button type="button" class="link-button inline-link" id="open-friend-from-settings">Kinwriter…</button>
+          Shared by every kinwriter, on every server. A section ticked "Just for" is set for this kinwriter alone. Who
+          they are, and how they write, is in their own menu:
+          <button type="button" class="link-button inline-link" id="open-kinwriter-from-settings">Kinwriter…</button>
         </p>
+        <p class="hint" id="own-status" role="status"></p>
+
+        <label class="check-option own-toggle">
+          <input type="checkbox" data-own="models" />
+          <span>Models just for <span class="own-name"></span></span>
+        </label>
 
         <p class="hint">Characters, yours and your kinwriter's, live in the notebook (the book button).</p>
 
@@ -345,6 +354,10 @@
         </p>
 
         <h3 class="section-title">Memory</h3>
+        <label class="check-option own-toggle">
+          <input type="checkbox" data-own="memory" />
+          <span>Just for <span class="own-name"></span></span>
+        </label>
         <label for="setting-history">Recent messages</label>
         <input id="setting-history" name="historyLimit" type="number" min="1" max="1000" step="1" />
         <p class="hint">How many of a channel's newest messages your kinwriter always reads in full.</p>
@@ -374,6 +387,10 @@
         </p>
 
         <h3 class="section-title">Your kinwriter reaching out</h3>
+        <label class="check-option own-toggle">
+          <input type="checkbox" data-own="reaching" />
+          <span>Just for <span class="own-name"></span> (wake-ups and the heartbeat)</span>
+        </label>
         <label for="setting-wakeups">Chattiness</label>
         <select id="setting-wakeups" name="wakeups">
           <option value="off">Off: only when you write</option>
@@ -382,8 +399,8 @@
           <option value="chatty">Chatty: also whenever you open the app</option>
         </select>
         <p class="hint">
-          Your kinwriter may take a turn on their own, in your OOC channel. Quiet hours, the cooldown and "never twice
-          without you writing" always apply; after that, whether to write is up to them.
+          Your kinwriter may take a turn on their own, in your OOC channel. Quiet hours, the cooldown and "never a third
+          time without you writing" always apply; after that, whether to write is up to them.
         </p>
         <div class="grid assignment-grid wakeups-only">
           <div>
@@ -492,6 +509,13 @@
             <option value="24">About once a day</option>
           </select>
           <p class="hint" id="heartbeat-status"></p>
+          <label for="setting-heartbeat-assignment">Heartbeat check</label>
+          <p class="hint">
+            A cheaper model can read each beat first and answer only whether your kinwriter would use the moment. Most
+            beats stop there, and the model that writes OOC is asked only on a yes. "No check" sends every beat
+            straight to it.
+          </p>
+          <select id="setting-heartbeat-assignment" name="heartbeatAssignment"></select>
         </div>
         <details class="wake-log wakeups-only" id="wake-log">
           <summary>Recent wake-ups</summary>
@@ -529,7 +553,7 @@
           <summary>Advanced</summary>
           <label for="setting-hard-limits">Hard limits (optional)</label>
           <textarea id="setting-hard-limits" name="hardLimits" rows="3" maxlength="4000" placeholder="Anything that should never be written, in any story."></textarea>
-          <p class="hint">If you want them: they're in your kinwriter's prompt in every channel, and copied to new kinwriters. Most people never need this.</p>
+          <p class="hint">If you want them: they're in every kinwriter's prompt, in every channel. Most people never need this.</p>
 
           <label class="check-option">
             <input type="checkbox" id="setting-together" />
@@ -630,7 +654,7 @@
         </div>
 
         <!--
-          Memory: the channel's summaries (stage 7). Changes here are saved
+          Memory: the channel's summaries. Changes here are saved
           straight away (they don't wait for Save).
         -->
         <details class="memory" id="channel-memory">
@@ -771,14 +795,14 @@
       invitation to an orientation.
     -->
     <dialog id="self-dialog" class="dialog surface self-page">
-      <div class="friend-dialog-head">
-        <div class="avatar friend-avatar" id="self-avatar" aria-hidden="true"></div>
+      <div class="kinwriter-dialog-head">
+        <div class="avatar kinwriter-avatar" id="self-avatar" aria-hidden="true"></div>
         <h2 class="dialog-title" id="self-title">Kinwriter</h2>
       </div>
       <div class="memory-buttons">
         <button type="button" class="button" id="self-settings">Settings…</button>
         <button type="button" class="button" id="open-interventions">What you've changed</button>
-        <button type="button" class="button" id="friend-check-log">Check log</button>
+        <button type="button" class="button" id="kinwriter-check-log">Check log</button>
       </div>
 
       <section class="self-section">
@@ -951,49 +975,49 @@
     </dialog>
 
     <!-- The open kinwriter: who they are, how they look, how they write. -->
-    <dialog id="friend-dialog" class="dialog surface">
-      <form id="friend-form" method="dialog">
-        <div class="friend-dialog-head">
-          <div class="avatar friend-avatar" id="friend-dialog-avatar" aria-hidden="true"></div>
-          <h2 class="dialog-title" id="friend-dialog-title">Kinwriter</h2>
+    <dialog id="kinwriter-dialog" class="dialog surface">
+      <form id="kinwriter-form" method="dialog">
+        <div class="kinwriter-dialog-head">
+          <div class="avatar kinwriter-avatar" id="kinwriter-dialog-avatar" aria-hidden="true"></div>
+          <h2 class="dialog-title" id="kinwriter-dialog-title">Kinwriter</h2>
         </div>
         <p class="hint">
-          Everything they remember is theirs alone: their notebook, channels and settings. Other kinwriters never
-          see it.
+          Everything they remember is theirs alone: their notebook, channels and memory. Other kinwriters never
+          see it. (Settings are shared by everyone, except any section ticked "Just for" them.)
         </p>
 
         <div class="grid assignment-grid">
           <div>
-            <label for="friend-name-input">Name</label>
-            <input id="friend-name-input" name="friendName" autocomplete="off" />
+            <label for="kinwriter-name-input">Name</label>
+            <input id="kinwriter-name-input" name="kinwriterName" autocomplete="off" />
           </div>
           <div>
-            <label for="friend-pronouns-input">Pronouns</label>
-            <input id="friend-pronouns-input" name="friendPronouns" autocomplete="off" maxlength="40" placeholder="Like she/her (optional)" />
+            <label for="kinwriter-pronouns-input">Pronouns</label>
+            <input id="kinwriter-pronouns-input" name="kinwriterPronouns" autocomplete="off" maxlength="40" placeholder="Like she/her (optional)" />
           </div>
         </div>
 
         <div class="grid assignment-grid">
           <div>
-            <label for="friend-avatar-input">Avatar</label>
-            <input id="friend-avatar-input" name="friendAvatar" autocomplete="off" maxlength="8" placeholder="An emoji, or empty for their initial" />
+            <label for="kinwriter-avatar-input">Avatar</label>
+            <input id="kinwriter-avatar-input" name="kinwriterAvatar" autocomplete="off" maxlength="8" placeholder="An emoji, or empty for their initial" />
           </div>
           <div>
-            <label for="friend-color-input">Colour</label>
+            <label for="kinwriter-color-input">Colour</label>
             <div class="inline-row">
-              <input id="friend-color-input" name="friendColor" type="range" min="0" max="359" step="1" />
+              <input id="kinwriter-color-input" name="kinwriterColor" type="range" min="0" max="359" step="1" />
               <label class="check-inline"><input type="checkbox" name="themeColor" /> Theme's</label>
             </div>
           </div>
         </div>
 
-        <div id="friend-self-notes">
-          <label for="setting-friend">Their self-notes</label>
-          <p class="hint" id="friend-self-notes-hint">
+        <div id="kinwriter-self-notes">
+          <label for="setting-kinwriter">Their self-notes</label>
+          <p class="hint" id="kinwriter-self-notes-hint">
             Who they are, in their own words. They share these with you to read: they're theirs to write, and they can
             stop sharing at any time.
           </p>
-          <textarea id="setting-friend" name="friendPrompt" rows="5" readonly></textarea>
+          <textarea id="setting-kinwriter" name="kinwriterPrompt" rows="5" readonly></textarea>
         </div>
 
         <label class="check-option">
@@ -1056,9 +1080,9 @@
 
         <p class="form-error" role="alert" hidden></p>
         <div class="dialog-buttons">
-          <button type="button" class="button" id="friend-archive" title="Set them aside, whole, with a last note from them. You can restore them.">Archive…</button>
-          <button type="button" class="button button-danger" id="friend-delete">Delete…</button>
-          <button type="button" class="button" id="friend-move" hidden>Own server</button>
+          <button type="button" class="button" id="kinwriter-archive" title="Set them aside, whole, with a last note from them. You can restore them.">Archive…</button>
+          <button type="button" class="button button-danger" id="kinwriter-delete">Delete…</button>
+          <button type="button" class="button" id="kinwriter-move" hidden>Own server</button>
           <span class="spacer"></span>
           <button type="button" class="button" data-close>Cancel</button>
           <button type="submit" class="button button-primary">Save</button>
@@ -1069,8 +1093,8 @@
     <!-- After a fresh start (bun run fresh): make your new kinwriter (js/setup.js). -->
     <dialog id="setup-dialog" class="dialog surface">
       <form id="setup-form" method="dialog">
-        <div class="friend-dialog-head">
-          <div class="avatar friend-avatar" id="setup-avatar-preview" aria-hidden="true">?</div>
+        <div class="kinwriter-dialog-head">
+          <div class="avatar kinwriter-avatar" id="setup-avatar-preview" aria-hidden="true">?</div>
           <h2 class="dialog-title">Meet your new kinwriter</h2>
         </div>
         <p class="hint">
@@ -1113,10 +1137,10 @@
     </dialog>
 
     <!-- A new kinwriter: in a new server of their own, or in this one. -->
-    <dialog id="new-friend-dialog" class="dialog surface">
-      <form id="new-friend-form" method="dialog">
-        <h2 class="dialog-title" id="new-friend-title">New server</h2>
-        <p class="hint" id="new-friend-note">
+    <dialog id="new-kinwriter-dialog" class="dialog surface">
+      <form id="new-kinwriter-form" method="dialog">
+        <h2 class="dialog-title" id="new-kinwriter-title">New server</h2>
+        <p class="hint" id="new-kinwriter-note">
           A new kinwriter, with a server of their own. They start fresh: their own notebook, channels and memory, with
           your connection profiles and preferences.
         </p>
@@ -1126,20 +1150,20 @@
         </div>
         <div class="grid assignment-grid">
           <div>
-            <label for="new-friend-name">Kinwriter's name</label>
-            <input id="new-friend-name" name="name" autocomplete="off" maxlength="100" />
+            <label for="new-kinwriter-name">Kinwriter's name</label>
+            <input id="new-kinwriter-name" name="name" autocomplete="off" maxlength="100" />
           </div>
           <div>
-            <label for="new-friend-avatar">Avatar</label>
-            <input id="new-friend-avatar" name="avatar" autocomplete="off" maxlength="8" placeholder="An emoji (optional)" />
+            <label for="new-kinwriter-avatar">Avatar</label>
+            <input id="new-kinwriter-avatar" name="avatar" autocomplete="off" maxlength="8" placeholder="An emoji (optional)" />
           </div>
         </div>
-        <label for="new-friend-prompt">Who they are</label>
-        <textarea id="new-friend-prompt" name="prompt" rows="5" placeholder="Their personality and taste as a writer. Leave empty for the default."></textarea>
+        <label for="new-kinwriter-prompt">Who they are</label>
+        <textarea id="new-kinwriter-prompt" name="prompt" rows="5" placeholder="Their personality and taste as a writer. Leave empty for the default."></textarea>
         <div class="memory-buttons">
-          <button type="button" class="button button-primary" id="new-friend-seed">✨ Choose or make someone…</button>
+          <button type="button" class="button button-primary" id="new-kinwriter-seed">✨ Choose or make someone…</button>
         </div>
-        <p class="hint" id="new-friend-seed-result" role="status">
+        <p class="hint" id="new-kinwriter-seed-result" role="status">
           A ready-made kinwriter, a new one from tags you pick, or one generated from your idea. Or write them
           yourself above.
         </p>
@@ -1147,7 +1171,7 @@
         <div class="dialog-buttons">
           <span class="spacer"></span>
           <button type="button" class="button" data-close>Cancel</button>
-          <button type="submit" class="button button-primary" id="new-friend-create">Create</button>
+          <button type="submit" class="button button-primary" id="new-kinwriter-create">Create</button>
         </div>
       </form>
     </dialog>
@@ -1162,6 +1186,8 @@
         <h2 class="dialog-title">Who will they be?</h2>
         <p class="hint">Pick someone ready-made, or make someone new. You'll see them before they're made.</p>
         <div class="seed-cards" id="seed-cards"></div>
+        <p class="hint" id="seed-entry-loading" role="status" hidden>Loading the ready-made kinwriters and tags…</p>
+        <p class="form-error" id="seed-entry-error" role="alert" hidden></p>
         <div class="memory-buttons" data-developer hidden>
           <button type="button" class="button" id="seed-test">Load test seed (dev)</button>
           <button type="button" class="button" id="seed-check-files">Check files (dev)</button>
@@ -1170,7 +1196,17 @@
 
       <div class="seed-screen" data-screen="tags" hidden>
         <h2 class="dialog-title">Make a new one</h2>
-        <p class="hint">Pick what you like, or leave it to chance. Every choice starts on "Surprise me".</p>
+        <p class="hint">Choose how they're named, then pick what you like or leave it to chance. Everything else starts on "Surprise me".</p>
+        <div class="seed-tag seed-naming">
+          <label for="seed-naming">Name</label>
+          <select id="seed-naming" required>
+            <option value="" disabled selected>Choose one</option>
+            <option value="name">Random name</option>
+            <option value="username">Random username</option>
+            <option value="given">I'll name them</option>
+          </select>
+          <input id="seed-given-name" autocomplete="off" maxlength="40" placeholder="Their name" aria-label="Their name" hidden />
+        </div>
         <form id="seed-tags-form" class="seed-tags"></form>
         <details class="seed-advanced" id="seed-advanced">
           <summary>Advanced</summary>
@@ -1187,6 +1223,7 @@
           <button type="button" class="button" id="seed-roll5" data-developer hidden>Roll 5 (dev)</button>
           <button type="button" class="button button-primary" id="seed-generate">Make them</button>
         </div>
+        <p class="form-error" role="alert" hidden></p>
       </div>
 
       <div class="seed-screen" data-screen="details" hidden>
@@ -1195,7 +1232,7 @@
         <div id="seed-details"></div>
         <div class="dialog-buttons">
           <span class="spacer"></span>
-          <button type="button" class="button" data-seed-back="tags">Back to tags</button>
+          <button type="button" class="button" id="seed-details-back" data-seed-back="tags">Back to tags</button>
         </div>
       </div>
 
@@ -1203,6 +1240,12 @@
         <h2 class="dialog-title">Generate from idea</h2>
         <p class="hint">Write as much or as little as you like: a vibe, a voice, a few traits, a whole person. The rest is filled in for you.</p>
         <textarea id="seed-idea-text" rows="7" maxlength="4000" placeholder="A retired stage actor who still can't resist a dramatic entrance, writes gothic romance, and gives notes like a director."></textarea>
+        <details class="seed-advanced" id="seed-idea-tagbox">
+          <summary id="seed-idea-tagbox-summary">Attach tags (optional)</summary>
+          <p class="hint">Pick any you want them to have. Anything left on "From the idea" comes from your words.</p>
+          <form id="seed-idea-tags" class="seed-tags"></form>
+          <div id="seed-idea-pockets"></div>
+        </details>
         <div class="dialog-buttons">
           <button type="button" class="button" data-seed-back="entry">Back</button>
           <span class="spacer"></span>
@@ -1221,6 +1264,7 @@
         <div class="dialog-buttons">
           <button type="button" class="button" id="seed-error-back">Back</button>
           <span class="spacer"></span>
+          <button type="button" class="button" id="seed-error-compare" hidden>What they wrote</button>
           <button type="button" class="button" id="seed-error-raw" data-developer hidden>Raw output (dev)</button>
           <button type="button" class="button button-primary" id="seed-retry">Try again</button>
         </div>
@@ -1295,15 +1339,15 @@
         <label for="server-name-input">Name</label>
         <input id="server-name-input" autocomplete="off" maxlength="100" placeholder="Empty: its first kinwriter's name" />
         <label>Kinwriters here</label>
-        <ul id="server-friend-list" class="server-friend-list"></ul>
+        <ul id="server-kinwriter-list" class="server-kinwriter-list"></ul>
         <div class="memory-buttons">
-          <button type="button" class="button" id="server-add-friend">Add a kinwriter here…</button>
+          <button type="button" class="button" id="server-add-kinwriter">Add a kinwriter here…</button>
         </div>
 
         <div id="archived-section" hidden>
           <label>Archived kinwriters</label>
           <p class="hint">Set aside with everything they remember, and the note they left. Restore one into this server.</p>
-          <ul id="archived-list" class="server-friend-list archived-list"></ul>
+          <ul id="archived-list" class="server-kinwriter-list archived-list"></ul>
         </div>
 
         <div id="server-groups">
@@ -1312,12 +1356,12 @@
           A group channel is you and several kinwriters: when you write, each may take a turn. A DM is two kinwriters, on
           their own time; you choose whether you can read it (both are told).
         </p>
-        <ul id="server-group-list" class="server-friend-list"></ul>
+        <ul id="server-group-list" class="server-kinwriter-list"></ul>
         <details id="new-group" class="self-suggest">
           <summary>New group channel</summary>
           <label for="group-name">Name</label>
           <input id="group-name" autocomplete="off" maxlength="100" placeholder="lounge" />
-          <div id="group-friends" class="group-friends"></div>
+          <div id="group-kinwriters" class="group-kinwriters"></div>
           <div class="dialog-buttons">
             <span class="spacer"></span>
             <button type="button" class="button button-primary" id="create-group">Make it</button>
@@ -1594,7 +1638,7 @@
       </form>
     </dialog>
 
-    <!-- Connection profiles and roulettes (stage 5). Filled in by the app (js/). -->
+    <!-- Connection profiles and roulettes. Filled in by the app (js/). -->
     <dialog id="models-dialog" class="dialog surface">
       <h2 class="dialog-title">Profiles and roulettes</h2>
       <p class="hint">
@@ -1651,24 +1695,31 @@
           </div>
         </div>
 
-        <label for="profile-reasoning">Reasoning</label>
-        <select id="profile-reasoning" name="reasoningEffort">
-          <option value="">The model's default</option>
-          <option value="low">Low effort</option>
-          <option value="medium">Medium effort</option>
-          <option value="high">High effort</option>
-        </select>
-        <p class="hint">Only for reasoning models. Their thinking is never shown or saved.</p>
+        <div id="profile-reasoning-field">
+          <label for="profile-reasoning">Reasoning</label>
+          <select id="profile-reasoning" name="reasoningEffort">
+            <option value="">The model's default</option>
+            <option value="none">Off</option>
+            <option value="low">Low effort</option>
+            <option value="medium">Medium effort</option>
+            <option value="high">High effort</option>
+          </select>
+          <p class="hint">
+            Only for reasoning models. Off answers without thinking, on models that can; a model that always thinks
+            refuses it.
+          </p>
+        </div>
 
         <label class="check-option">
           <input type="checkbox" name="supportsTools" />
           <span
             ><strong>Can use tools</strong><br /><span class="hint"
               >Lets your kinwriter act (read the notebook, pin characters, comment...). Turn off for models that
-              can't, and they'll just write.</span
+              can't manage them, even as text (Test tools checks), and they'll just write.</span
             ></span
           >
         </label>
+        <p class="hint" id="profile-tools-note" hidden></p>
 
         <label class="check-option">
           <input type="checkbox" name="consultant" />
@@ -1910,6 +1961,31 @@
       <!-- Sliders the app theme (and the open channel's theme) offer, if any. -->
       <div id="theme-options" class="theme-options" hidden></div>
 
+      <label>Background picture</label>
+      <p class="hint">
+        Your own picture behind the app, in place of the theme's. Looks best with the glass themes, which bend and frost
+        it. .jpg, .png, .webp or .gif (animated GIFs move), up to 25 MB. Your pictures are kept for every kinwriter; which one
+        shows is chosen for each, like the theme.
+      </p>
+      <div id="background-list" class="background-list" role="radiogroup" aria-label="Background picture"></div>
+      <div class="dialog-buttons theme-actions">
+        <label class="button file-button">
+          Upload a picture…
+          <input
+            id="background-upload"
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
+            hidden
+          />
+        </label>
+        <button type="button" class="button button-danger" id="background-remove" hidden>Delete picture</button>
+      </div>
+      <label class="theme-option" id="background-dim-row" hidden>
+        <span class="theme-option-label">Fade the picture</span>
+        <input type="range" id="background-dim" min="0" max="0.8" step="0.05" />
+        <output id="background-dim-value" class="theme-option-value"></output>
+      </label>
+
       <fieldset class="kind-picker effects-picker">
         <legend>Glass effects on this device</legend>
         <label class="kind-option">
@@ -1931,6 +2007,16 @@
           >
         </label>
       </fieldset>
+
+      <label class="check-option">
+        <input type="checkbox" id="fold-quiet" name="fold-quiet" />
+        <span
+          ><strong>Fold quiet turns on this device</strong><br /><span class="hint"
+            >Three or more turns in a row that only acted (checked in, chose not to reply) show as one line you can tap
+            open.</span
+          ></span
+        >
+      </label>
 
       <p class="form-error" role="alert" hidden></p>
 
@@ -2009,7 +2095,7 @@
         <p class="hint">
           The wording of every prompt, shared by all your kinwriters. Edits are kept apart from the defaults, and each
           can be reset. Who your kinwriter is and how they write are in
-          <button type="button" class="link-button inline-link" id="prompts-open-friend">their menu</button>; tool
+          <button type="button" class="link-button inline-link" id="prompts-open-kinwriter">their menu</button>; tool
           descriptions show in Dry run.
         </p>
         <input id="prompts-search" type="search" placeholder="Find wording…" autocomplete="off" />

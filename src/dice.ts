@@ -26,6 +26,10 @@ const MAX_SIDES = 1000;
 export function roll(notation: string, random: () => number = Math.random): DiceRoll {
   const clean = notation.toLowerCase().replace(/\s+/g, "");
   if (!clean || clean.length > 60) throw new ValidationError('Roll something like "d20", "2d6+3" or "4d6kh3".');
+  // Terms joined by one sign each: "2d6--3", "2d6+-3" or "2d6+" are mistakes, not rolls.
+  if (!/^[+-]?[^+-]+(?:[+-][^+-]+)*$/.test(clean)) {
+    throw new ValidationError(`Couldn't read "${notation.trim()}": put one + or - between terms, like "2d6+3".`);
+  }
   const terms = clean.match(/[+-]?[^+-]+/g) ?? [];
   let total = 0;
   let dice = 0;

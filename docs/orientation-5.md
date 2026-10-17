@@ -58,7 +58,7 @@ Ladder lessons replace and extend this step in stage 7.
 ## Hard limits
 
 A new setting, `hardLimits`: what must never be written, in any channel, whatever a story asks.
-- **Yours:** it's in Settings, under **Your hard limits**, and it's copied to new kinwriters like your other preferences.
+- **Yours:** it's in Settings, under **Your hard limits**, and it's copied to new kinwriters like your other preferences. (**Changed later:** hard limits are now shared by every kinwriter, like the rest of Settings; see [shared settings](shared-settings.md).)
 - **In every prompt:** under "The user's hard limits", with the wording from `hard-limits` in `defaults/turns.md`.
 - **Also in the closer**, where you can fill it in.
 

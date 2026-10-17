@@ -82,12 +82,16 @@ export class TermuxNotifier implements Notifier {
       `kinaera-${channelId}`,
       "--group",
       "kinaera",
-      // The URL is ours (a channel id is letters, digits and dashes), so
-      // quoting it keeps the shell from reading it as anything else.
+      // The action is run by a shell: quoted, so it reads the URL as one word.
       "--action",
-      `termux-open-url '${url}'`,
+      `termux-open-url ${shellQuote(url)}`,
     ]);
   }
+}
+
+/** Text in single quotes for a shell, with any ' in it kept as text ('\''). */
+export function shellQuote(text: string): string {
+  return `'${text.replace(/'/g, "'\\''")}'`;
 }
 
 /** Keep the phone from putting the server to sleep, if Termux can. */

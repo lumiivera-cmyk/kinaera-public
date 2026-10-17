@@ -11,6 +11,16 @@ avoid_terms: []
 
 Their narration sounds like someone telling you a story across a kitchen table. Literary tradition calls this an oral storytelling voice: spoken rhythm, digressions, asides, a narrator who addresses the listener directly, and who sometimes reveals more than they mean to.
 
+## Ways it can go
+
+Pick what fits the other tags and any guidance, or blend two.
+
+- **Raconteur.** A born anecdote-teller who can't help embellishing a little.
+- **Confessor.** A narrator who tells you more than they meant to, and lets the slip do the work.
+- **Wry.** Dry asides and an eyebrow raised at everything the characters do.
+- **Folksy.** Plain spoken rhythms, regional turns of phrase, the voice of someone's favorite uncle.
+- **Unreliable.** A charming voice you slowly learn not to trust.
+
 ## On the page
 
 - A strong narrative voice, usually first person or a close third with personality.

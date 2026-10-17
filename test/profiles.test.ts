@@ -10,7 +10,7 @@ import { profileRequest } from "../src/kinwriter.ts";
 import { parseExtraParams, weightedPick } from "../src/profiles.ts";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { MIGRATIONS, openDatabase } from "../src/db.ts";
+import { MIGRATIONS, openDatabase, runStep } from "../src/db.ts";
 import { Store } from "../src/store.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -91,12 +91,40 @@ describe("min P", () => {
     const path = join(dir.path, "older.db");
     const old = new Database(path, { strict: true });
     old.exec("PRAGMA foreign_keys = ON");
-    for (const step of MIGRATIONS.slice(0, 8)) typeof step === "string" ? old.exec(step) : typeof step === "function" ? step(old) : old.exec(step.rebuild);
+    for (const step of MIGRATIONS.slice(0, 8)) runStep(old, step);
     old.exec("PRAGMA user_version = 8");
     old.query("INSERT INTO profiles (id, name, model, temperature, max_tokens, position, created_at) VALUES ('p', 'Old', 'deepseek-ai/DeepSeek-V3.1-Terminus', 0.9, 1024, 0, 'then')").run();
     old.close();
     const db = openDatabase(path);
     expect(db.query("SELECT id, temperature, top_p, min_p FROM profiles").all()).toEqual([{ id: "p", temperature: 0.9, top_p: null, min_p: null }]);
+    db.close();
+  });
+
+  test("an older database's profiles survive the rebuild that allows reasoning off", () => {
+    const path = join(dir.path, "before-off.db");
+    const old = new Database(path, { strict: true });
+    old.exec("PRAGMA foreign_keys = ON");
+    for (const step of MIGRATIONS.slice(0, 15)) runStep(old, step);
+    old.exec("PRAGMA user_version = 15");
+    old.query(
+      `INSERT INTO profiles (id, name, model, temperature, max_tokens, top_p, reasoning_effort, supports_tools, quirk_prompt,
+                             extra_params, position, created_at, consultant, min_p, kinwriter_maker)
+       VALUES ('p', 'Old', 'm', 0.7, 2048, 0.9, 'high', 0, 'notes', '{"top_k": 40}', 0, 'then', 1, 0.05, 1)`,
+    ).run();
+    old.query("INSERT INTO roulettes (id, name, position, created_at) VALUES ('r', 'R', 0, 'then')").run();
+    old.query("INSERT INTO roulette_profiles (roulette_id, profile_id, weight) VALUES ('r', 'p', 1)").run();
+    old.close();
+
+    const db = openDatabase(path);
+    expect(db.query("SELECT * FROM profiles").all()).toEqual([
+      {
+        id: "p", name: "Old", model: "m", temperature: 0.7, max_tokens: 2048, top_p: 0.9, reasoning_effort: "high",
+        supports_tools: 0, quirk_prompt: "notes", extra_params: '{"top_k": 40}', position: 0, created_at: "then",
+        consultant: 1, min_p: 0.05, kinwriter_maker: 1,
+      },
+    ]);
+    expect(db.query("SELECT profile_id FROM roulette_profiles").all()).toEqual([{ profile_id: "p" }]);
+    db.query("UPDATE profiles SET reasoning_effort = 'none'").run();
     db.close();
   });
 });
@@ -125,6 +153,12 @@ describe("the request a profile makes", () => {
     });
     const body = requestBody({ ...profileRequest(profile), messages: [] });
     expect(body).toMatchObject({ top_p: 0.9, reasoning_effort: "high", top_k: 40, temperature: 0.9 });
+  });
+
+  test("reasoning can be turned off", () => {
+    const profile = store.profiles.create({ name: "quick", model: "m", reasoningEffort: "none" });
+    expect(profile.reasoningEffort).toBe("none");
+    expect(requestBody({ ...profileRequest(profile), messages: [] })).toMatchObject({ reasoning_effort: "none" });
   });
 
   test("an empty extra-fields box means none", () => {

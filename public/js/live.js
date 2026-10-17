@@ -10,13 +10,15 @@
 import { renderAll, renderSidebar } from "./channels.js";
 import { $, api, els, readLocal, state, writeLocal } from "./core.js";
 import { loadHub } from "./kinwriter-page.js";
-import { refreshMessages } from "./messages.js";
+import { refreshMessages, startBusyWatch } from "./messages.js";
 import { refreshProfileEditors } from "./profile-inline.js";
 
 /** Fetch settings, channels and busy channels from the server. */
 export async function loadState() {
   const data = await api("GET", "/api/state");
   state.settings = data.settings;
+  // Sections of Settings just for this kinwriter; the rest are shared by everyone.
+  state.ownSettings = data.ownSettings ?? [];
   state.channels = data.channels;
   state.practice = data.practice ?? null;
   state.waiting = data.waiting ?? state.waiting;
@@ -50,7 +52,7 @@ export async function loadState() {
 // ----------------------------------------------------------- live updates
 
 /*
- * Your kinwriter can write without being asked (stage 8: a wake-up when you
+ * Your kinwriter can write without being asked (a wake-up when you
  * open the app, or when a scene ends). So while the app is showing, it
  * checks every few seconds whether any message changed (the server's
  * `revision`), and if so reloads the channel list and the open channel.
@@ -87,7 +89,7 @@ export function markSeen() {
 /** Whether a channel has a message from your kinwriter you haven't seen. */
 export function isUnread(channel) {
   const activity = state.activity?.[channel.id];
-  if (!activity || activity.author !== "friend" || channel.id === state.channelId) return false;
+  if (!activity || activity.author !== "kinwriter" || channel.id === state.channelId) return false;
   return seenMessages()[channel.id] !== activity.lastId;
 }
 
@@ -119,6 +121,8 @@ export async function checkLive() {
   state.inbox = data.inbox ?? [];
   state.settings = data.settings;
   for (const channelId of data.busyChannels) state.busy.add(channelId);
+  // Something's writing that this screen didn't start: watch for it to finish.
+  if (state.busy.size > 0) startBusyWatch();
   state.phases = data.phases ?? {};
   state.presence = data.presence ?? "idle";
   state.status = data.status ?? null;

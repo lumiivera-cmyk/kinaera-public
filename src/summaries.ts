@@ -1,5 +1,5 @@
 /**
- * Summaries (stage 7): how long stories fit in the context.
+ * Summaries: how long stories fit in the context.
  *
  * A model can only read so much at once, so a prompt holds only the most
  * recent messages (`historyLimit`). Everything older is remembered through
@@ -240,8 +240,7 @@ export function splitScenes(messages: SeqMessage[], kind: ChannelKind): Scene[] 
  * Where the prompt's messages start (an index into `messages`): what isn't
  * sent from before this point is covered by summaries.
  *
- * - With summaries off: the newest `historyLimit` messages, as before
- *   stage 7.
+ * - With summaries off: the newest `historyLimit` messages.
  * - If the scene still going has an "earlier in this scene" summary: every
  *   message after what it covers.
  * - Otherwise the newest `historyLimit` messages, reaching back to the
@@ -311,19 +310,21 @@ export function channelSummaryText(store: Store, channel: Channel, { withDigest 
  * Messages as the text a summary is written from: one line (or paragraph)
  * per post, with who's speaking, and scene breaks marked.
  */
-export function transcript(messages: Message[], kind: ChannelKind, friendName: string): string[] {
+export function transcript(messages: Message[], kind: ChannelKind, kinwriterName: string): string[] {
   return messages.map((m) => {
     if (m.kind === "scene_break") return `--- Scene break${m.content ? `: "${m.content}"` : ""} ---`;
     let speaker: string;
-    if (kind !== "rp") speaker = m.author === "user" ? "The user" : `You (${friendName})`;
+    if (kind !== "rp") {
+      speaker = m.author === "user" ? "The user" : m.author === "peer" ? (m.speaker?.name ?? "Another kinwriter") : `You (${kinwriterName})`;
+    }
     else if (m.characters.length > 0) speaker = m.characters.join(" & ");
-    else speaker = m.author === "user" ? "The user (narration)" : `${friendName} (narration)`;
+    else speaker = m.author === "user" ? "The user (narration)" : `${kinwriterName} (narration)`;
     return `${speaker}: ${m.content.trim()}`;
   });
 }
 
 /** Most text sent in one summary request, in characters (about 8,000 tokens). */
-export const CHUNK_CHARS = 30_000;
+const CHUNK_CHARS = 30_000;
 
 /**
  * Split lines into chunks of at most `limit` characters, keeping lines
@@ -355,7 +356,7 @@ export type SummaryJob = "scene" | "current" | "story" | "conversation" | "diges
 const WITH_SHARED: SummaryJob[] = ["scene", "current", "story"];
 
 /** The instructions for one kind of summary (defaults/summaries.md). */
-export function summaryInstructions(job: SummaryJob): string {
+function summaryInstructions(job: SummaryJob): string {
   const words = wording("summaries");
   return WITH_SHARED.includes(job) ? `${words.shared ?? ""}\n\n${words[job] ?? ""}` : (words[job] ?? "");
 }

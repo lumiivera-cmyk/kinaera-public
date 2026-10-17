@@ -11,7 +11,7 @@ import { actionButton, renderMessages } from "./messages.js";
 // ------------------------------------------------------------- summaries
 
 /*
- * Summaries (stage 7) are written by the server in the background, a few
+ * Summaries are written by the server in the background, a few
  * seconds after a channel changes (see src/summarizer.ts). The app shows
  * them where they belong: each scene's under the scene break that ended
  * it, and the story so far, earlier in the scene and the digest in channel
@@ -56,6 +56,8 @@ export function renderSceneSummary(sceneBreak) {
     box.rows = 6;
     box.value = summary?.content ?? "";
     box.setAttribute("aria-label", "Scene summary");
+    // Kept through redraws (see `renderMessages`), which also focus it when it opens.
+    box.dataset.draft = `summary:${sceneBreak.id}`;
     const buttons = document.createElement("div");
     buttons.className = "scene-summary-actions";
     buttons.append(
@@ -66,7 +68,6 @@ export function renderSceneSummary(sceneBreak) {
       actionButton("Save", () => saveSceneSummary(sceneBreak.id, box.value)),
     );
     panel.append(box, buttons);
-    queueMicrotask(() => box.focus());
     return panel;
   }
 
@@ -113,6 +114,9 @@ async function saveSceneSummary(breakId, content) {
 
 /** Have a scene's summary written again (waits for it). */
 async function regenerateSceneSummary(breakId) {
+  const channelId = state.channelId;
+  const before = state.summaries?.scenes?.[breakId];
+  const wasRunning = state.summaries?.running;
   if (state.summaries) state.summaries.running = true;
   delete state.summaries?.scenes?.[breakId];
   renderMessages();
@@ -121,6 +125,11 @@ async function regenerateSceneSummary(breakId) {
     state.summaries = summaries;
     if (summaries.error) showError(`Couldn't write the summary: ${summaries.error}`);
   } catch (error) {
+    // Nothing changed on the server: show the summary as it was.
+    if (state.summaries && state.channelId === channelId) {
+      state.summaries.running = wasRunning;
+      if (before) state.summaries.scenes[breakId] = before;
+    }
     showError(`Couldn't write the summary: ${error.message}`);
   }
   renderMessages();
@@ -168,12 +177,16 @@ export async function updateSummaries(rebuild) {
   if (rebuild && !confirm("Rewrite every summary in this channel from its messages? Your own edits to them will be replaced.")) {
     return;
   }
+  const channelId = state.channelId;
+  const wasRunning = state.summaries?.running;
   if (state.summaries) state.summaries.running = true;
   renderMemory();
   try {
     const { summaries } = await api("POST", channelPath(rebuild ? "summaries/rebuild" : "summaries/update"), {});
     state.summaries = summaries;
   } catch (error) {
+    // Nothing was written: the buttons work again.
+    if (state.summaries && state.channelId === channelId) state.summaries.running = wasRunning;
     showFormError(els.channelForm, error.message);
   }
   renderMemory();

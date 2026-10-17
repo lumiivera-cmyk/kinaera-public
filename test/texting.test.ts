@@ -64,8 +64,8 @@ describe("your kinwriter texting", () => {
     const turnId = "t1";
     app.store.addTurn(
       [
-        { channelId: ooc.id, author: "friend", content: "omg" },
-        { channelId: ooc.id, author: "friend", content: "hi" },
+        { channelId: ooc.id, author: "kinwriter", content: "omg" },
+        { channelId: ooc.id, author: "kinwriter", content: "hi" },
       ],
       turnId,
     );
@@ -84,12 +84,12 @@ describe("your kinwriter texting", () => {
   test("off: as before", () => {
     app.store.updateSettings(validateSettings({ oocBubbles: false }));
     expect(promptForChannel(app.store, ooc.id)[0]!.content).not.toContain(BUBBLE_MARKER);
-    const msg = (author: "user" | "friend", content: string) => ({ author, content, kind: "post", mode: null, characters: [] }) as unknown as Message;
-    expect(toChatHistory([msg("friend", "a"), msg("friend", "b")])).toEqual([{ role: "assistant", content: "a\n\nb" }]);
+    const msg = (author: "user" | "kinwriter", content: string) => ({ author, content, kind: "post", mode: null, characters: [] }) as unknown as Message;
+    expect(toChatHistory([msg("kinwriter", "a"), msg("kinwriter", "b")])).toEqual([{ role: "assistant", content: "a\n\nb" }]);
   });
 
   test("a comment reply is one note, without markers", async () => {
-    const m = app.store.addMessage({ channelId: ooc.id, author: "friend", content: "hello" });
+    const m = app.store.addMessage({ channelId: ooc.id, author: "kinwriter", content: "hello" });
     const thread = app.store.comments.start("user", m.id, "why hello?", "hello");
     fake.replies.push({ content: "because<cht>it's polite" });
     const result = await app.kinwriter.replyToComment(thread.id);

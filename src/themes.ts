@@ -30,7 +30,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, cpSync } from "node:fs";
 import { extname, join } from "node:path";
-import { NotFoundError, ValidationError } from "./store.ts";
+import { NotFoundError, ValidationError } from "./errors.ts";
 
 // ------------------------------------------------------------------ types
 
@@ -480,9 +480,11 @@ export class ThemeLibrary {
       manifest.description = changes.description;
     }
     if (changes.options !== undefined) manifest.options = parseThemeOptions(changes.options, true);
-    if (changes.css !== undefined) writeFileSync(join(folder, "theme.css"), validateCss(changes.css, "css"));
-    if (changes.liteCss !== undefined) {
-      const lite = validateCss(changes.liteCss, "liteCss");
+    // Everything is checked before anything is written, so a bad part changes nothing.
+    const css = changes.css !== undefined ? validateCss(changes.css, "css") : undefined;
+    const lite = changes.liteCss !== undefined ? validateCss(changes.liteCss, "liteCss") : undefined;
+    if (css !== undefined) writeFileSync(join(folder, "theme.css"), css);
+    if (lite !== undefined) {
       // An empty Lite version means "no Lite version".
       if (lite.trim() === "") rmSync(join(folder, "theme-lite.css"), { force: true });
       else writeFileSync(join(folder, "theme-lite.css"), lite);
@@ -640,7 +642,8 @@ export class ThemeLibrary {
         .normalize("NFKD")
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "")
-        .slice(0, 50) || "theme";
+        .slice(0, 50)
+        .replace(/-+$/, "") || "theme";
     let id = base;
     for (let n = 2; this.exists(id) || existsSync(join(this.userDir, id)); n++) id = `${base}-${n}`;
     return id;

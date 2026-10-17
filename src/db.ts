@@ -43,14 +43,15 @@ import { Database } from "bun:sqlite";
  *
  * The first step is the whole starting layout; each later step adds to it.
  */
-export type Migration = string | ((db: Database) => void) | { rebuild: string };
+export type Migration = string | ((db: Database) => void) | { rebuild: string | ((db: Database) => void) };
 
 export const MIGRATIONS: Migration[] = [
   // ---------------------------------------------------------------- 1
   // The starting layout.
   (db) => {
     db.exec(`
-    -- Server-wide settings as key/value pairs. Each value is stored as JSON,
+    -- This kinwriter's settings as key/value pairs (most are shared by every
+    -- kinwriter, kept the same by the hub: src/universal.ts). Each value is stored as JSON,
     -- so numbers stay numbers and text stays text.
     CREATE TABLE settings (
       key   TEXT PRIMARY KEY,
@@ -91,7 +92,7 @@ export const MIGRATIONS: Migration[] = [
       -- folders, not rows; see src/themes.ts.
       theme        TEXT,
       -- The channel's own profile or roulette ("profile:<id>" or
-      -- "roulette:<id>"), overriding the server-wide one. NULL: no override.
+      -- "roulette:<id>"), overriding the one in Settings. NULL: no override.
       assignment   TEXT,
       -- Deleting a category leaves its channels, outside any category.
       category_id  TEXT REFERENCES categories (id) ON DELETE SET NULL,
@@ -317,7 +318,7 @@ export const MIGRATIONS: Migration[] = [
 
     -- ------------------------------------------------------ logs and Jev
 
-    -- Every call to Jev (src/jevlog.ts), kept for 36 hours.
+    -- Every call to Jev, kept for 36 hours. (Dropped in migration 3: the check log took its place.)
     CREATE TABLE jev_log (
       id          TEXT PRIMARY KEY,
       at          TEXT NOT NULL,
@@ -424,7 +425,7 @@ export const MIGRATIONS: Migration[] = [
   // regenerated reply is kept as a superseded alternate. And the
   // intervention log: everything you do that affects your kinwriter.
   `
-  -- Who last edited a message ('user' or 'kinwriter'; NULL if never edited).
+  -- Who last edited a message ('user' or 'friend', their kinwriter; NULL if never edited).
   ALTER TABLE messages ADD COLUMN edited_by TEXT CHECK (edited_by IN ('user', 'friend'));
   -- A tombstone: the message has left the chat, but stays in history.
   ALTER TABLE messages ADD COLUMN deleted_at TEXT;
@@ -725,7 +726,7 @@ export const MIGRATIONS: Migration[] = [
   `,
 
   // ---------------------------------------------------------------- 8
-  // Rebuild stage 7: group channels and DMs. A group channel (or a DM
+  // Rebuild stage 7, continued: group channels and DMs. A group channel (or a DM
   // between two kinwriters) is kept by every kinwriter in it, in their own
   // database, under the same id, with every message mirrored under the
   // same id (src/groups.ts). Messages from the other kinwriters are by a
@@ -761,7 +762,7 @@ export const MIGRATIONS: Migration[] = [
     kind          TEXT NOT NULL DEFAULT 'post' CHECK (kind IN ('post', 'scene_break')),
     mode          TEXT CHECK (mode IN ('literary', 'casual')),
     turn_id       TEXT,
-    -- 'user' (you), 'kinwriter' (this kinwriter), or 'peer' (another kinwriter, in a
+    -- 'user' (you), 'friend' (this kinwriter), or 'peer' (another kinwriter, in a
     -- group channel or DM: see speaker_id and speaker_name).
     author        TEXT NOT NULL CHECK (author IN ('user', 'friend', 'peer')),
     content       TEXT NOT NULL,
@@ -899,14 +900,116 @@ export const MIGRATIONS: Migration[] = [
   CREATE INDEX reasoning_by_channel ON reasoning (channel_id, created_at);
   CREATE INDEX reasoning_by_turn ON reasoning (turn_id);
   `,
+
+  // --------------------------------------------------------------- 16
+  // Reasoning can be turned off: 'none' joins the efforts a profile may ask
+  // for (the table is rebuilt for its CHECK rule).
+  {
+    rebuild: `
+  CREATE TABLE profiles_new (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    model            TEXT NOT NULL,
+    temperature      REAL NOT NULL,
+    max_tokens       INTEGER NOT NULL,
+    top_p            REAL,
+    reasoning_effort TEXT CHECK (reasoning_effort IN ('none', 'low', 'medium', 'high')),
+    supports_tools   INTEGER NOT NULL DEFAULT 1,
+    quirk_prompt     TEXT NOT NULL DEFAULT '',
+    extra_params     TEXT NOT NULL DEFAULT '',
+    position         INTEGER NOT NULL,
+    created_at       TEXT NOT NULL,
+    consultant       INTEGER NOT NULL DEFAULT 0,
+    min_p            REAL,
+    kinwriter_maker  INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO profiles_new (id, name, model, temperature, max_tokens, top_p, reasoning_effort, supports_tools,
+                            quirk_prompt, extra_params, position, created_at, consultant, min_p, kinwriter_maker)
+    SELECT id, name, model, temperature, max_tokens, top_p, reasoning_effort, supports_tools,
+           quirk_prompt, extra_params, position, created_at, consultant, min_p, kinwriter_maker FROM profiles;
+  DROP TABLE profiles;
+  ALTER TABLE profiles_new RENAME TO profiles;
+  `,
+  },
+
+  // --------------------------------------------------------------- 17
+  // The second rename: "friend" becomes "kinwriter" in saved values too
+  // (docs/orientation-1.md). Every table whose CHECK rules allow 'friend'
+  // is rebuilt to allow 'kinwriter' instead, with its rows converted; the
+  // settings keys, your kinwriter's notes on the others, and who last
+  // wrote each scratchpad follow.
+  { rebuild: (db) => renameFriend(db) },
 ];
+
+/**
+ * The tables and columns that said 'friend' for your kinwriter (migration
+ * 17). Written for the layout of migration 16, the last one before it.
+ */
+const FRIEND_COLUMNS: Record<string, string[]> = {
+  messages: ["author", "edited_by", "deleted_by"],
+  message_revisions: ["author"],
+  notebook_folders: ["owner"],
+  notebook_entries: ["owner"],
+  notebook_suggestions: ["author"],
+  comments: ["author"],
+  reactions: ["author"],
+  identity_versions: ["author"],
+};
+
+/** The settings keys that were named for a "friend" (migration 17). */
+const FRIEND_SETTINGS = ["Name", "Prompt", "Avatar", "Color", "Pronouns"];
+
+function renameFriend(db: Database): void {
+  for (const [table, columns] of Object.entries(FRIEND_COLUMNS)) {
+    // The table as it is now, with 'friend' swapped in its CHECK rules (and
+    // comments), built under a new name; then its rows copied across,
+    // converted, and it takes the old one's place with the old indexes.
+    const { sql } = db.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = $table").get({ table }) as { sql: string };
+    const indexes = (
+      db.query("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = $table AND sql IS NOT NULL").all({ table }) as { sql: string }[]
+    ).map((r) => r.sql);
+    const names = (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    const values = names.map((n) => (columns.includes(n) ? `CASE ${n} WHEN 'friend' THEN 'kinwriter' ELSE ${n} END` : n));
+    // An AUTOINCREMENT table keeps counting from where it was, even past
+    // rows that were deleted.
+    const counter = db.query("SELECT seq FROM sqlite_sequence WHERE name = $table").get({ table }) as { seq: number } | null;
+    db.exec(sql.replace(/^CREATE TABLE ("?)\w+\1/, `CREATE TABLE ${table}_new`).replaceAll("'friend'", "'kinwriter'"));
+    db.exec(`INSERT INTO ${table}_new (${names.join(", ")}) SELECT ${values.join(", ")} FROM ${table}`);
+    db.exec(`DROP TABLE ${table}`);
+    db.exec(`ALTER TABLE ${table}_new RENAME TO ${table}`);
+    for (const index of indexes) db.exec(index);
+    if (counter) db.query("UPDATE sqlite_sequence SET seq = MAX(seq, $seq) WHERE name = $table").run({ table, seq: counter.seq });
+  }
+
+  db.exec("ALTER TABLE relationships RENAME COLUMN friend_id TO kinwriter_id");
+
+  const rename = db.query("UPDATE settings SET key = $to WHERE key = $from");
+  for (const key of FRIEND_SETTINGS) rename.run({ from: `friend${key}`, to: `kinwriter${key}` });
+
+  // Scratchpads (src/scratchpads.ts) are JSON in app_state: who last
+  // changed each one, and who wrote the version before.
+  const pads = db.query("SELECT key, value FROM app_state WHERE key LIKE 'scratchpad:%'").all() as { key: string; value: string }[];
+  const save = db.query("UPDATE app_state SET value = $value WHERE key = $key");
+  for (const { key, value } of pads) {
+    let pad: { by?: unknown; previous?: { by?: unknown } | null };
+    try {
+      pad = JSON.parse(value);
+    } catch {
+      continue;
+    }
+    if (!pad || typeof pad !== "object") continue;
+    if (pad.by === "friend") pad.by = "kinwriter";
+    if (pad.previous && pad.previous.by === "friend") pad.previous.by = "kinwriter";
+    save.run({ key, value: JSON.stringify(pad) });
+  }
+}
 
 /**
  * The connection profile a new server starts with, which writes both
  * roleplay and OOC until you change that. Only ever made for a brand-new
  * database: existing profiles are never touched.
  */
-export const STARTING_PROFILE = {
+const STARTING_PROFILE = {
   model: "deepseek-ai/DeepSeek-V3.1-Terminus",
   temperature: 0.8,
   maxTokens: 1024,
@@ -967,10 +1070,8 @@ function migrate(db: Database): void {
       // A transaction makes the whole step happen completely or not at all, so
       // a crash can't leave the database half-upgraded.
       db.transaction(() => {
-        if (typeof step === "string") db.exec(step);
-        else if (typeof step === "function") step(db);
-        else {
-          db.exec(step.rebuild);
+        runStep(db, step);
+        if (rebuild) {
           // Nothing may point at a row that isn't there.
           const broken = db.query("PRAGMA foreign_key_check").all();
           if (broken.length > 0) throw new Error(`Migration ${version + 1} broke ${broken.length} reference(s).`);
@@ -985,6 +1086,13 @@ function migrate(db: Database): void {
   }
   // A brand-new database: its first profile.
   if (current === 0) db.transaction(() => startingProfile(db))();
+}
+
+/** One migration's work, without the bookkeeping around it. Exported for tests. */
+export function runStep(db: Database, step: Migration): void {
+  const work = typeof step === "object" ? step.rebuild : step;
+  if (typeof work === "string") db.exec(work);
+  else work(db);
 }
 
 /** The latest layout version. Exported for tests. */

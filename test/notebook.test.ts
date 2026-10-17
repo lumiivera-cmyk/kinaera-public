@@ -34,7 +34,7 @@ afterEach(() => {
 const make = (input: Record<string, unknown>) => notebook.createEntry("user", { kind: "character", ...input });
 
 /** Make an entry as your kinwriter (as their tools will in stage 6). */
-const kinwriterMakes = (input: Record<string, unknown>) => notebook.createEntry("friend", { kind: "character", ...input });
+const kinwriterMakes = (input: Record<string, unknown>) => notebook.createEntry("kinwriter", { kind: "character", ...input });
 
 describe("entries", () => {
   test("start from their kind's template", () => {
@@ -51,7 +51,7 @@ describe("entries", () => {
 
   test("are yours unless you say otherwise; you can make them for your kinwriter or share them", () => {
     expect(make({ name: "A" }).owner).toBe("user");
-    expect(make({ name: "B", owner: "friend" }).owner).toBe("friend");
+    expect(make({ name: "B", owner: "kinwriter" }).owner).toBe("kinwriter");
     expect(make({ name: "C", owner: "joint" }).owner).toBe("joint");
   });
 
@@ -60,7 +60,7 @@ describe("entries", () => {
   });
 
   test("only the owner picks visibility and editing when making one", () => {
-    expect(() => make({ name: "Secret", owner: "friend", visibility: "hidden" })).toThrow(PermissionError);
+    expect(() => make({ name: "Secret", owner: "kinwriter", visibility: "hidden" })).toThrow(PermissionError);
   });
 
   test("need a name, and a valid kind", () => {
@@ -74,16 +74,16 @@ describe("visibility", () => {
     const secret = kinwriterMakes({ name: "The Stranger", visibility: "hidden" });
     expect(notebook.listEntries("user")).toEqual([]);
     expect(() => notebook.getEntry("user", secret.id)).toThrow(NotFoundError);
-    expect(notebook.listEntries("friend").map((e) => e.name)).toEqual(["The Stranger"]);
+    expect(notebook.listEntries("kinwriter").map((e) => e.name)).toEqual(["The Stranger"]);
   });
 
   test("an entry you hide from your kinwriter is hidden from them", () => {
     make({ name: "My Twist", visibility: "hidden" });
-    expect(notebook.listEntries("friend")).toEqual([]);
+    expect(notebook.listEntries("kinwriter")).toEqual([]);
   });
 
   test("entries take their folder's visibility", () => {
-    const folder = notebook.createFolder("friend", { name: "Plans", visibility: "hidden" });
+    const folder = notebook.createFolder("kinwriter", { name: "Plans", visibility: "hidden" });
     kinwriterMakes({ name: "Ambush", folderId: folder.id });
     expect(notebook.listEntries("user")).toEqual([]);
     expect(notebook.listFolders("user")).toEqual([]);
@@ -91,14 +91,14 @@ describe("visibility", () => {
 
   test("the owner can reveal an entry", () => {
     const secret = kinwriterMakes({ name: "The Stranger", visibility: "hidden" });
-    notebook.updateEntrySettings("friend", secret.id, { visibility: "visible" });
+    notebook.updateEntrySettings("kinwriter", secret.id, { visibility: "visible" });
     expect(notebook.getEntry("user", secret.id).name).toBe("The Stranger");
   });
 });
 
 describe("editing", () => {
   test("open entries of your kinwriter's are yours to edit directly", () => {
-    const ilse = make({ name: "Ilse", owner: "friend" });
+    const ilse = make({ name: "Ilse", owner: "kinwriter" });
     expect(notebook.editEntry("user", ilse.id, { name: "Ilse Marrow" })).toMatchObject({ entry: { name: "Ilse Marrow" } });
   });
 
@@ -116,14 +116,14 @@ describe("editing", () => {
   });
 
   test("only the owner changes an entry's settings", () => {
-    const ilse = make({ name: "Ilse", owner: "friend" });
+    const ilse = make({ name: "Ilse", owner: "kinwriter" });
     expect(() => notebook.updateEntrySettings("user", ilse.id, { editing: "locked" })).toThrow(PermissionError);
-    expect(notebook.updateEntrySettings("friend", ilse.id, { editing: "locked" }).settings.editing).toBe("locked");
+    expect(notebook.updateEntrySettings("kinwriter", ilse.id, { editing: "locked" }).settings.editing).toBe("locked");
   });
 
   test("the owner can give an entry away, and then it's out of their hands", () => {
     const kit = make({ name: "Kit" });
-    expect(notebook.updateEntrySettings("user", kit.id, { owner: "friend" }).owner).toBe("friend");
+    expect(notebook.updateEntrySettings("user", kit.id, { owner: "kinwriter" }).owner).toBe("kinwriter");
     expect(() => notebook.updateEntrySettings("user", kit.id, { owner: "user" })).toThrow(PermissionError);
   });
 
@@ -136,9 +136,9 @@ describe("editing", () => {
 describe("suggestions", () => {
   test("shared lore: whoever didn't suggest a change reviews it", () => {
     const sea = make({ name: "The Sea", kind: "lore", owner: "joint" });
-    const { suggestion } = notebook.editEntry("friend", sea.id, { name: "The Charted Sea" }) as { suggestion: { id: string } };
+    const { suggestion } = notebook.editEntry("kinwriter", sea.id, { name: "The Charted Sea" }) as { suggestion: { id: string } };
 
-    expect(() => notebook.reviewSuggestion("friend", suggestion.id, "accepted")).toThrow(PermissionError);
+    expect(() => notebook.reviewSuggestion("kinwriter", suggestion.id, "accepted")).toThrow(PermissionError);
     notebook.reviewSuggestion("user", suggestion.id, "accepted");
     expect(notebook.getEntry("user", sea.id).name).toBe("The Charted Sea");
     expect(notebook.listSuggestions("user")).toEqual([]);
@@ -146,7 +146,7 @@ describe("suggestions", () => {
 
   test("a rejected suggestion changes nothing, and can't be reviewed twice", () => {
     const sea = make({ name: "The Sea", kind: "lore", owner: "joint" });
-    const { suggestion } = notebook.editEntry("friend", sea.id, { name: "X" }) as { suggestion: { id: string } };
+    const { suggestion } = notebook.editEntry("kinwriter", sea.id, { name: "X" }) as { suggestion: { id: string } };
     notebook.reviewSuggestion("user", suggestion.id, "rejected");
     expect(notebook.getEntry("user", sea.id).name).toBe("The Sea");
     expect(() => notebook.reviewSuggestion("user", suggestion.id, "accepted")).toThrow(/already been dealt with/);
@@ -155,7 +155,7 @@ describe("suggestions", () => {
   test("only whoever made a suggestion can withdraw it", () => {
     const sea = make({ name: "The Sea", kind: "lore", owner: "joint" });
     const { suggestion } = notebook.editEntry("user", sea.id, { name: "X" }) as { suggestion: { id: string } };
-    expect(() => notebook.withdrawSuggestion("friend", suggestion.id)).toThrow(PermissionError);
+    expect(() => notebook.withdrawSuggestion("kinwriter", suggestion.id)).toThrow(PermissionError);
     notebook.withdrawSuggestion("user", suggestion.id);
     expect(notebook.listSuggestions("user")).toEqual([]);
   });
@@ -170,19 +170,19 @@ describe("deleting", () => {
 
   test("your kinwriter deletes their own entries straight away", () => {
     const stranger = kinwriterMakes({ name: "The Stranger" });
-    expect(notebook.deleteEntry("friend", stranger.id)).toEqual({ deleted: true });
+    expect(notebook.deleteEntry("kinwriter", stranger.id)).toEqual({ deleted: true });
   });
 
   test("deleting the other person's entry is a suggestion for its owner", () => {
-    const ilse = make({ name: "Ilse", owner: "friend" });
+    const ilse = make({ name: "Ilse", owner: "kinwriter" });
     const mine = notebook.deleteEntry("user", ilse.id) as { suggestion: { id: string } };
-    expect(notebook.waitingFor("friend").map((s) => s.id)).toEqual([mine.suggestion.id]);
+    expect(notebook.waitingFor("kinwriter").map((s) => s.id)).toEqual([mine.suggestion.id]);
 
     const kit = make({ name: "Kit" });
     make({ name: "Jun" });
-    const theirs = notebook.deleteEntry("friend", kit.id) as { suggestion: { id: string } };
+    const theirs = notebook.deleteEntry("kinwriter", kit.id) as { suggestion: { id: string } };
     expect(theirs).toMatchObject({ suggestion: { change: { delete: true } } });
-    expect(() => notebook.reviewSuggestion("friend", theirs.suggestion.id, "accepted")).toThrow(PermissionError);
+    expect(() => notebook.reviewSuggestion("kinwriter", theirs.suggestion.id, "accepted")).toThrow(PermissionError);
 
     // Accepting the suggestion deletes it.
     notebook.reviewSuggestion("user", theirs.suggestion.id, "accepted");
@@ -204,7 +204,7 @@ describe("folders", () => {
   });
 
   test("only the folder's owner changes it", () => {
-    const folder = notebook.createFolder("friend", { name: "Theirs" });
+    const folder = notebook.createFolder("kinwriter", { name: "Theirs" });
     expect(() => notebook.updateFolder("user", folder.id, { name: "Mine" })).toThrow(PermissionError);
     expect(() => notebook.deleteFolder("user", folder.id)).toThrow(PermissionError);
   });
@@ -214,7 +214,7 @@ describe("proxy prefixes", () => {
   test("are only for your characters, and can't be shared between them", () => {
     make({ name: "Kestrel", proxyPrefix: "k" });
     expect(() => make({ name: "Kit", proxyPrefix: "K" })).toThrow(/already uses the prefix/);
-    expect(() => make({ name: "Ilse", owner: "friend", proxyPrefix: "i" })).toThrow(/Only characters you play/);
+    expect(() => make({ name: "Ilse", owner: "kinwriter", proxyPrefix: "i" })).toThrow(/Only characters you play/);
     expect(() => make({ name: "Jun", proxyPrefix: "j j" })).toThrow(/no spaces or colons/);
   });
 
@@ -238,13 +238,13 @@ describe("proxy prefixes", () => {
 
   test("are dropped when a character is given away", () => {
     const kestrel = make({ name: "Kestrel", proxyPrefix: "k" });
-    expect(notebook.updateEntrySettings("user", kestrel.id, { owner: "friend" }).proxyPrefix).toBeNull();
+    expect(notebook.updateEntrySettings("user", kestrel.id, { owner: "kinwriter" }).proxyPrefix).toBeNull();
   });
 });
 
 describe("the cast", () => {
   test("is the pinned entries, in the order they were pinned, with who plays each", () => {
-    const ilse = make({ name: "Ilse", owner: "friend" });
+    const ilse = make({ name: "Ilse", owner: "kinwriter" });
     const kit = make({ name: "Kit" });
     const bo = make({ name: "Bo", owner: "joint" });
     notebook.pin("user", story, kit.id);
@@ -253,18 +253,18 @@ describe("the cast", () => {
     notebook.pin("user", story, kit.id); // already pinned: no change
     expect(notebook.castFor("user", story).map((c) => [c.name, c.playedBy])).toEqual([
       ["Kit", "user"],
-      ["Ilse", "friend"],
+      ["Ilse", "kinwriter"],
       ["Bo", "both"],
     ]);
   });
 
   test("shows entries hidden from you as ??? (hidden), and you can still unpin them", () => {
     const stranger = kinwriterMakes({ name: "The Stranger", visibility: "hidden" });
-    notebook.pin("friend", story, stranger.id);
+    notebook.pin("kinwriter", story, stranger.id);
     expect(notebook.castFor("user", story)).toEqual([
-      { entryId: stranger.id, name: HIDDEN_NAME, playedBy: "friend", owner: "friend", hidden: true, proxyPrefix: null, kind: "character" },
+      { entryId: stranger.id, name: HIDDEN_NAME, playedBy: "kinwriter", owner: "kinwriter", hidden: true, proxyPrefix: null, kind: "character" },
     ]);
-    expect(notebook.castFor("friend", story)[0]!.name).toBe("The Stranger");
+    expect(notebook.castFor("kinwriter", story)[0]!.name).toBe("The Stranger");
 
     // You can't pin what you can't see, but you can unpin it.
     expect(() => notebook.pin("user", story, stranger.id)).toThrow(NotFoundError);
@@ -284,7 +284,7 @@ describe("what your kinwriter's prompt gets", () => {
   test("pinned entries they can see, marked if they're hidden from you", () => {
     const stranger = kinwriterMakes({ name: "The Stranger", visibility: "hidden" });
     const twist = make({ name: "My Twist", kind: "lore", visibility: "hidden" });
-    const ilse = make({ name: "Ilse", owner: "friend" });
+    const ilse = make({ name: "Ilse", owner: "kinwriter" });
     for (const entry of [stranger, twist, ilse]) store.db.query("INSERT INTO channel_cast VALUES (?, ?, 0)").run(story, entry.id);
 
     const { pinned } = notebook.forPrompt(story);
@@ -298,7 +298,7 @@ describe("what your kinwriter's prompt gets", () => {
     const sea = make({ name: "The Sea", kind: "lore", fields: [{ label: "Summary", value: "Home of [[The Wreck]]." }] });
     make({ name: "The Wreck", kind: "lore", fields: [{ label: "Summary", value: "Near [[The Reef]]." }] });
     make({ name: "The Reef", kind: "lore" });
-    const ilse = make({ name: "Ilse", owner: "friend", systemPrompt: "She fears [[the sea|the water]]. [[Nobody]]" });
+    const ilse = make({ name: "Ilse", owner: "kinwriter", systemPrompt: "She fears [[the sea|the water]]. [[Nobody]]" });
     notebook.pin("user", story, ilse.id);
     notebook.pin("user", story, sea.id);
 
@@ -310,7 +310,7 @@ describe("what your kinwriter's prompt gets", () => {
 
   test("links never reveal what's hidden from your kinwriter", () => {
     make({ name: "My Twist", kind: "lore", visibility: "hidden" });
-    const ilse = make({ name: "Ilse", owner: "friend", systemPrompt: "See [[My Twist]]." });
+    const ilse = make({ name: "Ilse", owner: "kinwriter", systemPrompt: "See [[My Twist]]." });
     notebook.pin("user", story, ilse.id);
     expect(notebook.forPrompt(story).linked).toEqual([]);
   });
@@ -336,5 +336,30 @@ describe("the example character", () => {
     expect(character.fields[0]).toEqual({ label: "Age", value: "34" });
     expect(character.fields.map((f) => f.label)).toContain("Speech");
     expect(character.fields.some((f) => f.label === "Name")).toBe(false);
+  });
+});
+
+describe("accepting a suggestion made before other edits", () => {
+  test("takes only the fields it changed", () => {
+    const sea = make({ name: "The Sea", kind: "lore", fields: [{ label: "Tides", value: "high" }, { label: "Colour", value: "grey" }] });
+    // Suggested with the whole field list, as the app sends it.
+    const { suggestion } = notebook.editEntry(
+      "kinwriter",
+      sea.id,
+      { fields: [{ label: "Tides", value: "low" }, { label: "Colour", value: "grey" }, { label: "Salt", value: "lots" }] },
+      { suggest: true },
+    ) as { suggestion: { id: string } };
+    // Meanwhile you change another field directly.
+    notebook.editEntry("user", sea.id, { fields: [{ label: "Tides", value: "high" }, { label: "Colour", value: "green" }] });
+    // What's listed is what accepting would change now.
+    expect(notebook.listSuggestions("user")[0]!.change).toEqual({
+      fields: [{ label: "Tides", value: "low" }, { label: "Colour", value: "green" }, { label: "Salt", value: "lots" }],
+    });
+    notebook.reviewSuggestion("user", suggestion.id, "accepted");
+    expect(notebook.getEntry("user", sea.id).fields).toEqual([
+      { label: "Tides", value: "low" },
+      { label: "Colour", value: "green" },
+      { label: "Salt", value: "lots" },
+    ]);
   });
 });

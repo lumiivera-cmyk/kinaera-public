@@ -7,7 +7,7 @@
  */
 
 import { moveChannelIndicator, renderAll } from "./channels.js";
-import { $, api, currentChannel, els, hideFormError, readLocal, showFormError, state, writeLocal } from "./core.js";
+import { $, api, currentChannel, els, fileToBase64, hideFormError, readLocal, showFormError, state, writeLocal } from "./core.js";
 import { badge } from "./format.js";
 import { actionButton, scrollToBottom } from "./messages.js";
 
@@ -114,8 +114,129 @@ export function applyThemes() {
   // For theme authors: the channel view says which channel theme it has.
   els.channelView.dataset.channelTheme = channel ?? "";
   writeLocal(LAST_THEME_KEY, appTheme ?? "");
+  applyBackground();
+  // (This also looks at the glass again, if anything it depends on changed.)
   applyThemeOptions();
-  updateGlass();
+}
+
+// ---------------------------------------------------- background pictures
+
+/*
+ * Your own picture behind the app (src/backgrounds.ts), in place of the app
+ * theme's layers. The setting `appBackground` is its file name ("" for the
+ * theme's own); `backgroundDim` fades it toward white in light themes and
+ * black in dark ones, so text stays readable.
+ */
+function applyBackground() {
+  const file = state.settings?.appBackground ?? "";
+  const root = document.documentElement;
+  const picture = $("user-background");
+  root.classList.toggle("has-user-background", Boolean(file));
+  picture.hidden = !file;
+  if (file) {
+    picture.style.setProperty("--user-background-image", `url("/backgrounds/${encodeURIComponent(file)}")`);
+  } else {
+    picture.style.removeProperty("--user-background-image");
+  }
+  picture.style.setProperty("--background-dim", String(state.settings?.backgroundDim ?? 0));
+  matchDimToTheme();
+}
+
+/** Fade toward white in a light theme, black in a dark one (read from the theme's color-scheme). */
+function matchDimToTheme() {
+  const dark = getComputedStyle(document.documentElement).colorScheme.includes("dark");
+  $("user-background").style.setProperty("--background-dim-colour", dark ? "#000000" : "#ffffff");
+}
+
+/** Your pictures, for Appearance (loaded when it opens). */
+let backgroundList = [];
+
+async function loadBackgrounds() {
+  try {
+    backgroundList = (await api("GET", "/api/backgrounds")).backgrounds;
+  } catch (error) {
+    showFormError($("appearance-dialog"), error.message);
+  }
+  renderBackgrounds();
+}
+
+/** The picture tiles in Appearance: the theme's own, then yours, newest first. */
+function renderBackgrounds() {
+  const selected = state.settings.appBackground ?? "";
+  const tile = (file, label, url) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "background-card";
+    card.setAttribute("role", "radio");
+    card.setAttribute("aria-checked", String(file === selected));
+    card.setAttribute("aria-label", label);
+    if (url) card.style.backgroundImage = `url("${url}")`;
+    else card.textContent = label;
+    card.addEventListener("click", () => saveBackground({ appBackground: file }));
+    return card;
+  };
+  $("background-list").replaceChildren(
+    tile("", "The theme's own", null),
+    ...backgroundList.map((b, i) => tile(b.file, `Your picture ${i + 1}`, b.url)),
+  );
+  $("background-remove").hidden = !selected;
+  $("background-dim-row").hidden = !selected;
+  $("background-dim").value = String(state.settings.backgroundDim ?? 0);
+  $("background-dim-value").textContent = `${Math.round((state.settings.backgroundDim ?? 0) * 100)}%`;
+}
+
+async function saveBackground(update) {
+  try {
+    const { settings } = await api("PUT", "/api/settings", update);
+    state.settings = settings;
+    applyBackground();
+    renderBackgrounds();
+  } catch (error) {
+    showFormError($("appearance-dialog"), error.message);
+  }
+}
+
+/** Upload a picture, and show it straight away. */
+export async function uploadBackground(file) {
+  if (!file) return;
+  hideFormError($("appearance-dialog"));
+  if (file.size > 25 * 1024 * 1024) {
+    showFormError($("appearance-dialog"), `${file.name} is too big: background pictures can be 25 MB at most.`);
+    return;
+  }
+  try {
+    const data = await fileToBase64(file);
+    const result = await api("POST", "/api/backgrounds", { data });
+    state.settings = result.settings;
+    backgroundList = result.backgrounds;
+    applyBackground();
+    renderBackgrounds();
+  } catch (error) {
+    showFormError($("appearance-dialog"), `${file.name}: ${error.message}`);
+  }
+}
+
+/** Delete the picture that's showing, for every kinwriter. */
+export async function deleteBackground() {
+  const file = state.settings.appBackground;
+  if (!file || !confirm("Delete this picture? Any kinwriter showing it goes back to their theme's own background.")) return;
+  try {
+    const result = await api("DELETE", `/api/backgrounds/${encodeURIComponent(file)}`, {});
+    state.settings = result.settings;
+    backgroundList = result.backgrounds;
+    applyBackground();
+    renderBackgrounds();
+  } catch (error) {
+    showFormError($("appearance-dialog"), error.message);
+  }
+}
+
+/** The fade slider: shown as you drag, saved when you let go. */
+export function slideBackgroundDim(value, save) {
+  state.settings.backgroundDim = value;
+  $("user-background").style.setProperty("--background-dim", String(value));
+  $("background-dim-value").textContent = `${Math.round(value * 100)}%`;
+  if (save) saveBackground({ backgroundDim: value });
 }
 
 /**
@@ -124,7 +245,8 @@ export function applyThemes() {
  * size comes from the theme's channel links.)
  */
 function themeLoaded() {
-  updateGlass();
+  matchDimToTheme();
+  updateGlass(true);
   moveChannelIndicator();
 }
 
@@ -133,11 +255,28 @@ function themeLoaded() {
  * `--lensing: on` in its :root), and glass effects aren't Lite. The theme
  * then marks which elements are glass with `--lens: 1`. Checked again
  * whenever a theme's stylesheet finishes loading.
+ *
+ * Every redraw applies the themes, but the glass only needs looking at
+ * again when something it depends on changed (a stylesheet, Lite, the
+ * channel, a slider), and at most once a frame. New elements in between
+ * are found by glass.js itself, as they're added.
  */
-function updateGlass() {
-  const wants = (element) => getComputedStyle(element).getPropertyValue("--lensing").trim() === "on";
-  Glass.setEnabled(!liteEffects() && (wants(document.documentElement) || wants(els.channelView)));
-  Glass.refresh();
+let glassKey = null;
+let glassQueued = false;
+
+function updateGlass(force = false) {
+  const links = ["theme-app", "theme-app-lite", "theme-channel", "theme-channel-lite"].map((id) => $(id)?.getAttribute("href") ?? "");
+  const key = [...links, liteEffects(), state.channelId, optionsKey].join("|");
+  if (!force && key === glassKey) return;
+  glassKey = key;
+  if (glassQueued) return;
+  glassQueued = true;
+  requestAnimationFrame(() => {
+    glassQueued = false;
+    const wants = (element) => getComputedStyle(element).getPropertyValue("--lensing").trim() === "on";
+    Glass.setEnabled(!liteEffects() && (wants(document.documentElement) || wants(els.channelView)));
+    Glass.refresh();
+  });
 }
 
 /*
@@ -149,6 +288,8 @@ function updateGlass() {
 
 /** The variables set by the last call, so they can be cleared. */
 const appliedOptions = { root: [], channel: [] };
+/** The values set by the last call, to tell when they change (see `updateGlass`). */
+let optionsKey = "";
 
 /** A theme's option values: yours where you've moved a slider, the theme's default elsewhere. */
 function themeOptionValues(themeId) {
@@ -162,6 +303,7 @@ function themeOptionValues(themeId) {
 
 function applyThemeOptions() {
   const { app, channel } = activeThemes();
+  const values = [];
   const set = (element, key, themeId) => {
     for (const variable of appliedOptions[key]) element.style.removeProperty(variable);
     appliedOptions[key] = [];
@@ -169,12 +311,14 @@ function applyThemeOptions() {
     for (const { option, value } of themeOptionValues(themeId)) {
       element.style.setProperty(option.variable, `${value}${option.unit}`);
       appliedOptions[key].push(option.variable);
+      values.push(`${key}:${option.variable}=${value}${option.unit}`);
     }
   };
   set(document.documentElement, "root", app);
   set(els.channelView, "channel", channel);
-  // Sliders can change the glass's settings: remake its lenses.
-  Glass.refresh();
+  // Sliders can change the glass's settings: remake its lenses (if they changed).
+  optionsKey = values.join(";");
+  updateGlass();
 }
 
 export async function loadThemes() {
@@ -241,6 +385,8 @@ export function showNotice(text) {
 export function openAppearance() {
   renderThemeList();
   renderThemeOptions();
+  renderBackgrounds();
+  loadBackgrounds();
   for (const radio of document.querySelectorAll('input[name="effects"]')) radio.checked = radio.value === effectsMode();
   hideFormError($("appearance-dialog"));
   $("appearance-dialog").showModal();
@@ -450,7 +596,14 @@ export async function openThemeEditor(id) {
 }
 
 /** Save the editor's changes and reload the theme's stylesheets. */
+let savingTheme = false;
+
 export async function saveTheme(close) {
+  // Save and Apply are off while a save is on its way.
+  if (savingTheme) return;
+  savingTheme = true;
+  const buttons = [$("theme-apply"), $("theme-editor-form").querySelector('button[type="submit"]')].filter(Boolean);
+  for (const button of buttons) button.disabled = true;
   const form = $("theme-editor-form").elements;
   try {
     let options;
@@ -474,6 +627,9 @@ export async function saveTheme(close) {
     if (close) $("theme-editor").close();
   } catch (error) {
     showFormError($("theme-editor-form"), error.message);
+  } finally {
+    savingTheme = false;
+    for (const button of buttons) button.disabled = false;
   }
 }
 
@@ -503,7 +659,7 @@ export async function uploadThemeFiles(fileList) {
   const id = state.editingTheme.id;
   for (const file of fileList) {
     try {
-      const data = await readAsBase64(file);
+      const data = await fileToBase64(file);
       const { files } = await api("POST", `/api/themes/${encodeURIComponent(id)}/files`, { name: file.name, data });
       renderThemeFiles(files);
     } catch (error) {
@@ -526,14 +682,4 @@ async function removeThemeFile(name) {
   } catch (error) {
     showFormError($("theme-editor-form"), error.message);
   }
-}
-
-/** A file's contents as base64 text (the "data:...;base64," prefix removed). */
-function readAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(new Error("Couldn't read the file."));
-    reader.readAsDataURL(file);
-  });
 }

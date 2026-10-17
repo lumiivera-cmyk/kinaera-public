@@ -23,7 +23,8 @@ import { Database } from "bun:sqlite";
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { SETUP_PENDING, Store } from "./store.ts";
+import { defaultSettings, SETUP_PENDING, Store } from "./store.ts";
+import { ownKeys, syncProfiles } from "./universal.ts";
 import type { Message, Settings } from "./types.ts";
 
 /** What an exported kinwriter file says it is. */
@@ -82,12 +83,34 @@ export function folderPath(dataDir: string, id: string): string {
   return join(dirname(resolve(dataDir)), id);
 }
 
+/**
+ * A hub.json as this version names things. Before the second rename
+ * (docs/orientation-1.md) its lists were called `friends`: the hub's list of
+ * kinwriters, and each server's and group's. An old folder keeps those
+ * names, so they're read either way. Folders aren't moved here (the hub
+ * does that for the current one).
+ */
+export function renamedRegistry<T>(parsed: unknown): T {
+  const rename = (o: unknown) => {
+    if (!o || typeof o !== "object") return;
+    const record = o as Record<string, unknown>;
+    if ("friends" in record) {
+      if (!("kinwriters" in record)) record.kinwriters = record.friends;
+      delete record.friends;
+    }
+  };
+  rename(parsed);
+  const record = (parsed ?? {}) as { servers?: unknown; groups?: unknown };
+  for (const list of [record.servers, record.groups]) if (Array.isArray(list)) list.forEach(rename);
+  return parsed as T;
+}
+
 /** The kinwriters in a folder: from its hub.json, or the one kinwriter of an older folder. */
 export function folderEntries(path: string): { id: string; dir: string; archived: boolean }[] {
   const registry = join(path, "hub.json");
   if (!existsSync(registry)) return [{ id: "home", dir: ".", archived: false }];
-  const parsed = JSON.parse(readFileSync(registry, "utf8")) as { friends?: { id: string; dir: string; archived?: unknown }[] };
-  return (parsed.friends ?? [])
+  const parsed = renamedRegistry<{ kinwriters?: { id: string; dir: string; archived?: unknown }[] }>(JSON.parse(readFileSync(registry, "utf8")));
+  return (parsed.kinwriters ?? [])
     .filter((f) => typeof f.id === "string" && typeof f.dir === "string" && insideFolder(path, f.dir))
     .map((f) => ({ id: f.id, dir: f.dir, archived: Boolean(f.archived) }));
 }
@@ -103,6 +126,15 @@ function insideFolder(root: string, dir: string): boolean {
   const target = resolve(root, dir);
   const rel = relative(resolve(root), target);
   return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && !rel.includes(`..${sep}`));
+}
+
+/** One kinwriter's name in a folder (their id if it can't be read), without reading the others. */
+export function kinwriterNameIn(dataDir: string, folder: string, id: string): string {
+  const path = folderPath(dataDir, folder);
+  const entry = folderEntries(path).find((f) => f.id === id);
+  if (!entry) return id;
+  const found = describeKinwriter(resolve(path, entry.dir), entry.id, entry.archived, folder === "current");
+  return found.error ? id : found.name;
 }
 
 /** A folder and its kinwriters, read without changing anything. */
@@ -154,10 +186,12 @@ function describeKinwriter(dir: string, id: string, archived: boolean, live: boo
     };
     const count = (sql: string) => (db!.query(sql).get() as { n: number }).n;
     const last = db.query("SELECT MAX(created_at) AS at FROM messages").get() as { at: string | null };
+    // An old folder's database may be from before the second rename.
+    const [name, avatar] = [setting("kinwriterName") ?? setting("friendName"), setting("kinwriterAvatar") ?? setting("friendAvatar")];
     return {
       ...base,
-      name: typeof setting("friendName") === "string" ? (setting("friendName") as string) : "Your kinwriter",
-      avatar: typeof setting("friendAvatar") === "string" ? (setting("friendAvatar") as string) : "",
+      name: typeof name === "string" ? name : "Your kinwriter",
+      avatar: typeof avatar === "string" ? avatar : "",
       channels: count("SELECT COUNT(*) AS n FROM channels"),
       messages: count("SELECT COUNT(*) AS n FROM messages"),
       lastMessageAt: last.at,
@@ -196,18 +230,26 @@ function snapshot(source: string | Database, target: string): void {
   }
 }
 
-/** An old kinwriter, opened from a copy so their folder is never changed. */
-function browseStore(dataDir: string, folder: string, id: string): Store {
+/**
+ * An old kinwriter, opened from a copy so their folder is never changed.
+ * A current one (`live`: their open database) changes as you look, so
+ * their copy is made new every time.
+ */
+function browseStore(dataDir: string, folder: string, id: string, live?: Database): Store {
   const key = `${folder}/${id}`;
   const open = browsing.get(key);
-  if (open) {
+  if (open && folder === "current") {
+    open.store.close();
+    rmSync(open.dir, { recursive: true, force: true });
+    browsing.delete(key);
+  } else if (open) {
     // Most recently used last.
     browsing.delete(key);
     browsing.set(key, open);
     return open.store;
   }
   const dir = mkdtempSync(join(tmpdir(), "kinaera-browse-"));
-  snapshot(join(kinwriterDir(folderPath(dataDir, folder), id), "kinaera.db"), join(dir, "kinaera.db"));
+  snapshot(live ?? join(kinwriterDir(folderPath(dataDir, folder), id), "kinaera.db"), join(dir, "kinaera.db"));
   const store = new Store(dir, { example: false });
   browsing.set(key, { store, dir });
   while (browsing.size > BROWSE_KEEP) {
@@ -229,13 +271,13 @@ export function closeBrowsing(): void {
 }
 
 /** An old kinwriter's channels (not DMs: those are between kinwriters). */
-export function browseKinwriter(dataDir: string, folder: string, id: string) {
-  const store = browseStore(dataDir, folder, id);
+export function browseKinwriter(dataDir: string, folder: string, id: string, live?: Database) {
+  const store = browseStore(dataDir, folder, id, live);
   const settings = store.getSettings();
   return {
-    name: settings.friendName,
-    avatar: settings.friendAvatar,
-    identity: store.identity.current()?.identity ?? settings.friendPrompt,
+    name: settings.kinwriterName,
+    avatar: settings.kinwriterAvatar,
+    identity: store.identity.current()?.identity ?? settings.kinwriterPrompt,
     channels: store
       .listChannels()
       .filter((c) => c.kind !== "dm")
@@ -244,8 +286,8 @@ export function browseKinwriter(dataDir: string, folder: string, id: string) {
 }
 
 /** A channel's messages, read-only: the newest `limit`, or those before a message. */
-export function browseMessages(dataDir: string, folder: string, id: string, channelId: string, before?: string, limit = 100) {
-  const store = browseStore(dataDir, folder, id);
+export function browseMessages(dataDir: string, folder: string, id: string, channelId: string, before?: string, limit = 100, live?: Database) {
+  const store = browseStore(dataDir, folder, id, live);
   const channel = store.getChannel(channelId);
   if (channel.kind === "dm") throw new Error("DMs between kinwriters aren't shown here.");
   let messages: Message[] = store.getMessages(channelId);
@@ -264,9 +306,9 @@ export function browseMessages(dataDir: string, folder: string, id: string, chan
 // ------------------------------------------------------- export, import
 
 /**
- * A kinwriter as one file. `source` is their open database (the current
- * one) or their folder's path (an old one); their emoji images come from
- * their folder either way.
+ * A kinwriter as one file, from their folder `dir`. `open` is their open
+ * database, for the current one (an old one's is read from its folder);
+ * their emoji images come from their folder either way.
  */
 export function exportKinwriter(dir: string, name: string, open?: Database): KinwriterBundle {
   const work = mkdtempSync(join(tmpdir(), "kinaera-export-"));
@@ -335,20 +377,62 @@ export function writeKinwriter(target: string, bundle: KinwriterBundle): void {
 
 // --------------------------------------------------------- fresh start
 
+/** The settings every kinwriter shares, from a folder's hub.json (none in an older folder). */
+function sharedSettings(dataDir: string): Partial<Settings> {
+  try {
+    const registry = JSON.parse(readFileSync(join(dataDir, "hub.json"), "utf8")) as { settings?: Partial<Settings> };
+    return registry.settings ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The kinwriter a fresh start takes your profiles and preferences from: the
+ * first one in the sidebar who isn't archived (an archived one missed the
+ * newest changes), as a folder relative to the data folder. The first
+ * kinwriter may have been deleted, so it's not always the data folder itself.
+ * Null when there's no kinwriter's database at all.
+ */
+export function freshSource(dataDir: string): string | null {
+  let order: string[] = [];
+  try {
+    const registry = renamedRegistry<{ servers?: { kinwriters?: string[] }[] }>(JSON.parse(readFileSync(join(dataDir, "hub.json"), "utf8")));
+    order = (registry.servers ?? []).flatMap((s) => s.kinwriters ?? []);
+  } catch {
+    // An older folder, with no hub.json: just the one kinwriter.
+  }
+  const entries = folderEntries(dataDir).filter((f) => !f.archived);
+  const sorted = [...entries].sort((a, b) => rank(order, a.id) - rank(order, b.id));
+  return sorted.find((f) => existsSync(join(dataDir, f.dir, "kinaera.db")))?.dir ?? null;
+}
+
+/** Where an id is in the sidebar's order (not there: last). */
+const rank = (order: string[], id: string) => (order.includes(id) ? order.indexOf(id) : order.length);
+
 /**
  * Set the whole data folder aside and start over (everything must be
- * closed first). What's yours carries over: your connection profiles and
- * roulettes, your preferences (not what makes the kinwriter themselves),
- * your themes and your prompt edits. Returns where the old folder went.
+ * closed first). What's yours carries over, from the first kinwriter in
+ * the sidebar (`freshSource`): your connection profiles and roulettes, your
+ * preferences (not what makes the kinwriter themselves), your themes, background pictures and
+ * your prompt edits. Returns where the old folder went.
  */
-export function startFresh(
-  dataDir: string,
-  keep: { kinwriterKeys: (keyof Settings)[]; copyProfiles: (source: Database, target: Database) => void },
-): { aside: string; profiles: number } {
-  const old = new Store(dataDir);
-  const preferences = Object.fromEntries(
-    Object.entries(old.getSettings()).filter(([key]) => !keep.kinwriterKeys.includes(key as keyof Settings)),
-  ) as Partial<Settings>;
+export function startFresh(dataDir: string, keep: { kinwriterKeys: (keyof Settings)[] }): { aside: string; profiles: number } {
+  const source = freshSource(dataDir);
+  if (source === null) throw new Error("There's no kinwriter here to start fresh from.");
+  const old = new Store(resolve(dataDir, source), { example: false });
+  // A section that was just theirs starts from the defaults, unless it's shared (below).
+  const own = ownKeys(old);
+  const defaults = defaultSettings();
+  const preferences = {
+    ...Object.fromEntries(
+      Object.entries(old.getSettings())
+        .filter(([key]) => !keep.kinwriterKeys.includes(key as keyof Settings))
+        .map(([key, value]) => [key, own.has(key as keyof Settings) ? defaults[key as keyof Settings] : value]),
+    ),
+    // The shared settings (src/universal.ts), not that kinwriter's own sections.
+    ...sharedSettings(dataDir),
+  } as Partial<Settings>;
   old.close();
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
   let aside = `${resolve(dataDir)}-old-${stamp}`;
@@ -358,9 +442,9 @@ export function startFresh(
   // No example character: you make your new kinwriter yourself, in the app.
   const store = new Store(dataDir, { example: false });
   // Opened normally, not read-only: closing it then leaves no side files in the old folder.
-  const previous = new Database(join(aside, "kinaera.db"));
+  const previous = new Database(join(aside, source, "kinaera.db"));
   const profiles = (previous.query("SELECT COUNT(*) AS n FROM profiles").get() as { n: number }).n;
-  keep.copyProfiles(previous, store.db);
+  syncProfiles(previous, store.db);
   previous.close();
   store.updateSettings(preferences);
   // The app opens on "Meet your new kinwriter"; their orientation is offered once they're made.
@@ -368,6 +452,34 @@ export function startFresh(
   store.appState.set(SETUP_PENDING, "1");
   store.close();
   if (existsSync(join(aside, "themes"))) cpSync(join(aside, "themes"), join(dataDir, "themes"), { recursive: true });
+  if (existsSync(join(aside, "backgrounds"))) cpSync(join(aside, "backgrounds"), join(dataDir, "backgrounds"), { recursive: true });
   if (existsSync(join(aside, "prompts.json"))) cpSync(join(aside, "prompts.json"), join(dataDir, "prompts.json"));
   return { aside, profiles };
+}
+
+/**
+ * Whether Kinaera is running at `host`:`port`, for `bun run fresh` (which
+ * mustn't move the folder out from under it): "stopped" only when nothing
+ * is listening there (the connection is refused). Anything else (it took
+ * too long, or another error) is "unknown": better to refuse than guess.
+ */
+export async function serverState(host: string, port: number, timeoutMs = 1500): Promise<"running" | "stopped" | "unknown"> {
+  // Listening on every address: it answers on this machine's own.
+  const hostname = host === "" || host === "0.0.0.0" ? "127.0.0.1" : host === "::" || host === "[::]" ? "::1" : host.replace(/^\[(.*)\]$/, "$1");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const connecting = Bun.connect({ hostname, port, socket: { data() {} } });
+    const timeout = new Promise<null>((done) => (timer = setTimeout(() => done(null), timeoutMs)));
+    const socket = await Promise.race([connecting, timeout]);
+    if (!socket) {
+      void connecting.then((s) => s.end(), () => {});
+      return "unknown";
+    }
+    socket.end();
+    return "running";
+  } catch (error) {
+    return (error as { code?: string }).code === "ECONNREFUSED" ? "stopped" : "unknown";
+  } finally {
+    clearTimeout(timer);
+  }
 }

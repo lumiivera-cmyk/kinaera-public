@@ -171,7 +171,7 @@ async function browseChannel(folder, k, channelId, before = null, earlier = []) 
   try {
     const data = await api("GET", `${base(folder, k.id)}/channels/${encodeURIComponent(channelId)}${before ? `?before=${encodeURIComponent(before)}` : ""}`);
     const messages = [...data.messages, ...earlier];
-    const who = (m) => (m.author === "friend" ? k.name : m.author === "user" ? "You" : (m.speaker ?? m.author));
+    const who = (m) => (m.author === "kinwriter" ? k.name : m.author === "user" ? "You" : (m.speaker ?? m.author));
     const list = el(
       "ol",
       { className: "old-messages" },

@@ -12,6 +12,14 @@ A wake-up you set for yourself is due. Your note to yourself: "{note}" (you set 
 
 A free moment: nobody asked for anything, and this time is yours. You can text the user if something's on your mind, write in your journal, work on a draft, tidy the notebook, or do nothing at all. Doing nothing is a perfectly good use of it.
 
+## heartbeat-check
+
+Before you take this moment, just decide: is there anything you'd want to do with it right now (text the user, or use your tools for something of your own)? Don't do it yet. Answer with one word: YES if you'd use it, NO if you'd let it pass.
+
+## check-tools
+
+The tools you'd have on this turn. Using them for something of your own (the notebook, a scratchpad, your journal, a draft, reading a channel) is using the moment too, even if you don't text the user:
+
 ## review
 
 Something is waiting for you to look at (see "Waiting").

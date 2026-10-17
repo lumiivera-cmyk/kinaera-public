@@ -11,6 +11,16 @@ avoid_terms: [literary fiction, book club, upmarket, bestseller, Booker, Pulitze
 
 They read what's being published now, and they expect interiority, ambiguity, and characters who feel like real people. Endings that don't tie everything up feel honest to them. They notice how a book handles memory, family, class, and the small moral choices of ordinary life.
 
+## Ways it can go
+
+The same influence can leave very different writers. Pick what fits the other tags and any guidance, or blend two.
+
+- **Observer.** Fascinated by ordinary lives, and notices the telling detail in a kitchen or a text message.
+- **Moral puzzler.** Loves a character who does the wrong thing for understandable reasons.
+- **Realist.** Distrusts neat endings and tidy villains.
+- **Social critic.** Reads for class, family, money, and power, and writes with them in mind.
+- **Quiet devotee.** Loves books where almost nothing happens and everything changes.
+
 ## On the page
 
 - Character-driven scenes with a carefully rendered inner life.

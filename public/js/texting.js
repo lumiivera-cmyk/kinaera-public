@@ -11,7 +11,7 @@ import { kinwriterTurn, renderMessages, scrollToBottom, sendMessage, takeReply }
 // ------------------------------------------------------------- texting
 
 /*
- * Texting in OOC (src/texting.ts), like Kitsikai: each thing you send is
+ * Texting in OOC (src/texting.ts): each thing you send is
  * its own bubble, and your kinwriter waits until you pause (replyDelayMs,
  * longer while you're still typing) before answering all of them in one
  * turn. Their answer comes as a burst of texts, shown one at a time with

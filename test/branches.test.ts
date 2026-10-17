@@ -28,7 +28,7 @@ afterEach(() => {
   dir.cleanup();
 });
 
-const say = (author: "user" | "friend", content: string): Message =>
+const say = (author: "user" | "kinwriter", content: string): Message =>
   app.store.addTurn([{ channelId: story.id, author, content }])[0]!;
 
 const chat = () => app.store.getMessages(story.id).map((m) => m.content);
@@ -47,7 +47,7 @@ async function call(method: string, path: string, body?: unknown) {
 describe("going back to a message", () => {
   test("sets aside what came after it as a branch, and you can return to it", async () => {
     const a = say("user", "A");
-    say("friend", "B");
+    say("kinwriter", "B");
     say("user", "C");
     const { status, data } = await call("POST", `/api/messages/${a.id}/branch`, {});
     expect(status).toBe(200);
@@ -56,7 +56,7 @@ describe("going back to a message", () => {
     expect(data.branches[0]).toMatchObject({ forkId: a.id, count: 2, first: { content: "B" }, last: { content: "C" } });
 
     // A new direction, then back to the first one: the new one is kept too.
-    say("friend", "B2");
+    say("kinwriter", "B2");
     const back = await call("POST", `/api/channels/${story.id}/branches/switch`, { branchId: data.branches[0].id });
     expect(back.data.messages.map((m: Message) => m.content)).toEqual(["A", "B", "C"]);
     expect(back.data.branches.map((b: { first: Message }) => b.first.content)).toEqual(["B2"]);
@@ -65,13 +65,13 @@ describe("going back to a message", () => {
 
   test("branches inside a branch come and go with it", async () => {
     const a = say("user", "A");
-    const b = say("friend", "B");
+    const b = say("kinwriter", "B");
     say("user", "C");
     app.store.branchFrom(b.id); // at B: [C]
     say("user", "C2");
     const outer = app.store.branchFrom(a.id)!; // at A: [B, C2]
     expect(app.store.branches(story.id).map((x) => x.forkId)).toEqual([a.id]);
-    say("friend", "Z");
+    say("kinwriter", "Z");
     app.store.switchBranch(outer.id);
     expect(chat()).toEqual(["A", "B", "C2"]);
     // Both are reachable again: [C] at B, and [Z] at A.
@@ -86,7 +86,7 @@ describe("going back to a message", () => {
 
   test("branched messages leave the prompt", async () => {
     const a = say("user", "I knock.");
-    say("friend", "Nobody answers.");
+    say("kinwriter", "Nobody answers.");
     app.store.branchFrom(a.id);
     fake.replies.push({ content: "The door opens." });
     await call("POST", `/api/channels/${story.id}/turn`, {});
@@ -96,7 +96,7 @@ describe("going back to a message", () => {
 
   test("deleting the message a branch follows moves the branch to the one before", async () => {
     const a = say("user", "A");
-    const b = say("friend", "B");
+    const b = say("kinwriter", "B");
     say("user", "C");
     app.store.branchFrom(b.id);
     app.store.deleteMessage(b.id);
@@ -165,7 +165,7 @@ describe("bringing back an earlier version of a reply", () => {
   });
 
   test("only a replaced reply can come back", async () => {
-    const m = say("friend", "Hi.");
+    const m = say("kinwriter", "Hi.");
     expect((await call("POST", `/api/messages/${m.id}/use`, {})).status).toBe(400);
   });
 });

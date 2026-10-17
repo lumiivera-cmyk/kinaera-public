@@ -14,21 +14,30 @@
  *   format.js       escaping and formatting text
  *   live.js         live updates, and new versions of the app
  *   channels.js     channels, categories and the sidebar
+ *   groups.js       group channels and DMs between kinwriters
  *   messages.js     messages and turns
  *   composer.js     the box you write in, and attachments
  *   summaries.js    scene summaries and the story so far
  *   comments.js     comment threads
+ *   rewrites.js     suggesting new words for their messages
  *   reactions.js    emoji reactions and custom emojis
  *   texting.js      texting in OOC
+ *   scratchpad.js   a story channel's scratchpads
  *   notebook.js     the notebook, entries, folders and casts
  *   library.js      the reference library
  *   inbox.js        asks, proposals and suggestions
  *   history.js      message history, the intervention log, the check log
  *   branches.js     going back to a message, and the branches it leaves
  *   settings.js     settings, profiles, roulettes, logs
+ *   profile-inline.js  a profile's settings, editable where it's picked
+ *   model-info.js   which settings each model supports
+ *   prompts.js      the Prompts screen: wording, and the dry run
+ *   health.js       health, on a kinwriter's page, and the developer panel link
+ *   datafolders.js  data folders, in the developer panel
  *   themes.js       themes and appearance
  *   kinwriter-page.js  kinwriters, servers and the kinwriter menu
  *   kinwriter-self.js  the kinwriter's page: self-notes, self-page, orientation
+ *   orientation.js  choosing an orientation, and watching it happen
  *   seeds.js        the seed picker: defaults, tags, an idea, the preview
  *   setup.js        making your new kinwriter, after a fresh start
  */
@@ -87,7 +96,17 @@ import {
   sayOpened,
   sendPresence,
 } from "./live.js";
-import { kinwriterTurn, newScene, regenerate, sendMessage, startBusyWatch, stopTurn, takeReply } from "./messages.js";
+import {
+  foldQuietOn,
+  kinwriterTurn,
+  newScene,
+  regenerate,
+  sendMessage,
+  setFoldQuiet,
+  startBusyWatch,
+  stopTurn,
+  takeReply,
+} from "./messages.js";
 import {
   changeCast,
   deleteEntry,
@@ -132,12 +151,15 @@ import {
   LAST_THEME_KEY,
   chooseEffects,
   copyTheme,
+  deleteBackground,
   deleteTheme,
   loadThemes,
   openAppearance,
   openThemeEditor,
   saveTheme,
   setStylesheet,
+  slideBackgroundDim,
+  uploadBackground,
   uploadThemeFiles,
   watchForStutter,
 } from "./themes.js";
@@ -172,12 +194,16 @@ els.input.addEventListener("input", autoGrow);
 
 els.turn.addEventListener("click", kinwriterTurn);
 $("stop-button").addEventListener("click", stopTurn);
-$("appearance-button").addEventListener("click", openAppearance);
+$("appearance-button").addEventListener("click", () => {
+  $("fold-quiet").checked = foldQuietOn();
+  openAppearance();
+});
 $("theme-copy").addEventListener("click", copyTheme);
 $("theme-edit").addEventListener("click", () => openThemeEditor(state.settings.appTheme));
 $("theme-delete").addEventListener("click", deleteTheme);
 $("appearance-dialog").addEventListener("change", (event) => {
   if (event.target.name === "effects") chooseEffects(event.target.value);
+  if (event.target.name === "fold-quiet") setFoldQuiet(event.target.checked);
 });
 $("theme-editor-form").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -188,6 +214,13 @@ $("theme-upload").addEventListener("change", (event) => {
   uploadThemeFiles([...event.target.files]);
   event.target.value = ""; // so choosing the same file again still counts
 });
+$("background-upload").addEventListener("change", (event) => {
+  uploadBackground(event.target.files[0]);
+  event.target.value = "";
+});
+$("background-remove").addEventListener("click", deleteBackground);
+$("background-dim").addEventListener("input", (event) => slideBackgroundDim(Number(event.target.value), false));
+$("background-dim").addEventListener("change", (event) => slideBackgroundDim(Number(event.target.value), true));
 $("notice-dismiss").addEventListener("click", () => ($("notice").hidden = true));
 els.messages.addEventListener("scroll", watchForStutter, { passive: true });
 $("scene-button").addEventListener("click", newScene);
@@ -199,7 +232,7 @@ $("update-reload").addEventListener("click", () => location.reload());
 
 // Coming back to the app (switching to it, unlocking the phone) is when an
 // update is most likely to have happened while it sat in the background,
-// and, after a while away, a chance for your kinwriter to say hi (stage 8).
+// and, after a while away, a chance for your kinwriter to say hi.
 let hiddenAt = null;
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") {
@@ -252,7 +285,7 @@ els.settingsForm.elements.summaries.addEventListener("change", updateSummariesOn
 els.settingsForm.elements.wakeups.addEventListener("change", updateWakeupsOnly);
 $("test-jev").addEventListener("click", testJevNow);
 $("open-check-log").addEventListener("click", openCheckLog);
-$("friend-check-log").addEventListener("click", openCheckLog);
+$("kinwriter-check-log").addEventListener("click", openCheckLog);
 $("check-log-copy").addEventListener("click", copyCheckLog);
 els.channelForm.addEventListener("submit", saveChannel);
 $("channel-move-up").addEventListener("click", () => moveChannel(-1));
@@ -268,7 +301,7 @@ $("delete-channel").addEventListener("click", deleteChannel);
 $("cast-add").addEventListener("change", (event) => {
   const value = event.target.value;
   event.target.value = "";
-  if (value.startsWith("new:")) openEntry({ kind: value.slice(4), owner: "friend" }, state.channelId);
+  if (value.startsWith("new:")) openEntry({ kind: value.slice(4), owner: "kinwriter" }, state.channelId);
   else if (value) changeCast(value, true);
 });
 
@@ -329,7 +362,7 @@ $("regenerate-form").addEventListener("submit", (event) => {
   regenerate($("regenerate-profile").value || undefined);
 });
 
-// Stage 6: activity, tool log, inbox, comments, attachments.
+// Activity, tool log, inbox, comments, attachments.
 $("inbox-button").addEventListener("click", openInbox);
 $("open-interventions").addEventListener("click", openInterventions);
 $("open-tool-log").addEventListener("click", openToolLog);
@@ -342,13 +375,13 @@ $("thread-form").addEventListener("submit", sendComment);
 $("thread-resolve").addEventListener("click", resolveThread);
 $("thread-picker").addEventListener("change", (event) => openThread(event.target.value));
 els.messages.addEventListener("click", (event) => {
-  const mark = event.target.closest(".comment-mark");
-  if (mark) openThread(mark.dataset.thread);
+  // Words can carry a comment and a suggestion at once: the innermost mark wins.
+  const mark = event.target.closest(".comment-mark, .rewrite-mark");
+  if (mark?.dataset.thread) openThread(mark.dataset.thread);
+  else if (mark) withdrawRewrite(mark.dataset.rewrite);
   // A #channel chip in a message opens that channel.
   const chip = event.target.closest(".channel-chip");
   if (chip) openChannel(chip.dataset.channelId);
-  const rewrite = event.target.closest(".rewrite-mark");
-  if (rewrite) withdrawRewrite(rewrite.dataset.rewrite);
 });
 document.addEventListener("selectionchange", () => {
   updateCommentButton();
@@ -406,7 +439,7 @@ loadHub()
     if (state.busy.size > 0) startBusyWatch();
     // After a fresh start, you make your new kinwriter first (js/setup.js).
     if (!maybeOpenSetup()) {
-      // You've opened the app: your kinwriter may wake up (stage 8).
+      // You've opened the app: your kinwriter may wake up.
       sayOpened();
     }
     // In an orientation (say, after a reload): back to it, in #practice.

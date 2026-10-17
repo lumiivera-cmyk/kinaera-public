@@ -14,25 +14,15 @@
  * The practice channel is never looked at.
  */
 
+import { STOPWORDS } from "./library.ts";
 import type { Store } from "./store.ts";
 import type { Channel, Message } from "./types.ts";
 
 export const MIRROR_DEFAULT = 30;
 export const MIRROR_MAX = 200;
 
-/** Words too common to say anything about someone's writing. */
-const STOPWORDS = new Set(
-  (
-    "a an the and or but if then so of to in on at by for with from as is are was were be been being am it its it's " +
-    "this that these those there here i you he she they we me him her them us my your his their our mine yours " +
-    "not no yes do does did done have has had will would can could should shall may might must just very really " +
-    "what which who whom whose when where why how all any some each every more most much many such only own same " +
-    "than too also into out up down over under again about after before while because until off through just like " +
-    "i'm you're it's that's don't can't won't didn't isn't there's let's i've i'll i'd she's he's they're we're"
-  ).split(" "),
-);
-
-const words = (text: string) => text.toLowerCase().match(/[a-z][a-z'’]*/g) ?? [];
+/** The words of a text, in any language (letters, with apostrophes inside: "don't", "l'eau"). */
+const words = (text: string) => text.toLowerCase().replace(/’/g, "'").match(/\p{L}[\p{L}\p{M}']*/gu) ?? [];
 
 /** Split into sentences (roughly: at . ! ? and line breaks). */
 function sentences(text: string): string[] {
@@ -72,9 +62,9 @@ export interface MirrorReport {
 function gather(store: Store, channels: Channel[], last: number): { mine: Message[]; others: Message[] } {
   const all = channels.flatMap((c) => store.getMessages(c.id)).filter((m) => m.kind === "post" && m.content.trim());
   all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const mine = all.filter((m) => m.author === "friend").slice(-last);
+  const mine = all.filter((m) => m.author === "kinwriter").slice(-last);
   const since = mine[0]?.createdAt ?? "";
-  const others = all.filter((m) => m.author !== "friend" && m.createdAt >= since);
+  const others = all.filter((m) => m.author !== "kinwriter" && m.createdAt >= since);
   return { mine, others };
 }
 

@@ -180,8 +180,10 @@ export class Inbox {
   // ----------------------------------------------------------- proposals
 
   /**
-   * Your kinwriter proposes deleting a channel. Proposing the same thing twice
-   * while the first is still waiting returns the first.
+   * Your kinwriter proposes deleting a channel, or a new name for
+   * themselves (`rename`). Proposing the same deletion twice while the
+   * first is still waiting returns the first; a new name while one is
+   * waiting replaces the name asked for.
    */
   propose(kind: ProposalKind, targetId: string, targetName: string, reason: string): InboxItem {
     const existing = this.db

@@ -4,11 +4,11 @@
  *
  * Every method takes an `actor`: who is asking, you (`"user"`) or your
  * kinwriter (`"kinwriter"`). Each one checks the rules in `src/permissions.ts`
- * before doing anything, so the same code serves you now and your kinwriter's
- * tools in stage 6. Things hidden from the actor behave as if they don't
+ * before doing anything, so the same code serves you and your kinwriter's
+ * tools. Things hidden from the actor behave as if they don't
  * exist (`NotFoundError`), so nothing leaks through an error message.
  *
- * Tables (see migration 4 in `src/db.ts`):
+ * Tables (see migration 1 in `src/db.ts`):
  *
  *   notebook_folders      folders, with the settings they pass down
  *   notebook_entries      characters and lore
@@ -79,7 +79,7 @@ export const ENTRY_TEMPLATES: Record<EntryKind, string[]> = {
 // ------------------------------------------------------------- validation
 
 const LIMITS = { name: 100, label: 60, value: 20_000, fields: 50, systemPrompt: 20_000 } as const;
-const OWNERS: Owner[] = ["user", "friend", "joint"];
+const OWNERS: Owner[] = ["user", "kinwriter", "joint"];
 const VISIBILITIES: Visibility[] = ["visible", "hidden"];
 const EDITINGS: Editing[] = ["open", "suggest", "locked"];
 
@@ -298,9 +298,9 @@ export class Notebook {
 
   /** Make the Practice folder: your kinwriter's, visible to you, for orientation's sample notes. */
   createPracticeFolder(): NotebookFolder {
-    const folder = this.createFolder("friend", { name: "Practice", editing: "open" });
+    const folder = this.createFolder("kinwriter", { name: "Practice", editing: "open" });
     this.db.query("UPDATE notebook_folders SET practice = 1 WHERE id = $id").run({ id: folder.id });
-    return this.getFolder("friend", folder.id);
+    return this.getFolder("kinwriter", folder.id);
   }
 
   /** One entry the actor can see. Hidden or missing entries are `NotFoundError`. */
@@ -312,12 +312,12 @@ export class Notebook {
 
   /**
    * Make an entry. The actor can make entries of their own or shared ones;
-   * you can also make one for your kinwriter (they can't make their own until
-   * stage 6). Starts from its kind's template if no fields are given.
+   * you can also make one for your kinwriter. Starts from its kind's
+   * template if no fields are given.
    */
   createEntry(actor: Author, input: Record<string, unknown>): EntryView {
     const kind = oneOf(input.kind ?? "character", ["character", "lore"], "kind");
-    const allowedOwners: Owner[] = actor === "user" ? OWNERS : ["friend", "joint"];
+    const allowedOwners: Owner[] = actor === "user" ? OWNERS : ["kinwriter", "joint"];
     const owner = input.owner === undefined ? actor : oneOf(input.owner, allowedOwners, "owner");
     // Only an entry's owner chooses who else can see and edit it.
     const hasSettings = (input.visibility ?? null) !== null || (input.editing ?? null) !== null;
@@ -448,7 +448,10 @@ export class Notebook {
     const rows = this.db
       .query("SELECT * FROM notebook_suggestions WHERE status = 'pending' ORDER BY created_at")
       .all() as SuggestionRow[];
-    return rows.map(toSuggestion).filter((s) => this.canSeeEntry(actor, s.entryId));
+    return rows
+      .map(toSuggestion)
+      .filter((s) => this.canSeeEntry(actor, s.entryId))
+      .map((s) => ({ ...s, change: this.rebase(s, this.rawEntry(s.entryId)!) }));
   }
 
   /**
@@ -464,11 +467,31 @@ export class Notebook {
     this.db.transaction(() => {
       if (decision === "accepted") {
         if (suggestion.change.delete) this.db.query("DELETE FROM notebook_entries WHERE id = $id").run({ id: entry.id });
-        else this.applyChange(entry.id, suggestion.change, entry.proxyPrefix);
+        else this.applyChange(entry.id, this.rebase(suggestion, this.rawEntry(entry.id)!), entry.proxyPrefix);
       }
       this.resolveSuggestion(id, decision);
     })();
-    return { ...suggestion, status: decision };
+    return { ...suggestion, change: withoutBase(suggestion.change), status: decision };
+  }
+
+  /**
+   * What accepting a suggestion would change now. A suggestion holds the
+   * entry's name, fields and notes as they were when it was made (`base`),
+   * with the suggested ones: only what it changed is taken, so an edit
+   * made since isn't undone. (Older suggestions, without a base, are taken
+   * as they are.)
+   */
+  private rebase(suggestion: Suggestion, entry: NotebookEntry): SuggestedChange {
+    const { base, ...change } = suggestion.change;
+    if (!base || change.delete) return change;
+    const result: SuggestedChange = {};
+    if (change.name !== undefined && change.name !== base.name) result.name = change.name;
+    if (change.systemPrompt !== undefined && change.systemPrompt !== base.systemPrompt) result.systemPrompt = change.systemPrompt;
+    if (change.fields !== undefined) {
+      const fields = mergeFields(base.fields, change.fields, entry.fields);
+      if (JSON.stringify(fields) !== JSON.stringify(entry.fields)) result.fields = fields;
+    }
+    return result;
   }
 
   /**
@@ -479,7 +502,7 @@ export class Notebook {
   reviewerOf(suggestion: Suggestion): Author {
     const entry = this.rawEntry(suggestion.entryId);
     if (!entry || entry.owner === "joint" || entry.owner === suggestion.author) {
-      return suggestion.author === "user" ? "friend" : "user";
+      return suggestion.author === "user" ? "kinwriter" : "user";
     }
     return entry.owner;
   }
@@ -557,7 +580,7 @@ export class Notebook {
     const folders = this.folderMap();
     const toPrompt = (entry: NotebookEntry): PromptEntry | null => {
       const settings = this.settingsOf(entry, folders);
-      if (!canSee("friend", settings)) return null;
+      if (!canSee("kinwriter", settings)) return null;
       return { entry, hiddenFromUser: !canSee("user", settings) };
     };
 
@@ -594,7 +617,7 @@ export class Notebook {
       const entry = this.rawEntry(id);
       if (!entry) return [];
       const settings = this.settingsOf(entry, folders);
-      if (!canSee("friend", settings)) return [];
+      if (!canSee("kinwriter", settings)) return [];
       return [{ entry, hiddenFromUser: !canSee("user", settings) }];
     });
   }
@@ -606,7 +629,7 @@ export class Notebook {
   kinwriterOverview(): PromptEntry[] {
     const folders = this.folderMap();
     return this.allEntries()
-      .filter((entry) => canSee("friend", this.settingsOf(entry, folders)) && !this.isPractice(entry, folders))
+      .filter((entry) => canSee("kinwriter", this.settingsOf(entry, folders)) && !this.isPractice(entry, folders))
       .map((entry) => ({ entry, hiddenFromUser: !canSee("user", this.settingsOf(entry, folders)) }));
   }
 
@@ -665,7 +688,7 @@ export class Notebook {
   private view(actor: Author, entry: NotebookEntry, folders = this.folderMap()): EntryView {
     const settings = this.settingsOf(entry, folders);
     let edit = editAccess(actor, settings);
-    if (actor === "friend" && edit === "suggest" && settings.owner === "user" && this.directEdits()) edit = "direct";
+    if (actor === "kinwriter" && edit === "suggest" && settings.owner === "user" && this.directEdits()) edit = "direct";
     const pinnedIn = (
       this.db.query("SELECT channel_id FROM channel_cast WHERE entry_id = $id").all({ id: entry.id }) as {
         channel_id: string;
@@ -720,13 +743,17 @@ export class Notebook {
 
   private addSuggestion(actor: Author, entryId: string, change: SuggestedChange): Suggestion {
     const id = crypto.randomUUID();
+    // What it was like when suggested, so accepting takes only what changed (see `rebase`).
+    const entry = this.rawEntry(entryId)!;
+    if (!change.delete) change = { ...change, base: { name: entry.name, fields: entry.fields, systemPrompt: entry.systemPrompt } };
     this.db
       .query(
         `INSERT INTO notebook_suggestions (id, entry_id, author, change, created_at)
          VALUES ($id, $entryId, $actor, $change, $now)`,
       )
       .run({ id, entryId, actor, change: JSON.stringify(change), now: new Date().toISOString() });
-    return this.getSuggestion(actor, id);
+    const suggestion = this.getSuggestion(actor, id);
+    return { ...suggestion, change: withoutBase(suggestion.change) };
   }
 
   private getSuggestion(actor: Author, id: string): Suggestion {
@@ -752,6 +779,30 @@ interface SuggestionRow {
   status: Suggestion["status"];
   created_at: string;
   resolved_at: string | null;
+}
+
+/** A suggested change without the snapshot it was made against (kept for `rebase`, not shown). */
+function withoutBase(change: SuggestedChange): SuggestedChange {
+  const { base: _base, ...rest } = change;
+  return rest;
+}
+
+/**
+ * Three-way merge of an entry's fields, by label: a field the suggestion
+ * changed (from `base`) takes its value, one it removed goes, one it added
+ * is added; everything else stays as it is now.
+ */
+function mergeFields(base: EntryField[], suggested: EntryField[], current: EntryField[]): EntryField[] {
+  const before = new Map(base.map((f) => [f.label, f.value]));
+  const after = new Map(suggested.map((f) => [f.label, f.value]));
+  const merged = current
+    .filter((f) => !(before.has(f.label) && !after.has(f.label)))
+    .map((f) => (after.has(f.label) && after.get(f.label) !== before.get(f.label) ? { label: f.label, value: after.get(f.label)! } : f));
+  const have = new Set(merged.map((f) => f.label));
+  for (const f of suggested) {
+    if (!before.has(f.label) && !have.has(f.label)) merged.push(f);
+  }
+  return merged;
 }
 
 function toSuggestion(row: SuggestionRow): Suggestion {

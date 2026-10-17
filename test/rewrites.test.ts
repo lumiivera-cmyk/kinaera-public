@@ -44,7 +44,7 @@ async function call(method: string, path: string, body?: unknown) {
 }
 
 const ctx = (): ToolContext => ({ store: app.store, channel: story, mode: "post" });
-const theirs = (content: string) => app.store.addTurn([{ channelId: story.id, author: "friend", content }])[0]!;
+const theirs = (content: string) => app.store.addTurn([{ channelId: story.id, author: "kinwriter", content }])[0]!;
 
 describe("rewrites", () => {
   test("you suggest; they see it waiting; accepting puts your words in, as their edit", async () => {
@@ -58,7 +58,7 @@ describe("rewrites", () => {
     const outcome = await runTool(ctx(), "review_rewrite", { rewrite: id, accept: true, note: "Ha, yes." });
     expect(outcome.ok).toBe(true);
     expect(app.store.getMessage(message.id).content).toBe("*Ilse sets the lamp down.* The sea's in a mood.");
-    expect(app.store.getMessage(message.id).editedBy).toBe("friend");
+    expect(app.store.getMessage(message.id).editedBy).toBe("kinwriter");
     expect(app.store.history(message.id).revisions.map((r) => r.content)[0]).toContain("cruel mistress");
     // All answered: a moment to keep a craft note, not a record of mistakes.
     expect(JSON.stringify(outcome.result)).toContain("keep_pattern_note");

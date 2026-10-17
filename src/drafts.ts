@@ -11,7 +11,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { NotFoundError, ValidationError } from "./errors.ts";
+import { findByShortId, NotFoundError, ValidationError } from "./errors.ts";
 
 export interface Draft {
   id: string;
@@ -43,7 +43,7 @@ const toDraft = (r: Row): Draft => ({
 
 /** Longest draft, and most drafts at once. */
 export const DRAFT_LIMIT = 20_000;
-export const DRAFTS_MAX = 30;
+const DRAFTS_MAX = 30;
 
 /** The short id your kinwriter uses for a draft. */
 export const draftId = (id: string) => id.slice(0, 6);
@@ -71,10 +71,7 @@ export class Drafts {
 
   /** A draft by the start of its id (as the kinwriter sees it), with or without brackets. */
   find(short: string): Draft {
-    const clean = short.trim().replace(/^\[|\]$/g, "");
-    const match = clean ? this.all().filter((d) => d.id.startsWith(clean)) : [];
-    if (match.length !== 1) throw new NotFoundError("draft");
-    return match[0]!;
+    return findByShortId(this.all(), short, "draft");
   }
 
   /** A new draft. */

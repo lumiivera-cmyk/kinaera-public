@@ -32,3 +32,26 @@ describe("formatText", () => {
     expect(format.formatText("*walks in* ***stop*** **now**")).toBe("<em>walks in</em> <strong><em>stop</em></strong> <strong>now</strong>");
   });
 });
+
+describe("quietSummary", () => {
+  const call = (summary: string, status = "ok") => ({ summary, status });
+  test("counts actions across turns, ignoring reasons in brackets", async () => {
+    const { quietSummary } = (await import(FORMAT_JS)) as any;
+    const turns = [
+      [call("read the newest messages in #TheCell")],
+      [call("chose not to reply (giving them space)")],
+      [call("chose not to reply (waiting for them)")],
+      [call("chose not to reply")],
+    ];
+    expect(quietSummary(turns)).toBe("4 quiet turns · chose not to reply 3×, read the newest messages in #TheCell");
+  });
+  test("notes errors and turns that only thought", async () => {
+    const { quietSummary } = (await import(FORMAT_JS)) as any;
+    expect(quietSummary([[], [call("x", "error")], []])).toBe("3 quiet turns · 1 error");
+  });
+  test("keeps the line short when there are many kinds of action", async () => {
+    const { quietSummary } = (await import(FORMAT_JS)) as any;
+    const turns = ["a", "b", "c", "d", "e"].map((s) => [call(s)]);
+    expect(quietSummary(turns)).toBe("5 quiet turns · a, b, c, 2 more");
+  });
+});

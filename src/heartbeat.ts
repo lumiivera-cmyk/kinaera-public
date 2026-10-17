@@ -11,7 +11,10 @@
  * nothing.
  *
  * (Whether something is worth saying is left to your kinwriter: no model
- * grades their ideas first.)
+ * grades their ideas first.) With a heartbeat check chosen
+ * (`heartbeatAssignment`), a cheaper model reads a short version of the beat
+ * first (`buildCheckPrompt`) and only says whether they'd use the moment; the
+ * model that writes OOC is asked only on a yes (src/wakeups.ts).
  *
  * A message on a heartbeat (or any wake-up) sends a phone notification
  * when the app isn't on screen (src/notify.ts).
@@ -23,9 +26,12 @@ import type { WakeResult, Wakeups } from "./wakeups.ts";
 /** Where the next beat's time is kept (app_state). */
 const NEXT_KEY = "heartbeat.next";
 
-/** What a beat did. */
+/**
+ * What a beat did. "blocked": a hard rule held it; "skipped": another
+ * wake-up was running. Neither is logged.
+ */
 export interface BeatResult {
-  outcome: "off" | "not-due" | "blocked" | "woke" | "failed";
+  outcome: "off" | "not-due" | "blocked" | "skipped" | "woke" | "failed";
   detail: string;
   wake?: WakeResult;
 }
@@ -105,12 +111,13 @@ export class Heartbeat {
 
   /** The rules, then a free moment for your kinwriter. */
   private async beat(): Promise<BeatResult> {
-    const blocked = this.wakeups.blocked("heartbeat");
-    if (blocked) {
-      console.log(`[heartbeat] ${blocked}`);
-      return { outcome: "blocked", detail: blocked };
-    }
+    const busy = this.wakeups.isRunning();
+    // The rules are checked once, in the wake-up itself.
     const wake = await this.wakeups.event("heartbeat");
-    return { outcome: "woke", detail: `${wake.outcome ?? "skipped"}: ${wake.detail}`, wake };
+    if (wake.outcome === null) {
+      console.log(`[heartbeat] ${wake.detail}`);
+      return { outcome: busy ? "skipped" : "blocked", detail: wake.detail, wake };
+    }
+    return { outcome: "woke", detail: `${wake.outcome}: ${wake.detail}`, wake };
   }
 }

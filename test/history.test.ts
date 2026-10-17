@@ -33,7 +33,7 @@ afterEach(() => {
   dir.cleanup();
 });
 
-const say = (author: "user" | "friend", content: string, channel = story): Message =>
+const say = (author: "user" | "kinwriter", content: string, channel = story): Message =>
   app.store.addTurn([{ channelId: channel.id, author, content }])[0]!;
 
 async function call(method: string, path: string, body?: unknown) {
@@ -49,15 +49,15 @@ async function call(method: string, path: string, body?: unknown) {
 
 describe("editing keeps every version", () => {
   test("the first edit saves the original too; later edits add to it", async () => {
-    const m = say("friend", "*Ilse sets the lamp down.*");
+    const m = say("kinwriter", "*Ilse sets the lamp down.*");
     app.store.editMessage(m.id, "*Ilse sets the lamp down, slowly.*", "user");
-    app.store.editMessage(m.id, "*Ilse sets the lamp down.* Well?", "friend");
+    app.store.editMessage(m.id, "*Ilse sets the lamp down.* Well?", "kinwriter");
     const { message, revisions } = app.store.history(m.id);
-    expect(message).toMatchObject({ content: "*Ilse sets the lamp down.* Well?", editedBy: "friend" });
+    expect(message).toMatchObject({ content: "*Ilse sets the lamp down.* Well?", editedBy: "kinwriter" });
     expect(revisions.map((r) => [r.author, r.content])).toEqual([
-      ["friend", "*Ilse sets the lamp down.*"],
+      ["kinwriter", "*Ilse sets the lamp down.*"],
       ["user", "*Ilse sets the lamp down, slowly.*"],
-      ["friend", "*Ilse sets the lamp down.* Well?"],
+      ["kinwriter", "*Ilse sets the lamp down.* Well?"],
     ]);
   });
 
@@ -70,13 +70,13 @@ describe("editing keeps every version", () => {
 
   test("your kinwriter can edit only their own messages", async () => {
     const yours = say("user", "I knock.");
-    expect(() => app.store.editMessage(yours.id, "I kick the door.", "friend")).toThrow(/only edit your own/);
+    expect(() => app.store.editMessage(yours.id, "I kick the door.", "kinwriter")).toThrow(/only edit your own/);
   });
 });
 
 describe("deleting leaves a tombstone", () => {
   test("gone from the chat and the prompt, kept in history", async () => {
-    const m = say("friend", "A line I regret.");
+    const m = say("kinwriter", "A line I regret.");
     say("user", "Hm.");
     app.store.deleteMessage(m.id, "user");
     expect(app.store.getMessages(story.id).map((x) => x.content)).toEqual(["Hm."]);
@@ -89,7 +89,7 @@ describe("deleting leaves a tombstone", () => {
 
   test("clearing a channel keeps every message as a tombstone", async () => {
     say("user", "one");
-    say("friend", "two");
+    say("kinwriter", "two");
     app.store.clearMessages(story.id);
     expect(app.store.getMessages(story.id)).toEqual([]);
     expect(app.store.lastMessage(story.id)).toBeUndefined();
@@ -118,9 +118,9 @@ describe("regenerating keeps the old reply as an alternate", () => {
 describe("the intervention log", () => {
   test("records what you do to your kinwriter's messages, and only that", async () => {
     const yours = say("user", "I wave.");
-    const theirs = say("friend", "*Ilse turns.*");
+    const theirs = say("kinwriter", "*Ilse turns.*");
     app.store.editMessage(yours.id, "I wave, soaked.");
-    app.store.editMessage(theirs.id, "*Ilse turns, frowning.*", "friend");
+    app.store.editMessage(theirs.id, "*Ilse turns, frowning.*", "kinwriter");
     expect(app.store.interventions.recent()).toEqual([]);
 
     await call("PATCH", `/api/messages/${theirs.id}`, { content: "*Ilse turns and smiles.*" });
@@ -133,7 +133,7 @@ describe("the intervention log", () => {
   });
 
   test("records changes to who your kinwriter is and how they write, not other settings", async () => {
-    await call("PUT", "/api/settings", { friendPrompt: "You are Arlo, a lighthouse romantic.", literaryPrompt: "Write long.", historyLimit: 30 });
+    await call("PUT", "/api/settings", { kinwriterPrompt: "You are Arlo, a lighthouse romantic.", literaryPrompt: "Write long.", historyLimit: 30 });
     const { data } = await call("GET", "/api/interventions");
     // Their self-notes are theirs (src/selfnotes.ts): private, so a change to them from here is ignored.
     expect(data.interventions.map((e: { summary: string }) => e.summary)).toEqual(["The user changed how you write in literary scenes."]);
@@ -141,7 +141,7 @@ describe("the intervention log", () => {
   });
 
   test("clearing a channel with your kinwriter's messages in it", async () => {
-    say("friend", "hello");
+    say("kinwriter", "hello");
     app.store.clearMessages(story.id);
     expect(app.store.interventions.recent()[0]!.summary).toBe("The user cleared every message in #story.");
   });
@@ -155,9 +155,9 @@ describe("your kinwriter's tools", () => {
   const run = (name: string, args: Record<string, unknown> = {}) => runTool(ctx, name, args);
 
   test("edit_my_message: their latest, or one they quote; never yours", async () => {
-    say("friend", "The lamp is lit.");
+    say("kinwriter", "The lamp is lit.");
     say("user", "The lamp is warm.");
-    say("friend", "Tea?");
+    say("kinwriter", "Tea?");
     expect(await run("edit_my_message", { new_text: "Tea? Or something stronger?" })).toMatchObject({ ok: true });
     expect(await run("edit_my_message", { quote: "lamp is lit", new_text: "The lamp is lit, barely." })).toMatchObject({ ok: true });
     expect(app.store.getMessages(story.id).map((m) => m.content)).toEqual(["The lamp is lit, barely.", "The lamp is warm.", "Tea? Or something stronger?"]);
@@ -166,8 +166,8 @@ describe("your kinwriter's tools", () => {
   });
 
   test("edit_my_message and delete_my_message reach another channel when it's named", async () => {
-    say("friend", "The tide comes in grey.");
-    say("friend", "I'll fix that line.", ooc);
+    say("kinwriter", "The tide comes in grey.");
+    say("kinwriter", "I'll fix that line.", ooc);
     ctx = { store: app.store, channel: ooc, mode: "post" };
     const edited = await run("edit_my_message", { channel: "#story", new_text: "The tide comes in silver." });
     expect(edited).toMatchObject({ ok: true, result: { channel: "#story" } });
@@ -184,13 +184,13 @@ describe("your kinwriter's tools", () => {
   });
 
   test("delete_my_message", async () => {
-    say("friend", "Oops, wrong channel.");
+    say("kinwriter", "Oops, wrong channel.");
     expect(await run("delete_my_message", {})).toMatchObject({ ok: true });
     expect(app.store.getMessages(story.id)).toEqual([]);
   });
 
   test("read_message_history shows versions and who wrote them", async () => {
-    const m = say("friend", "Original.");
+    const m = say("kinwriter", "Original.");
     app.store.editMessage(m.id, "Edited by the user.");
     const outcome = await run("read_message_history", { quote: "Edited by" });
     expect(outcome.ok).toBe(true);
@@ -206,24 +206,24 @@ describe("your kinwriter's tools", () => {
 
   test("read_interventions", async () => {
     expect((await run("read_interventions")).result).toMatchObject({ note: "Nothing yet." });
-    const m = say("friend", "hi");
+    const m = say("kinwriter", "hi");
     app.store.deleteMessage(m.id);
     expect((await run("read_interventions")).result).toEqual([{ when: "just now", what: 'The user deleted your message in #story: "hi"' }]);
   });
 
   test("they're offered in a turn, and an edit through a real turn works", async () => {
-    say("friend", "Its a storm.", ooc);
+    say("kinwriter", "Its a storm.", ooc);
     fake.replies.push({ toolCalls: [{ name: "edit_my_message", arguments: { new_text: "It's a storm." } }] }, { content: "(fixed a typo)" });
     await call("POST", `/api/channels/${ooc.id}/turn`, {});
     const names = fake.requests[0]!.tools!.map((t: { function: { name: string } }) => t.function.name);
     expect(names).toEqual(expect.arrayContaining(["edit_my_message", "delete_my_message", "read_message_history", "read_interventions"]));
-    expect(app.store.getMessages(ooc.id)[0]).toMatchObject({ content: "It's a storm.", editedBy: "friend" });
+    expect(app.store.getMessages(ooc.id)[0]).toMatchObject({ content: "It's a storm.", editedBy: "kinwriter" });
   });
 });
 
 describe("the prompt", () => {
   test("has one honest note about edits, and no markers on edited messages", async () => {
-    const m = say("friend", "Before.");
+    const m = say("kinwriter", "Before.");
     app.store.editMessage(m.id, "After.");
     const system = promptForChannel(app.store, story.id, { profile: app.store.profiles.list()[0] })[0]!.content;
     expect(system).toContain("## Good to know");

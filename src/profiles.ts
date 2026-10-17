@@ -12,18 +12,23 @@
  * GLM. Each turn picks one at random, by weight, for variety.
  *
  * Each **job** (roleplay writing, OOC chat) is assigned a profile or a
- * roulette, server-wide, and any channel can override its own. An
- * assignment is written as `"profile:<id>"` or `"roulette:<id>"`; an empty
- * assignment means "the first profile".
+ * roulette in Settings, and any channel can override its own. An
+ * assignment is written as `"profile:<id>"` or `"roulette:<id>"`. An empty
+ * one means the default: the first profile for roleplay and OOC, the
+ * roleplay one for summaries, no check for the heartbeat, and nobody for
+ * Jev's fallback.
  */
 
 import type { Database } from "bun:sqlite";
 import { NotFoundError, ValidationError } from "./errors.ts";
-import type { Profile, ReasoningEffort, Roulette } from "./types.ts";
+import type { Profile, ReasoningEffort, Roulette, Settings } from "./types.ts";
+
+/** The settings that are assignments (each `"profile:<id>"`, `"roulette:<id>"` or `""`). */
+export const ASSIGNMENT_KEYS = ["rpAssignment", "oocAssignment", "summaryAssignment", "heartbeatAssignment", "decisionFallback"] as const satisfies readonly (keyof Settings)[];
 
 // ------------------------------------------------------------- validation
 
-const REASONING: ReasoningEffort[] = ["low", "medium", "high"];
+const REASONING: ReasoningEffort[] = ["none", "low", "medium", "high"];
 
 /** Request fields a profile's extra parameters can't override: the app sets these itself. */
 const RESERVED_PARAMS = ["model", "messages", "tools", "tool_choice", "stream"];
@@ -74,7 +79,7 @@ function profileInput(input: Record<string, unknown>): Partial<Profile> {
   if (input.minP !== undefined) clean.minP = input.minP === null ? null : number(input.minP, "minP", 0, 1);
   if (input.reasoningEffort !== undefined) {
     if (input.reasoningEffort !== null && !REASONING.includes(input.reasoningEffort as ReasoningEffort)) {
-      throw new ValidationError("reasoningEffort must be low, medium, high, or null");
+      throw new ValidationError("reasoningEffort must be none, low, medium, high, or null");
     }
     clean.reasoningEffort = input.reasoningEffort as ReasoningEffort | null;
   }
@@ -307,17 +312,8 @@ export class Profiles {
     })();
   }
 
-  /**
-   * Stop using something that's been deleted: jobs assigned to it go back to
-   * the first profile, and channels that used it go back to the server-wide
-   * assignment.
-   */
   private forgetAssignment(assignment: string): void {
-    this.db.query("UPDATE channels SET assignment = NULL WHERE assignment = $assignment").run({ assignment });
-    // Settings values are stored as JSON, so the text is in quotes.
-    this.db
-      .query("UPDATE settings SET value = '\"\"' WHERE key IN ('rpAssignment', 'oocAssignment') AND value = $value")
-      .run({ value: JSON.stringify(assignment) });
+    forgetAssignment(this.db, assignment);
   }
 
   // ---------------------------------------------------------- picking
@@ -364,7 +360,7 @@ export class Profiles {
       if (!(error instanceof NotFoundError)) throw error;
     }
     const first = this.list()[0];
-    if (!first) throw new ValidationError("There are no connection profiles. Make one in Settings → Models.");
+    if (!first) throw new ValidationError("There are no connection profiles. Make one in Settings → Profiles and roulettes.");
     return first;
   }
 
@@ -408,6 +404,19 @@ interface RouletteRow {
   name: string;
   position: number;
   created_at: string;
+}
+
+/**
+ * Stop using something that's been deleted: jobs assigned to it go back to
+ * the default (empty: see the top of this file), and channels that used it
+ * go back to the shared assignment.
+ */
+export function forgetAssignment(db: Database, assignment: string): void {
+  db.query("UPDATE channels SET assignment = NULL WHERE assignment = $assignment").run({ assignment });
+  // Settings values are stored as JSON, so the text is in quotes.
+  db.query(`UPDATE settings SET value = '""' WHERE key IN (${ASSIGNMENT_KEYS.map((k) => `'${k}'`).join(", ")}) AND value = $value`).run({
+    value: JSON.stringify(assignment),
+  });
 }
 
 /** `"profile:abc"` → `["profile", "abc"]`. */

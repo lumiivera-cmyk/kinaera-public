@@ -65,6 +65,8 @@ Keeping the generator's instructions in their own file means they can be tuned w
 **Matching rules**
 
 - Selection: one option per category, inspirations included (labeled "biggest influence" in the picker). Every category also has a "Surprise me" choice, which is the default.
+- Name is required, above the categories: "Random name" (the generator picks a given name), "Random username" (it makes up an online handle that fits them), or "I'll name them" (a typed name, up to 40 characters, which goes in the header as typed whatever the model writes). Make them won't start until one is chosen. Reroll keeps the choice.
+- Personality is the exception: the user can pick several personality tags at once (chips that toggle; none picked is "Surprise me"). Each picked personality gets its own section in the research notes, and the generator blends them into one person rather than switching between them.
 - Random fill happens in code before anything else. Rolled tags count exactly like picked ones.
 - There is no combo matching in code. Connections between tags are the generator's job.
 - A tag file that fails to load is a hard error in dev mode and a skipped tag (with a logged warning) in normal use.
@@ -130,7 +132,7 @@ A markdown file with a header for code and a body for the kinwriter. Code only e
 | Leanings | proactivity, RP modes, genres | starting points for orientation |
 | Left open | 2 or 3 questions about themselves | explored in the orientation interview |
 
-Body length: 250 to 450 words. Third person throughout (the kinwriter switches to first person in orientation).
+Body length: 250 to 600 words. Third person throughout (the kinwriter switches to first person in orientation).
 
 **Example**
 
@@ -288,7 +290,7 @@ pronouns: <pronouns>
 ## Leanings
 ## Left open
 
-The body under those headings is 250 to 450 words. Use short bullet
+The body under those headings is 250 to 600 words. Use short bullet
 points in every section except Who they are and Tension.
 ```
 
@@ -298,7 +300,7 @@ points in every section except Who they are and Tension.
 
 - `name` and `pronouns` are present and non-empty.
 - All seven headings are present, in order, with exact text.
-- The body is 250 to 450 words and uses none of the terms in any tag file's `avoid_terms` (case-insensitive, whole words).
+- The body is 250 to 600 words and uses none of the terms in any tag file's `avoid_terms` (case-insensitive, whole words).
 - Left open has two or three bullets.
 - Every Voice bullet contains a dosage word (rarely, occasionally, regularly, often).
 

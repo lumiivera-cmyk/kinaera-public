@@ -8,7 +8,7 @@
  * -----------
  * Every visual choice is a variable ("token") in the :root block below. The
  * rules further down only ever use var(--token), never a raw colour, blur or
- * shadow. A theme (stage 3.5) mostly just redefines tokens. For example, a
+ * shadow. A theme mostly just redefines tokens. For example, a
  * glassy theme might set:
  *
  *   --sidebar-bg: rgb(255 255 255 / 0.25);
@@ -57,9 +57,11 @@
 
   /* Who's who */
   --user-color: #5fb3a1;
-  --friend-color: var(--accent);
+  /* A theme of yours from before may still say --friend-color and
+     --avatar-friend-bg (their old names): those still count. */
+  --kinwriter-color: var(--friend-color, var(--accent));
   --avatar-user-bg: var(--user-color);
-  --avatar-friend-bg: var(--friend-color);
+  --avatar-kinwriter-bg: var(--avatar-friend-bg, var(--kinwriter-color));
   --avatar-text: #ffffff;
   /* Character avatars get a hue per character; these set the rest of the colour. */
   --avatar-saturation: 45%;
@@ -201,6 +203,38 @@ textarea {
 
 .channel-view:not([data-channel-theme]) > .theme-layers,
 .channel-view[data-channel-theme=""] > .theme-layers {
+  display: none !important;
+}
+
+/*
+ * Your own background picture (Appearance; src/backgrounds.ts). It sits
+ * behind everything, in place of the app theme's layers, and stays still
+ * while you scroll. <body> is isolated so the picture paints above the
+ * theme's own background colour. `--background-dim` fades it toward
+ * `--background-dim-colour` (white in light themes, black in dark ones,
+ * set by the app).
+ */
+.user-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--user-background-image) center / cover no-repeat;
+}
+
+.user-background::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--background-dim-colour, #000000);
+  opacity: var(--background-dim, 0);
+}
+
+.has-user-background body {
+  isolation: isolate;
+}
+
+.has-user-background body > .theme-layers {
   display: none !important;
 }
 
@@ -387,7 +421,7 @@ textarea {
   background: var(--sidebar-footer-bg);
 }
 
-.friend-card {
+.kinwriter-card {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -395,13 +429,13 @@ textarea {
   min-width: 0;
 }
 
-.friend-card .avatar {
+.kinwriter-card .avatar {
   width: 32px;
   height: 32px;
   font-size: 14px;
 }
 
-.friend-card-name {
+.kinwriter-card-name {
   font-weight: 600;
   color: var(--text-strong);
   overflow: hidden;
@@ -409,7 +443,7 @@ textarea {
   white-space: nowrap;
 }
 
-.friend-card-role {
+.kinwriter-card-role {
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -523,7 +557,7 @@ textarea {
   border-radius: var(--radius-avatar);
   font-weight: 700;
   color: var(--avatar-text);
-  background: var(--avatar-friend-bg);
+  background: var(--avatar-kinwriter-bg);
 }
 
 .message .avatar {
@@ -543,7 +577,7 @@ textarea {
 
 .message-author {
   font-weight: 600;
-  color: var(--friend-color);
+  color: var(--kinwriter-color);
 }
 
 .message[data-author="user"] .message-author {
@@ -710,7 +744,7 @@ textarea {
 }
 
 /*
- * A scene's summary (stage 7), under the scene break that ended it: quiet,
+ * A scene's summary, under the scene break that ended it: quiet,
  * like a note in the margin.
  */
 .scene-summary {
@@ -993,6 +1027,8 @@ button:disabled {
 .dialog {
   width: min(640px, 100vw - 24px);
   max-height: calc(100vh - 24px);
+  /* The visible height on phones (shrinks with the on-screen keyboard), where supported. */
+  max-height: calc(100dvh - 24px);
   padding: 20px;
   border: var(--dialog-border);
   border-radius: var(--radius-lg);
@@ -1100,6 +1136,11 @@ button:disabled {
 .form-error {
   color: var(--error-text);
   font-size: 14px;
+}
+
+/* A seed's failure is a line per try. */
+#seed-error-text {
+  white-space: pre-line;
 }
 
 .danger-zone {
@@ -1594,12 +1635,6 @@ button:disabled {
   background: var(--update-bg);
 }
 
-.suggestion-title {
-  margin: 0 0 4px;
-  font: 600 15px var(--font-heading);
-  color: var(--text-strong);
-}
-
 .suggestion {
   display: flex;
   flex-wrap: wrap;
@@ -1827,7 +1862,7 @@ button:disabled {
   }
 }
 
-/* ============================================ stage 6: your kinwriter acts */
+/* ================================================= your kinwriter acts */
 
 /* A turn's actions, under its messages: one line that opens into details. */
 .activity {
@@ -2191,7 +2226,7 @@ button:disabled {
 
 .thread-comment-author {
   font-weight: 600;
-  color: var(--friend-color);
+  color: var(--kinwriter-color);
 }
 
 .thread-comment[data-author="user"] .thread-comment-author {
@@ -2262,6 +2297,39 @@ button.attach-chip {
 
 .attach-option input {
   accent-color: var(--accent);
+}
+
+/* ================================================== background pictures */
+
+/* The pictures in Appearance: "The theme's own", then yours, as thumbnails. */
+.background-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.background-card {
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  overflow: hidden;
+  border: var(--input-border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg) center / cover no-repeat;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.background-card[aria-checked="true"] {
+  border: var(--input-focus-border);
+  box-shadow:
+    0 0 0 2px var(--accent),
+    inset 0 0 0 2px var(--accent);
+}
+
+.dialog label#background-dim-row {
+  margin-top: 10px;
 }
 
 /* ======================================================= theme options */
@@ -2728,24 +2796,24 @@ button.attach-chip {
 
 /* An avatar in a kinwriter's colour, or an emoji avatar. */
 .avatar.colored-avatar {
-  background: hsl(var(--friend-hue) var(--avatar-saturation, 55%) var(--avatar-lightness, 55%));
+  background: hsl(var(--kinwriter-hue) var(--avatar-saturation, 55%) var(--avatar-lightness, 55%));
 }
 
 .avatar.emoji-avatar {
   font-size: 1.15em;
 }
 
-.friend-card {
+.kinwriter-card {
   cursor: pointer;
   border-radius: var(--radius-md);
 }
 
-.friend-card:hover {
+.kinwriter-card:hover {
   background: var(--channel-link-hover-bg);
 }
 
 /* In a server with several kinwriters: each one's channels under their name. */
-.friend-section {
+.kinwriter-section {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2756,25 +2824,25 @@ button.attach-chip {
   font-weight: 700;
 }
 
-.friend-section .avatar {
+.kinwriter-section .avatar {
   width: 22px;
   height: 22px;
   font-size: 11px;
 }
 
-.friend-dialog-head {
+.kinwriter-dialog-head {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.friend-dialog-head .avatar {
+.kinwriter-dialog-head .avatar {
   width: 44px;
   height: 44px;
   font-size: 20px;
 }
 
-.server-friend-list {
+.server-kinwriter-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -2783,13 +2851,13 @@ button.attach-chip {
   list-style: none;
 }
 
-.server-friend-list li {
+.server-kinwriter-list li {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.server-friend-list .avatar {
+.server-kinwriter-list .avatar {
   width: 28px;
   height: 28px;
   font-size: 13px;
@@ -2946,14 +3014,14 @@ button.attach-chip {
   margin-top: 8px;
 }
 
-.group-friends {
+.group-kinwriters {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
   margin-top: 8px;
 }
 
-.group-friends .avatar {
+.group-kinwriters .avatar {
   width: 22px;
   height: 22px;
   font-size: 11px;
@@ -3273,6 +3341,40 @@ button.attach-chip {
 
 .seed-tag select {
   width: 100%;
+}
+
+/* A category that takes several (personality): chips that toggle. */
+.seed-multi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.seed-multi-chip {
+  padding: 4px 12px;
+  border: var(--input-border);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.seed-multi-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text, #fff);
+}
+
+.seed-naming {
+  margin-bottom: 12px;
+}
+
+.seed-naming input {
+  width: 100%;
+  margin-top: 6px;
 }
 
 .seed-subtitle {

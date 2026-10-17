@@ -66,7 +66,7 @@ describe("sending a message", () => {
     expect(data.userMessages[0]).toMatchObject({ content: "I knock on the lighthouse door.", author: "user", characters: [] });
     expect(data.kinwriterMessages[0]).toMatchObject({
       content: "*Ilse looks up from the lamp.*",
-      author: "friend",
+      author: "kinwriter",
       characters: ["Ilse Marrow"],
       model: app.store.profiles.list()[0]!.model,
       profile: app.store.profiles.list()[0]!.name,
@@ -178,18 +178,18 @@ describe("kinwriter turns without a user message", () => {
   test("the kinwriter can open an empty channel", async () => {
     const { status, data } = await call("POST", `/api/channels/${story.id}/turn`, {});
     expect(status).toBe(200);
-    expect(data.kinwriterMessages[0].author).toBe("friend");
+    expect(data.kinwriterMessages[0].author).toBe("kinwriter");
     expect(fake.requests[0]!.messages.at(-1)!.content).toBe(nudges("rp").opening);
   });
 
   test("the kinwriter can continue after their own post", async () => {
     app.store.addMessage({ channelId: story.id, author: "user", content: "Hi" });
-    app.store.addMessage({ channelId: story.id, author: "friend", content: "Hello." });
+    app.store.addMessage({ channelId: story.id, author: "kinwriter", content: "Hello." });
 
     await call("POST", `/api/channels/${story.id}/turn`, {});
 
     expect(fake.requests[0]!.messages.at(-1)).toEqual({ role: "user", content: `${nudges("rp").continue}\n\n${paceNote("Hi")}` });
-    expect(app.store.getMessages(story.id).map((m) => m.author)).toEqual(["user", "friend", "friend"]);
+    expect(app.store.getMessages(story.id).map((m) => m.author)).toEqual(["user", "kinwriter", "kinwriter"]);
   });
 
   test("a second turn in the same channel is refused, but other channels are free", async () => {
@@ -283,7 +283,7 @@ describe("stopping a turn", () => {
 
   test("stopping a regeneration keeps the old reply", async () => {
     app.store.addMessage({ channelId: story.id, author: "user", content: "Hi" });
-    app.store.addMessage({ channelId: story.id, author: "friend", content: "Old reply" });
+    app.store.addMessage({ channelId: story.id, author: "kinwriter", content: "Old reply" });
     const { pending } = await startSlowTurn(`/api/channels/${story.id}/regenerate`);
     await call("POST", `/api/channels/${story.id}/cancel`, {});
 
@@ -325,7 +325,7 @@ describe("a model that stalls", () => {
 describe("regenerate", () => {
   test("replaces the kinwriter's last reply, without showing the old one to the model", async () => {
     app.store.addMessage({ channelId: story.id, author: "user", content: "Hi" });
-    const old = app.store.addMessage({ channelId: story.id, author: "friend", content: "Old reply" });
+    const old = app.store.addMessage({ channelId: story.id, author: "kinwriter", content: "Old reply" });
     fake.replies.push({ content: "New reply" });
 
     const { status, data } = await call("POST", `/api/channels/${story.id}/regenerate`, {});
@@ -338,7 +338,7 @@ describe("regenerate", () => {
 
   test("keeps the old reply if generation fails", async () => {
     app.store.addMessage({ channelId: story.id, author: "user", content: "Hi" });
-    app.store.addMessage({ channelId: story.id, author: "friend", content: "Old reply" });
+    app.store.addMessage({ channelId: story.id, author: "kinwriter", content: "Old reply" });
     fake.replies.push({ status: 429, error: "slow down" });
 
     const { status } = await call("POST", `/api/channels/${story.id}/regenerate`, {});
@@ -466,7 +466,7 @@ describe("casual mode", () => {
     expect(data.userMessages[0].turnId).toBe(data.userMessages[1].turnId);
     // Both joined the channel's cast by posting.
     expect(data.channel.cast.map((c: any) => [c.name, c.playedBy])).toEqual([
-      ["Ilse Marrow", "friend"],
+      ["Ilse Marrow", "kinwriter"],
       ["Jun", "user"],
       ["Kestrel", "user"],
     ]);
@@ -559,8 +559,8 @@ describe("messages and settings", () => {
   });
 
   test("updates settings and rejects invalid ones", async () => {
-    const ok = await call("PUT", "/api/settings", { historyLimit: 12, friendName: "Sol" });
-    expect(ok.data.settings).toMatchObject({ historyLimit: 12, friendName: "Sol" });
+    const ok = await call("PUT", "/api/settings", { historyLimit: 12, kinwriterName: "Sol" });
+    expect(ok.data.settings).toMatchObject({ historyLimit: 12, kinwriterName: "Sol" });
 
     const bad = await call("PUT", "/api/settings", { historyLimit: 0 });
     expect(bad.status).toBe(400);
@@ -602,6 +602,11 @@ describe("messages and settings", () => {
   test("lists models from nanoGPT, sorted", async () => {
     const { data } = await call("GET", "/api/models");
     expect(data.models).toEqual(["alpha/model", "zeta/model"]);
+    // What each supports, where nanoGPT says; nothing is guessed for alpha.
+    expect(data.info).toEqual([
+      { id: "alpha/model" },
+      { id: "zeta/model", reasoning: false, toolCalling: true, maxOutputTokens: 8192 },
+    ]);
   });
 });
 
@@ -655,6 +660,75 @@ describe("themes", () => {
   test("built-in themes are protected", async () => {
     expect((await call("PATCH", "/api/themes/classic", { css: "" })).status).toBe(400);
     expect((await call("DELETE", "/api/themes/frutiger-aero", {})).status).toBe(400);
+  });
+});
+
+describe("background pictures", () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString("base64");
+  const gif = Buffer.from("GIF89a\x01\x00\x01\x00", "latin1").toString("base64");
+
+  test("uploading one shows it, and it's served with its real type", async () => {
+    const { status, data } = await call("POST", "/api/backgrounds", { data: gif });
+    expect(status).toBe(200);
+    expect(data.background.file).toMatch(/\.gif$/);
+    expect(data.settings.appBackground).toBe(data.background.file);
+    expect((await call("GET", "/api/backgrounds")).data.backgrounds.map((b: any) => b.file)).toEqual([data.background.file]);
+
+    const served = await app.fetch(new Request(`http://localhost/backgrounds/${data.background.file}`));
+    expect(served.status).toBe(200);
+    expect(served.headers.get("Content-Type")).toBe("image/gif");
+    expect((await app.fetch(new Request("http://localhost/backgrounds/../kinaera.db"))).status).not.toBe(200);
+    expect((await app.fetch(new Request("http://localhost/backgrounds/nope1234.png"))).status).toBe(404);
+  });
+
+  test("anything that isn't a jpg, png, webp or gif is refused", async () => {
+    const svg = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>").toString("base64");
+    expect((await call("POST", "/api/backgrounds", { data: svg })).status).toBe(400);
+    expect((await call("POST", "/api/backgrounds", {})).status).toBe(400);
+    expect((await call("GET", "/api/backgrounds")).data.backgrounds).toEqual([]);
+  });
+
+  test("can be switched back to the theme's own, faded, and must exist to be chosen", async () => {
+    const first = (await call("POST", "/api/backgrounds", { data: png })).data.background.file;
+    expect((await call("PUT", "/api/settings", { appBackground: "" })).data.settings.appBackground).toBe("");
+    expect((await call("PUT", "/api/settings", { appBackground: first, backgroundDim: 0.3 })).data.settings).toMatchObject({
+      appBackground: first,
+      backgroundDim: 0.3,
+    });
+    expect((await call("PUT", "/api/settings", { appBackground: "abcd1234.png" })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { appBackground: "../x.png" })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { backgroundDim: 2 })).status).toBe(400);
+  });
+
+  test("deleting the one showing goes back to the theme's own", async () => {
+    const file = (await call("POST", "/api/backgrounds", { data: png })).data.background.file;
+    const deleted = await call("DELETE", `/api/backgrounds/${file}`, {});
+    expect(deleted.data.settings.appBackground).toBe("");
+    expect(deleted.data.backgrounds).toEqual([]);
+    expect((await call("DELETE", `/api/backgrounds/${file}`, {})).status).toBe(404);
+  });
+
+  test("are shared by kinwriters, and one deleted elsewhere quietly stops showing", async () => {
+    const shared = join(dir.path, "shared-backgrounds");
+    const other = tempDir();
+    const mine = createApp(testConfig(join(dir.path, "mine"), fake.baseUrl, { userBackgroundsDir: shared }));
+    const theirs = createApp(testConfig(other.path, fake.baseUrl, { userBackgroundsDir: shared }));
+    const ask = async (target: App, method: string, path: string, body?: unknown) =>
+      (await target.fetch(
+        new Request(`http://localhost${path}`, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) }),
+      )).json() as Promise<any>;
+    try {
+      const file = (await ask(mine, "POST", "/api/backgrounds", { data: png })).background.file;
+      // The other kinwriter sees it, but keeps their own choice.
+      expect((await ask(theirs, "GET", "/api/backgrounds")).backgrounds.map((b: any) => b.file)).toEqual([file]);
+      expect((await ask(theirs, "PUT", "/api/settings", {})).settings.appBackground).toBe("");
+      await ask(theirs, "DELETE", `/api/backgrounds/${file}`);
+      expect((await ask(mine, "PUT", "/api/settings", {})).settings.appBackground).toBe("");
+    } finally {
+      mine.store.close();
+      theirs.store.close();
+      other.cleanup();
+    }
   });
 });
 
@@ -717,7 +791,7 @@ describe("the notebook", () => {
   test("lists entries, folders, suggestions and the field templates", async () => {
     const { data } = await call("GET", "/api/notebook");
     expect(data.entries.map((e: any) => [e.name, e.owner, e.access])).toEqual([
-      ["Ilse Marrow", "friend", { edit: "direct", settings: false, delete: false }],
+      ["Ilse Marrow", "kinwriter", { edit: "direct", settings: false, delete: false }],
     ]);
     expect(data.entries[0].pinnedIn).toEqual([story.id]);
     expect(data.folders).toEqual([]);
@@ -757,7 +831,7 @@ describe("the notebook", () => {
   });
 
   test("pinning and unpinning changes a channel's cast", async () => {
-    const { data } = await call("POST", "/api/notebook/entries", { kind: "character", name: "Tamsin Hale", owner: "friend" });
+    const { data } = await call("POST", "/api/notebook/entries", { kind: "character", name: "Tamsin Hale", owner: "kinwriter" });
     const pinned = await call("PUT", `/api/channels/${story.id}/cast/${data.entry.id}`, {});
     expect(pinned.data.channel.cast.map((c: any) => c.name)).toEqual(["Ilse Marrow", "Tamsin Hale"]);
 
@@ -783,7 +857,7 @@ describe("the notebook", () => {
 
 describe("tools", () => {
   test("a turn can call tools, see the results, then write its post", async () => {
-    app.store.notebook.createEntry("user", { kind: "character", name: "Tamsin Hale", owner: "friend" });
+    app.store.notebook.createEntry("user", { kind: "character", name: "Tamsin Hale", owner: "kinwriter" });
     fake.replies.push(
       { toolCalls: [{ name: "read_notebook_entry", arguments: '{"name": "Tamsin"}' }] },
       { toolCalls: [{ name: "pin_to_channel", arguments: { name: "Tamsin Hale" } }] },
@@ -862,14 +936,16 @@ describe("tools", () => {
     fake.replies.push({ content: "Finally." });
     const { data } = await call("POST", `/api/channels/${story.id}/turn`, {});
     expect(fake.requests).toHaveLength(MAX_ROUNDS);
-    expect(fake.requests.at(-1)!.tools).toBeUndefined();
+    // Its tools are still sent (the conversation has tool calls in it), but it can't call them.
+    expect(fake.requests.at(-1)!.tools?.length).toBeGreaterThan(0);
+    expect((fake.requests.at(-1) as { tool_choice?: string }).tool_choice).toBe("none");
     // The last round's calls weren't run.
     expect(data.toolCalls.at(-1)).toMatchObject({ status: "error" });
     expect(data.toolCalls.at(-1).summary).toContain("out of tool rounds");
   });
 
   test("regenerating keeps the old reply if the new turn writes nothing", async () => {
-    app.store.addTurn([{ channelId: story.id, author: "friend", content: "Old reply" }]);
+    app.store.addTurn([{ channelId: story.id, author: "kinwriter", content: "Old reply" }]);
     fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: "{}" }] });
     const { data } = await call("POST", `/api/channels/${story.id}/regenerate`, {});
     expect(data).toMatchObject({ replacedIds: [], skipped: true });
@@ -919,13 +995,13 @@ describe("attaching notes", () => {
 
 describe("comments", () => {
   test("commenting on your kinwriter's message gets a reply in the thread, not a post", async () => {
-    const [message] = app.store.addTurn([{ channelId: story.id, author: "friend", content: "The lamp guttered." }]);
+    const [message] = app.store.addTurn([{ channelId: story.id, author: "kinwriter", content: "The lamp guttered." }]);
     fake.replies.push({ content: "Thanks! It's foreshadowing." });
     const { data } = await call("POST", `/api/messages/${message!.id}/comments`, { quote: "lamp guttered", note: "Ominous!" });
 
     expect(data.thread.comments.map((c: any) => [c.author, c.note])).toEqual([
       ["user", "Ominous!"],
-      ["friend", "Thanks! It's foreshadowing."],
+      ["kinwriter", "Thanks! It's foreshadowing."],
     ]);
     expect(app.store.getMessages(story.id)).toHaveLength(1);
     // The model was asked for a reply, out of character.
@@ -949,7 +1025,7 @@ describe("comments", () => {
     const threadId = started.data.thread.id;
     fake.replies.push({ content: "Loud and clear." });
     const replied = await call("POST", `/api/comments/${threadId}/replies`, { note: "Arlo, too much?" });
-    expect(replied.data.thread.comments.at(-1)).toMatchObject({ author: "friend", note: "Loud and clear." });
+    expect(replied.data.thread.comments.at(-1)).toMatchObject({ author: "kinwriter", note: "Loud and clear." });
 
     const resolved = await call("POST", `/api/comments/${threadId}/resolve`, {});
     expect(resolved.data.thread.resolved).toBe(true);
@@ -971,5 +1047,22 @@ describe("approvals", () => {
     expect(app.store.listChannels()).toHaveLength(2);
     await call("POST", `/api/channels/${story.id}/turn`, {});
     expect(fake.requests[0]!.messages[0]!.content).toContain("The user denied your proposal to delete #ooc.");
+  });
+});
+
+describe("saving settings", () => {
+  test("summaries catch up only when what decides them changed", async () => {
+    let scheduled = 0;
+    const original = app.summarizer.scheduleAll.bind(app.summarizer);
+    app.summarizer.scheduleAll = (...args: Parameters<typeof original>) => {
+      scheduled++;
+      return original(...args);
+    };
+    const { summaries, summaryEvery, historyLimit } = app.store.getSettings();
+    // The form sends them every time: unchanged, nothing to catch up on.
+    expect((await call("PUT", "/api/settings", { summaries, summaryEvery, historyLimit })).status).toBe(200);
+    expect(scheduled).toBe(0);
+    await call("PUT", "/api/settings", { summaries, summaryEvery, historyLimit: historyLimit + 5 });
+    expect(scheduled).toBe(1);
   });
 });

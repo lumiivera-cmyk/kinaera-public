@@ -27,13 +27,15 @@
  *
  * Every check is written to the check log (`CheckLog`): the question, the
  * sources, the reading and the passages found. Passages from private
- * places (the journal and drafts, from stage 4) are `private`: the log
+ * places (the journal and drafts) are `private`: the log
  * records that they were found, never their text.
  */
 
 import { Database } from "bun:sqlite";
+import { ago } from "./ago.ts";
 import type { Decider } from "./jev.ts";
 import { ftsQuery } from "./library.ts";
+import { whoWrote } from "./prompt.ts";
 import type { Store } from "./store.ts";
 import type { Channel } from "./types.ts";
 
@@ -83,16 +85,6 @@ export interface CheckResult {
 
 // ------------------------------------------------------------ searching
 
-/** "5 minutes ago", "2 days ago". */
-function ago(iso: string, now = Date.now()): string {
-  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  return `${Math.round(hours / 24)} days ago`;
-}
-
 const cut = (text: string) => (text.length > PASSAGE_LIMIT ? `${text.slice(0, PASSAGE_LIMIT)}…` : text);
 
 /** Everything a source could offer, before searching. */
@@ -117,7 +109,7 @@ function candidates(store: Store, channel: Channel, source: Exclude<CheckSource,
   }
   if (source === "notebook") {
     // Practice notes only from the practice channel.
-    return store.notebook.listEntries("friend", channel.kind === "practice").map((entry) => ({
+    return store.notebook.listEntries("kinwriter", channel.kind === "practice").map((entry) => ({
       source,
       where: `notebook: ${entry.name} (${entry.kind})`,
       text: cut(
@@ -136,7 +128,7 @@ function candidates(store: Store, channel: Channel, source: Exclude<CheckSource,
       .getMessages(channel.id)
       .filter((m) => m.kind === "post" && m.content.trim())
       .map((m) => {
-        const who = m.author === "user" ? "the user" : m.author === "peer" ? (m.speaker?.name ?? "another kinwriter") : "you";
+        const who = whoWrote(m);
         const voices = m.characters.length ? ` as ${m.characters.join(" & ")}` : "";
         // A DM may be hidden from the user: its passages are never logged.
         return { source, where: `#${channel.name}, ${who}${voices}, ${ago(m.createdAt)}`, text: cut(m.content.trim()), ...(channel.kind === "dm" ? { private: true } : {}) };
@@ -200,7 +192,7 @@ export function gatherEvidence(store: Store, channel: Channel, input: CheckInput
 // ---------------------------------------------------------------- Jev
 
 /** What Jev reads: the passages, numbered, each with where it's from. */
-export function checkState(found: Evidence[]): string {
+function checkState(found: Evidence[]): string {
   return [
     "Passages found in a story's notes, messages and summaries, each with where it's from:",
     ...found.map((p, i) => `[${i + 1}] (${p.where})\n${p.text}`),
@@ -218,7 +210,7 @@ export async function runCheck(store: Store, channel: Channel, decider: Decider 
       result.error = "Jev is turned off, so there's no reading; the passages are below.";
     } else {
       try {
-        const verdicts = await decider.askSeries(
+        const { verdicts, report } = await decider.askSeriesWithReport(
           checkState(found),
           [{ id: "q", phrasings: [input.question, input.rephrased] }],
           store.getSettings().decisionConfidence,
@@ -227,7 +219,7 @@ export async function runCheck(store: Store, channel: Channel, decider: Decider 
         const verdict = verdicts.get("q")!;
         result.verdict = verdict.verdict;
         result.yes = verdict.yes;
-        result.answeredBy = decider.lastReport?.answeredBy ?? "jev";
+        result.answeredBy = report?.answeredBy ?? "jev";
       } catch (error) {
         result.error = `Jev couldn't give a reading (${error instanceof Error ? error.message : error}); the passages are below.`;
       }
@@ -271,7 +263,7 @@ interface CheckLogRow {
 }
 
 /** How many checks are kept (the oldest go first). */
-export const CHECK_LOG_SIZE = 1000;
+const CHECK_LOG_SIZE = 1000;
 
 export class CheckLog {
   constructor(

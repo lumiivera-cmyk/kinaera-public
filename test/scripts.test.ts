@@ -122,7 +122,7 @@ describe("running a script in a turn", () => {
     expect(listScripts(app.store)[0]!.lastRun).toMatchObject({ ok: false, failedStep: 3, ran: 3 });
 
     // They fix the step (the entry exists now) and retry from it.
-    app.store.notebook.createEntry("friend", { name: "Nobody At All", kind: "character", fields: [] } as any);
+    app.store.notebook.createEntry("kinwriter", { name: "Nobody At All", kind: "character", fields: [] } as any);
     const retry = await run("run_script", { name: "tidy", from_step: 3 });
     expect(retry.ok).toBe(true);
     expect((retry.result as any).steps.map((s: any) => s.step)).toEqual([3, 4]);
@@ -251,7 +251,7 @@ describe("taking another turn", () => {
     await settle();
     expect(fake.requests).toHaveLength(3);
     expect(JSON.stringify(fake.requests[2]!.messages)).toContain('Your note for this turn: \\"read from 6\\"');
-    expect(app.store.getMessages(ooc.id).filter((m) => m.author === "friend").map((m) => m.content)).toEqual(["reading, back in a sec"]);
+    expect(app.store.getMessages(ooc.id).filter((m) => m.author === "kinwriter").map((m) => m.content)).toEqual(["reading, back in a sec"]);
   });
 
   test("a script ending in take_another_turn: a real turn follows the tools-only one", async () => {
@@ -262,6 +262,24 @@ describe("taking another turn", () => {
     expect(fake.requests).toHaveLength(1);
     expect(JSON.stringify(fake.requests[0]!.messages)).toContain("tell them I'm up");
   });
+});
+
+test("Stop ends a script between steps, and no turn follows it", async () => {
+  await run("save_script", {
+    name: "stop me",
+    steps: [
+      { tool: "post_in_channel", args: { channel: "#story", text: "a line in the story" } },
+      { tool: "write_map_entry", args: { tool: "check", when: "never reached" } },
+      { tool: "take_another_turn", args: { note: "never reached either" } },
+    ],
+  });
+  // Stop is pressed while the first step runs.
+  app.kinwriter.onPostedElsewhere = () => app.kinwriter.cancelAll();
+  await expect(app.kinwriter.runScriptTurn(ooc.id, "stop me")).rejects.toThrow("stopped");
+  await settle();
+  expect(app.store.toolLog.forChannel(ooc.id, 10).map((c) => c.name)).toEqual(["post_in_channel"]);
+  expect(toolMap(app.store)).toEqual({});
+  expect(fake.requests).toHaveLength(0);
 });
 
 describe("a script queue", () => {

@@ -22,7 +22,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { NotFoundError, ValidationError } from "./errors.ts";
+import { findByShortId, NotFoundError, ValidationError } from "./errors.ts";
 
 /** How much of the journal a prompt carries, in characters. */
 export const JOURNAL_BUDGET = 2500;
@@ -80,10 +80,7 @@ export class Journal {
 
   /** Find an entry by its short id. */
   find(short: string): JournalEntry {
-    const wanted = short.trim().toLowerCase();
-    const match = this.all().filter((e) => wanted && e.id.toLowerCase().startsWith(wanted));
-    if (match.length !== 1) throw new NotFoundError("journal entry");
-    return match[0]!;
+    return findByShortId(this.all(), short, "journal entry");
   }
 
   write(content: string): JournalEntry {

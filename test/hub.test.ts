@@ -44,8 +44,8 @@ describe("starting", () => {
   test("one server with the first kinwriter, living in the data folder", async () => {
     const { data } = await call("GET", "/api/hub");
     expect(data.servers).toHaveLength(1);
-    expect(data.servers[0].friends.map((p: any) => [p.id, p.name])).toEqual([["home", "Arlo"]]);
-    expect(data.servers[0].friends[0].channels.map((c: any) => c.name)).toEqual(["story", "ooc"]);
+    expect(data.servers[0].kinwriters.map((p: any) => [p.id, p.name])).toEqual([["home", "Arlo"]]);
+    expect(data.servers[0].kinwriters[0].channels.map((c: any) => c.name)).toEqual(["story", "ooc"]);
     expect(existsSync(join(dir.path, "kinaera.db"))).toBe(true);
     expect(existsSync(join(dir.path, "hub.json"))).toBe(true);
   });
@@ -54,34 +54,36 @@ describe("starting", () => {
     hub.close();
     const other = tempDir();
     const old = createApp(testConfig(other.path, fake.baseUrl));
-    old.store.updateSettings(validateSettings({ friendName: "Mira" }));
+    old.store.updateSettings(validateSettings({ kinwriterName: "Mira" }));
     old.store.close();
     hub = createHub(testConfig(other.path, fake.baseUrl));
-    expect((await call("GET", "/api/state")).data.settings.friendName).toBe("Mira");
+    expect((await call("GET", "/api/state")).data.settings.kinwriterName).toBe("Mira");
     hub.close();
     other.cleanup();
     hub = createHub(testConfig(dir.path, fake.baseUrl));
   });
 
   test("unprefixed and /p/<id>/ requests reach the kinwriter", async () => {
-    expect((await call("GET", "/api/state")).data.settings.friendName).toBe("Arlo");
-    expect((await call("GET", "/p/home/api/state")).data.settings.friendName).toBe("Arlo");
+    expect((await call("GET", "/api/state")).data.settings.kinwriterName).toBe("Arlo");
+    expect((await call("GET", "/p/home/api/state")).data.settings.kinwriterName).toBe("Arlo");
     expect((await call("GET", "/p/nobody/api/state")).status).toBe(404);
   });
 });
 
 describe("a new kinwriter", () => {
   test("gets their own server, their own memory, and your profiles and preferences", async () => {
-    home().store.updateSettings(validateSettings({ decisionConfidence: 0.9, literaryPrompt: "Arlo's style" }));
+    home().store.updateSettings(validateSettings({ literaryPrompt: "Arlo's style" }));
+    // Settings are shared (src/universal.ts): changed in the app, they're everyone's.
+    expect((await call("PUT", "/api/settings", { decisionConfidence: 0.9 })).status).toBe(200);
     const { data } = await call("POST", "/api/hub/servers", { name: "Wren", prompt: "You are Wren.", avatar: "🐦" });
     const wren = data.kinwriterId as string;
     expect(data.servers).toHaveLength(2);
-    expect(existsSync(join(dir.path, "friends", wren, "kinaera.db"))).toBe(true);
+    expect(existsSync(join(dir.path, "kinwriters", wren, "kinaera.db"))).toBe(true);
 
     const state = (await call("GET", `/p/${wren}/api/state`)).data;
-    expect(state.settings).toMatchObject({ friendName: "Wren", friendAvatar: "🐦", decisionConfidence: 0.9 });
+    expect(state.settings).toMatchObject({ kinwriterName: "Wren", kinwriterAvatar: "🐦", decisionConfidence: 0.9 });
     // Who they are is their self-notes: private, so the app doesn't get it (src/selfnotes.ts).
-    expect(state.settings.friendPrompt).toBe("");
+    expect(state.settings.kinwriterPrompt).toBe("");
     expect(hub.apps.get(wren)!.store.identity.current()!.identity).toBe("You are Wren.");
     // Not Arlo's prompts…
     expect(state.settings.literaryPrompt).not.toBe("Arlo's style");
@@ -94,11 +96,11 @@ describe("a new kinwriter", () => {
 
   test("never sees another kinwriter's notebook or messages", async () => {
     const wren = (await call("POST", "/api/hub/servers", { name: "Wren" })).data.kinwriterId;
-    home().store.notebook.createEntry("friend", { kind: "lore", name: "Arlo's secret", visibility: "hidden" });
+    home().store.notebook.createEntry("kinwriter", { kind: "lore", name: "Arlo's secret", visibility: "hidden" });
     const ooc = home().store.listChannels().find((c) => c.kind === "ooc")!;
     home().store.addMessage({ channelId: ooc.id, author: "user", content: "only for Arlo" });
     const wrenApp = hub.apps.get(wren)!;
-    expect(wrenApp.store.notebook.listEntries("friend").map((e) => e.name)).toEqual([]);
+    expect(wrenApp.store.notebook.listEntries("kinwriter").map((e) => e.name)).toEqual([]);
     expect(wrenApp.store.listChannels().flatMap((c) => wrenApp.store.getMessages(c.id))).toEqual([]);
     // Each kinwriter's turns go to their own prompt.
     const wrenOoc = wrenApp.store.listChannels().find((c) => c.kind === "ooc")!;
@@ -112,27 +114,27 @@ describe("a new kinwriter", () => {
 
   test("several kinwriters in one server", async () => {
     const serverId = (await call("GET", "/api/hub")).data.servers[0].id;
-    const { data } = await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Wren" });
-    expect(data.servers[0].friends.map((p: any) => p.name)).toEqual(["Arlo", "Wren"]);
+    const { data } = await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Wren" });
+    expect(data.servers[0].kinwriters.map((p: any) => p.name)).toEqual(["Arlo", "Wren"]);
     // Reorder them, then give Wren a server of her own.
-    const reordered = await call("PATCH", `/api/hub/servers/${serverId}`, { friends: [data.kinwriterId, "home"] });
-    expect(reordered.data.servers[0].friends.map((p: any) => p.name)).toEqual(["Wren", "Arlo"]);
-    const moved = await call("POST", `/api/hub/friends/${data.kinwriterId}/move`, {});
-    expect(moved.data.servers.map((s: any) => s.friends.map((p: any) => p.name))).toEqual([["Arlo"], ["Wren"]]);
+    const reordered = await call("PATCH", `/api/hub/servers/${serverId}`, { kinwriters: [data.kinwriterId, "home"] });
+    expect(reordered.data.servers[0].kinwriters.map((p: any) => p.name)).toEqual(["Wren", "Arlo"]);
+    const moved = await call("POST", `/api/hub/kinwriters/${data.kinwriterId}/move`, {});
+    expect(moved.data.servers.map((s: any) => s.kinwriters.map((p: any) => p.name))).toEqual([["Arlo"], ["Wren"]]);
   });
 });
 
 describe("orientation in a hub", () => {
   test("only the kinwriter orienting is unavailable; the others work, and their card says so", async () => {
     const serverId = (await call("GET", "/api/hub")).data.servers[0].id;
-    const wren = (await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Wren" })).data.kinwriterId;
+    const wren = (await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Wren" })).data.kinwriterId;
     // First their practice world (unreadable here: the built-in one is used), then their turn.
     fake.replies.push({ content: "(no world)" }, { content: "[nothing]" });
     await call("POST", "/p/home/api/orientation/start", { version: "full" });
     for (let i = 0; i < 200 && fake.requests.length < 2; i++) await Bun.sleep(5);
     for (let i = 0; i < 200 && hub.apps.get("home")!.kinwriter.busyChannels().length > 0; i++) await Bun.sleep(5);
-    const friends = (await call("GET", "/api/hub")).data.servers[0].friends;
-    expect(friends.map((f: any) => [f.name, f.orienting])).toEqual([["Arlo", true], ["Wren", false]]);
+    const kinwriters = (await call("GET", "/api/hub")).data.servers[0].kinwriters;
+    expect(kinwriters.map((f: any) => [f.name, f.orienting])).toEqual([["Arlo", true], ["Wren", false]]);
     // Wren works as ever.
     const wrenOoc = hub.apps.get(wren)!.store.listChannels().find((c) => c.kind === "ooc")!;
     fake.replies.push({ content: "hi" });
@@ -144,13 +146,13 @@ describe("orientation in a hub", () => {
 describe("deleting a kinwriter mid-orientation", () => {
   test("their orientation just ends; the server and everyone else keep going", async () => {
     const serverId = (await call("GET", "/api/hub")).data.servers[0].id;
-    const wren = (await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Wren" })).data.kinwriterId;
+    const wren = (await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Wren" })).data.kinwriterId;
     // Their practice world, then a slow turn: still writing when they're deleted.
     fake.replies.push({ content: "(no world)" }, { content: "*waves*", delayMs: 150 });
     for (let i = 0; i < 12; i++) fake.replies.push({ content: "[nothing]" });
     await call("POST", `/p/${wren}/api/orientation/start`, { version: "returning" });
     for (let i = 0; i < 200 && fake.requests.length < 2; i++) await Bun.sleep(5);
-    expect((await call("DELETE", `/api/hub/friends/${wren}`)).status).toBe(200);
+    expect((await call("DELETE", `/api/hub/kinwriters/${wren}`)).status).toBe(200);
     // The slow turn comes back to a closed store: nothing is thrown.
     await Bun.sleep(300);
     expect(hub.apps.has(wren)).toBe(false);
@@ -159,6 +161,41 @@ describe("deleting a kinwriter mid-orientation", () => {
     const reply = await call("POST", `/p/home/api/channels/${ooc.id}/messages`, { content: "hey" });
     expect(reply.status).toBe(200);
     expect(reply.data.kinwriterMessages[0].content).toBe("still here");
+  });
+});
+
+describe("a kinwriter whose making fails", () => {
+  test("leaves no app, no folder, and nothing in the list", async () => {
+    hub.close();
+    // Their identity can't be written: making them fails partway.
+    hub = createHub(testConfig(dir.path, fake.baseUrl), (config) => {
+      const app = createApp(config);
+      if (config.kinwriterId !== "home") {
+        app.store.identity.begin = () => {
+          throw new Error("disk full");
+        };
+      }
+      return app;
+    });
+    expect((await call("POST", "/api/hub/servers", { name: "Wren" })).status).toBe(500);
+    expect([...hub.apps.keys()]).toEqual(["home"]);
+    expect(existsSync(join(dir.path, "kinwriters")) ? readdirSync(join(dir.path, "kinwriters")) : []).toEqual([]);
+    const { data } = await call("GET", "/api/hub");
+    expect(data.servers.map((s: any) => s.kinwriters.map((f: any) => f.id))).toEqual([["home"]]);
+  });
+});
+
+describe("shared settings", () => {
+  test("two saves at once on different kinwriters: everyone ends up agreeing", async () => {
+    const wren = (await call("POST", "/api/hub/servers", { name: "Wren" })).data.kinwriterId;
+    const sol = (await call("POST", "/api/hub/servers", { name: "Sol" })).data.kinwriterId;
+    await Promise.all([
+      call("PUT", "/api/settings", { decisionConfidence: 0.6 }),
+      call("PUT", `/p/${wren}/api/settings`, { decisionConfidence: 0.7 }),
+      call("PUT", `/p/${sol}/api/settings`, { decisionConfidence: 0.8 }),
+    ]);
+    const values = [...hub.apps.values()].map((a) => a.store.getSettings().decisionConfidence);
+    expect(new Set(values).size).toBe(1);
   });
 });
 
@@ -178,19 +215,19 @@ describe("servers", () => {
   test("deleting moves files to the trash; the last can't go", async () => {
     const serverId = (await call("GET", "/api/hub")).data.servers[0].id;
     expect((await call("DELETE", `/api/hub/servers/${serverId}`, {})).status).toBe(400);
-    expect((await call("DELETE", "/api/hub/friends/home", {})).status).toBe(400);
+    expect((await call("DELETE", "/api/hub/kinwriters/home", {})).status).toBe(400);
     const wren = (await call("POST", "/api/hub/servers", { name: "Wren" })).data;
     const gone = await call("DELETE", `/api/hub/servers/${wren.server.id}`, {});
     expect(gone.data.servers).toHaveLength(1);
-    expect(existsSync(join(dir.path, "friends", wren.kinwriterId))).toBe(false);
+    expect(existsSync(join(dir.path, "kinwriters", wren.kinwriterId))).toBe(false);
     expect(readdirSync(join(dir.path, "trash")).some((d) => d.startsWith(wren.kinwriterId))).toBe(true);
     // The first kinwriter too (their files move out of the data folder).
     const again = (await call("POST", "/api/hub/servers", { name: "Wren" })).data.kinwriterId;
-    await call("DELETE", "/api/hub/friends/home", {});
+    await call("DELETE", "/api/hub/kinwriters/home", {});
     expect(existsSync(join(dir.path, "kinaera.db"))).toBe(false);
     // Unprefixed requests now reach the remaining kinwriter.
-    expect((await call("GET", "/api/state")).data.settings.friendName).toBe("Wren");
-    expect(JSON.parse(readFileSync(join(dir.path, "hub.json"), "utf8")).friends.map((p: any) => p.id)).toEqual([again]);
+    expect((await call("GET", "/api/state")).data.settings.kinwriterName).toBe("Wren");
+    expect(JSON.parse(readFileSync(join(dir.path, "hub.json"), "utf8")).kinwriters.map((p: any) => p.id)).toEqual([again]);
   });
 
   test("bad input", async () => {

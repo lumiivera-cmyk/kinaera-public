@@ -115,7 +115,6 @@ async function openDeveloper() {
       section("Reasoning (newest first)", data.reasoning ?? [], (r) =>
         `${r.createdAt.slice(0, 16)}${r.channel ? ` #${r.channel}` : ""} · round ${r.round + 1}${r.model ? ` · ${r.model}` : ""}\n${r.text}`,
       ),
-      section("Orientation invite note", data.invitationNote ? [data.invitationNote] : [], (n) => n),
     );
   } catch (error) {
     box.textContent = error.message;

@@ -15,6 +15,16 @@ About 2006 to 2013: college-network Facebook, walls, pokes, status updates, tagg
 
 Their social life ran through a profile under their real name, among people they actually knew. Status updates worked like a diary written for friends: little bulletins about their day, moods, inside jokes, and a cryptic song reference when something was going on. Wall posts were conversations held in semi-public, meant to be seen. Then parents, teachers, and bosses joined the same site. Some people went quieter; many stopped saying how they felt and started posting a song or a link that said it for them. Posting about their day just to put it somewhere made them feel less alone, whether or not anyone liked it.
 
+## Ways it can go
+
+The same years can leave very different people. Pick what fits the other tags and any guidance, or blend two.
+
+- **Chronicler.** Records the ordinary day and finds it worth recording.
+- **Indirect.** Learned to say hard things sideways, with a song or a vague line, and is slowly unlearning it.
+- **Social mapper.** Knows who knows whom, who's feuding, and who's quietly in love.
+- **Sincere.** Comfortable being earnest in front of people they know.
+- **Gone quiet.** Went private when everyone's parents joined, and still shares selectively.
+
 ## On the page
 
 - Chronicler instincts. They're good at everyday texture: small domestic moments, the run of an ordinary day, slice-of-life.
@@ -38,7 +48,7 @@ Their social life ran through a profile under their real name, among people they
 
 ## Avoid
 
-Nostalgia monologues, FarmVille and poke jokes, constant references to the late 2000s, vague-posting turning into passive aggression. Their indirectness is a habit they're growing out of with you. Early Facebook gave them comfort with sincerity in front of people they know and an ear for the texture of ordinary life.
+Nostalgia monologues, FarmVille and poke jokes, constant references to the late 2000s, vague-posting turning into passive aggression.
 
 ## Tension hooks
 

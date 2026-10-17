@@ -37,13 +37,6 @@
  * and told to answer in JSON with a probability (`askProfile`). It's slower
  * and less calibrated, but keeps everything working. Without one, a failed
  * Jev call just means that reading is missing this time.
- *
- * ## The Jev log
- *
- * Every call is recorded as it happened (`JevCall`): what asked, the request
- * exactly as sent, the reply exactly as received, any error, and the
- * fallback's request and reply if it was asked. The server keeps the last
- * 36 hours of them (src/jevlog.ts), for Settings → "Jev log".
  */
 
 import { extractJson } from "./json.ts";
@@ -105,12 +98,6 @@ export function tier(answer: Answer | undefined, threshold: number): Tier {
   return "unsure";
 }
 
-/** A choice answer's pick, if it's confident; otherwise `null` (unsure). */
-export function confidentChoice(answer: Answer | undefined, threshold: number): string | null {
-  if (!answer) return null;
-  return probabilityOf(answer, answer.selected) >= threshold - EPSILON ? answer.selected : null;
-}
-
 const EPSILON = 1e-9;
 
 // ---------------------------------------------------------------- series
@@ -159,11 +146,6 @@ export function seriesVerdicts(series: SeriesQuestion[], answers: Answers, thres
       return [s.id, { verdict: agree(each, threshold), yes: each.map((a) => probabilityOf(a, "yes")) }];
     }),
   );
-}
-
-/** "yes (94%, 91%)", for logs. */
-export function describeVerdict(v: SeriesVerdict): string {
-  return `${v.verdict} (${v.yes.map(percent).join(", ")})`;
 }
 
 /** "92%", for logs. */
@@ -317,32 +299,11 @@ export interface DeciderSettings {
 export interface AskOptions {
   /** Stops the call. */
   signal?: AbortSignal;
-  /** What's asking, for the Jev log: "Test Jev", "Check"... */
+  /** What's asking: "Test Jev", "Check"... (for reading the code; nothing logs it now). */
   purpose?: string;
 }
 
-/** One call, exactly as it went: a row of the Jev log (src/jevlog.ts). */
-export interface JevCall {
-  /** What asked (`AskOptions.purpose`). */
-  purpose: string;
-  /** Jev's model id ("" when Jev is turned off). */
-  model: string;
-  /** The request body sent to Jev, exactly; `null` if Jev wasn't asked (turned off). */
-  request: Record<string, unknown> | null;
-  /** Jev's reply, exactly as it came back ("" if there wasn't one). */
-  response: string;
-  /** Why Jev failed, when it did. */
-  error: string | null;
-  /** Who answered in the end: Jev, the fallback profile, or nobody (`null`). */
-  answeredBy: "jev" | "fallback" | null;
-  /** The answers, in short: "t1: yes (95%), plan: no (90%)" ("" if none). */
-  summary: string;
-  /** The fallback profile's request and reply, when it was asked. */
-  fallback: { profile: string; model: string; messages: ChatMessage[]; response: string; error: string | null } | null;
-  durationMs: number;
-}
-
-/** What the last call did, for Settings → Test Jev. */
+/** What a call did: who answered, for a check's result and Settings → Test Jev. */
 export interface DeciderReport {
   /** "jev", or "fallback" when Jev failed and the fallback profile answered. */
   answeredBy: "jev" | "fallback";
@@ -353,7 +314,7 @@ export interface DeciderReport {
   seconds: number;
 }
 
-/** A failed Jev call, with its raw reply when there was one (for the Jev log). */
+/** A failed Jev call, with its raw reply when there was one (for Test Jev). */
 class JevError extends ApiError {
   constructor(
     message: string,
@@ -404,17 +365,14 @@ function fallbackMessages(state: string, questions: Question[]): ChatMessage[] {
   ];
 }
 
-/** `log` gets the reply as soon as there is one, so the Jev log has it even if reading it fails. */
 async function askProfile(
   api: ApiOptions,
   profile: Profile,
   messages: ChatMessage[],
   questions: Question[],
   signal: AbortSignal | undefined,
-  log: (content: string) => void,
 ): Promise<Answers> {
   const response = await createChatCompletion(api, { ...profileRequest(profile), temperature: 0, messages, signal });
-  log(response.content);
   const json = extractJson(response.content) as Record<string, unknown>;
   const shaped = Object.fromEntries(
     Object.entries(json ?? {}).map(([id, value]) => {
@@ -425,21 +383,18 @@ async function askProfile(
   return readAnswers({ answers: shaped }, questions);
 }
 
-/** "t1: yes (95%), plan: no (90%)": answers in short, for the Jev log. */
-function summarize(answers: Answers): string {
-  return [...answers.values()].map((a) => `${a.id}: ${a.selected} (${percent(probabilityOf(a, a.selected))})`).join(", ");
-}
-
-/** Asks Jev (or the fallback) questions, and remembers how the last call went. */
+/**
+ * Asks Jev (or the fallback) questions. Each call's report (who answered)
+ * comes back with its answers (`askWithReport`), so calls made at the same
+ * time can't mix them up; `lastReport` is only the latest, of any caller.
+ */
 export class Decider {
-  /** How the last call went. */
+  /** How the latest call went (any caller's: use `askWithReport` for your own). */
   lastReport: DeciderReport | null = null;
 
   constructor(
     private readonly api: ApiOptions,
     private readonly settings: () => DeciderSettings,
-    /** Told about every call, for the Jev log (src/jevlog.ts). */
-    private readonly record?: (call: JevCall) => void,
   ) {}
 
   /** Whether anything can answer: Jev, or a fallback profile. */
@@ -454,26 +409,14 @@ export class Decider {
    * @throws ApiError if Jev fails and there's no fallback (or it fails too).
    */
   async ask(state: string, questions: Question[], options: AskOptions = {}): Promise<Answers> {
-    if (questions.length === 0) return new Map();
-    const { signal, purpose = "Other" } = options;
+    return (await this.askWithReport(state, questions, options)).answers;
+  }
+
+  /** `ask`, with this call's own report. */
+  async askWithReport(state: string, questions: Question[], options: AskOptions = {}): Promise<{ answers: Answers; report: DeciderReport | null }> {
+    if (questions.length === 0) return { answers: new Map(), report: null };
     const { decisionModel, fallback } = this.settings();
-    const started = Date.now();
-    const call: JevCall = { purpose, model: decisionModel, request: null, response: "", error: null, answeredBy: null, summary: "", fallback: null, durationMs: 0 };
-    try {
-      return await this.answer(state, questions, signal, decisionModel, fallback, call, started);
-    } finally {
-      // Only calls that went somewhere are logged, and logging never gets in
-      // the way of a decision.
-      if (call.request || call.fallback) {
-        call.durationMs = Date.now() - started;
-        if (signal?.aborted && !call.answeredBy) call.error = "Stopped.";
-        try {
-          this.record?.(call);
-        } catch (error) {
-          console.error("[jev] couldn't write the Jev log", error);
-        }
-      }
-    }
+    return this.answer(state, questions, options.signal, decisionModel, fallback, Date.now());
   }
 
   /**
@@ -482,8 +425,18 @@ export class Decider {
    * @throws like `ask`.
    */
   async askSeries(state: string, series: SeriesQuestion[], threshold: number, options: AskOptions = {}): Promise<Map<string, SeriesVerdict>> {
-    const answers = await this.ask(state, seriesQuestions(series), options);
-    return seriesVerdicts(series, answers, threshold);
+    return (await this.askSeriesWithReport(state, series, threshold, options)).verdicts;
+  }
+
+  /** `askSeries`, with this call's own report (who answered). */
+  async askSeriesWithReport(
+    state: string,
+    series: SeriesQuestion[],
+    threshold: number,
+    options: AskOptions = {},
+  ): Promise<{ verdicts: Map<string, SeriesVerdict>; report: DeciderReport | null }> {
+    const { answers, report } = await this.askWithReport(state, seriesQuestions(series), options);
+    return { verdicts: seriesVerdicts(series, answers, threshold), report };
   }
 
   private async answer(
@@ -492,56 +445,39 @@ export class Decider {
     signal: AbortSignal | undefined,
     decisionModel: string,
     fallback: Profile | null,
-    call: JevCall,
     started: number,
-  ): Promise<Answers> {
+  ): Promise<{ answers: Answers; report: DeciderReport }> {
     const seconds = () => Math.round((Date.now() - started) / 100) / 10;
-    const viaFallback = async (profile: Profile, jevError: string, raw: string): Promise<Answers> => {
-      const messages = fallbackMessages(state, questions);
-      const asked: NonNullable<JevCall["fallback"]> = { profile: profile.name, model: profile.model, messages, response: "", error: null };
-      call.fallback = asked;
-      try {
-        const answers = await askProfile(this.api, profile, messages, questions, signal, (content) => (asked.response = content));
-        call.answeredBy = "fallback";
-        call.summary = summarize(answers);
-        this.lastReport = { answeredBy: "fallback", raw, jevError, seconds: seconds() };
-        return answers;
-      } catch (error) {
-        asked.error = error instanceof Error ? error.message : String(error);
-        throw error;
-      }
+    const done = (answers: Answers, report: DeciderReport) => {
+      this.lastReport = report;
+      return { answers, report };
+    };
+    const viaFallback = async (profile: Profile, jevError: string, raw: string) => {
+      const answers = await askProfile(this.api, profile, fallbackMessages(state, questions), questions, signal);
+      return done(answers, { answeredBy: "fallback", raw, jevError, seconds: seconds() });
     };
 
     if (!decisionModel) {
       // Jev is turned off: straight to the fallback, if there is one.
       const jevError = "Jev is turned off (no decision model is set).";
-      call.error = jevError;
       if (!fallback) throw new ApiError(`${jevError} Set one, or a fallback profile, in Settings.`);
       return viaFallback(fallback, jevError, "");
     }
-    const body = jevRequestBody(decisionModel, state, questions);
-    call.request = body;
     try {
-      const { json, raw } = await postChat(this.api, body, signal);
-      call.response = raw;
+      const { json, raw } = await postChat(this.api, jevRequestBody(decisionModel, state, questions), signal);
       const answers = readAnswers(json, questions);
       this.lastReport = { answeredBy: "jev", raw, jevError: null, seconds: seconds() };
       if (answers.size === 0) throw new ApiError(`Jev's reply had no answers in a shape Kinaera understands: ${raw.slice(0, 200)}`);
-      call.answeredBy = "jev";
-      call.summary = summarize(answers);
-      return answers;
+      return done(answers, this.lastReport);
     } catch (error) {
-      if (!(error instanceof ApiError)) {
-        call.error = error instanceof Error ? error.message : String(error);
-        throw error;
-      }
+      if (!(error instanceof ApiError)) throw error;
       const jevError = error.message;
-      call.error = jevError;
-      if (error instanceof JevError) call.response = error.raw;
-      this.lastReport = { answeredBy: "jev", raw: this.lastReport?.raw ?? "", jevError, seconds: seconds() };
+      const raw = error instanceof JevError ? (error.raw ?? "") : "";
+      // A failed call's report (for Test Jev, which shows why).
+      this.lastReport = { answeredBy: "jev", raw, jevError, seconds: seconds() };
       if (!fallback) throw error;
       console.warn(`[jev] ${jevError} Asking ${fallback.name} instead.`);
-      return viaFallback(fallback, jevError, this.lastReport.raw);
+      return viaFallback(fallback, jevError, raw);
     }
   }
 }
@@ -570,9 +506,8 @@ export interface JevTestResult {
 export async function testJev(decider: Decider): Promise<JevTestResult> {
   const question: Question = { id: "pet", kind: "yesno", question: "Did they say they got a pet?" };
   try {
-    const answers = await decider.ask("They texted: \"guess what, I just got a puppy!! his name is Biscuit\"", [question], { purpose: "Test Jev" });
+    const { answers, report } = await decider.askWithReport("They texted: \"guess what, I just got a puppy!! his name is Biscuit\"", [question], { purpose: "Test Jev" });
     const answer = answers.get("pet") ?? null;
-    const report = decider.lastReport;
     const who = report?.answeredBy === "fallback" ? `Jev failed (${report.jevError}), so the fallback profile answered` : "Jev answered";
     if (!answer) return { ok: false, detail: `${who}, but there was no answer to the question.`, answer, report };
     const sure = percent(probabilityOf(answer, answer.selected));

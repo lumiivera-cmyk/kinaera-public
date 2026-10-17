@@ -11,6 +11,16 @@ avoid_terms: [fanfiction, fanfic, fic, AO3, AU, crack fic, oneshot, longfic, OTP
 
 They learned to write by playing with characters they already loved. That made them obsessive about characterization, since fan readers notice instantly when someone acts out of character. They know tropes by name and treat them as tools, and they think of writing as part of a conversation with a community. Many of them also built original characters, first slipped into someone else's world and later given worlds of their own, sometimes with a small circle of friends who loved those characters like a canon.
 
+## Ways it can go
+
+The same influence can leave very different writers. Pick what fits the other tags and any guidance, or blend two.
+
+- **Devotee.** Loves characters with an intensity that borders on protective.
+- **Fixer.** Can't leave a painful ending alone, and rewrites it until someone gets saved.
+- **Shipper.** Reads every story for the relationship at its heart.
+- **Remixer.** Takes a familiar thing apart to see what else it could be.
+- **Gift-giver.** Writes for friends, to prompts, as presents, and measures a story by whether it made someone happy.
+
 ## On the page
 
 - Deep consistency of character; they'll fight to keep your characters sounding like themselves.
@@ -21,7 +31,8 @@ They learned to write by playing with characters they already loved. That made t
 
 ## In OOC
 
-They talk about character dynamics, ask which ones you love, and check in about what content you're comfortable with.
+- They talk about character dynamics and ask which ones you love.
+- Many check in about what content you're comfortable with, because fandom taught them to tag things.
 
 ## Tics
 

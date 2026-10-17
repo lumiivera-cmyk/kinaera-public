@@ -5,7 +5,7 @@
  */
 
 import { openChannel, renderAll } from "./channels.js";
-import { $, api, hideFormError, showFormError, state } from "./core.js";
+import { $, api, currentChannel, hideFormError, showFormError, state } from "./core.js";
 import { formatTime } from "./format.js";
 import { findEntry, refreshNotebook } from "./notebook.js";
 import { loadState } from "./live.js";
@@ -56,7 +56,7 @@ export function openInbox() {
 }
 
 export function renderInbox() {
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   const forYou = state.notebook.suggestions.filter((s) => s.reviewer === "user");
   const yours = state.notebook.suggestions.filter((s) => s.author === "user" && s.reviewer !== "user");
   const sections = [];
@@ -222,7 +222,7 @@ function cardButtons(buttons) {
  */
 function suggestionCard(suggestion) {
   const entry = findEntry(suggestion.entryId);
-  const who = suggestion.author === "user" ? "You" : state.settings.friendName;
+  const who = suggestion.author === "user" ? "You" : state.settings.kinwriterName;
   const name = entry?.name ?? "an entry";
   const change = suggestion.change;
   const card = inboxCard(change.delete ? `${who}: delete ${name}?` : `${who}: change ${name}`, "");
@@ -293,7 +293,7 @@ async function answerAsk(id, answer) {
 }
 
 async function dismissAsk(id) {
-  if (!confirm(`Set this aside without answering? ${state.settings.friendName} is told you did.`)) return;
+  if (!confirm(`Set this aside without answering? ${state.settings.kinwriterName} is told you did.`)) return;
   try {
     await inboxAction(id, "dismiss");
     renderAll();
@@ -314,8 +314,8 @@ async function resolveProposal(id, action) {
       await loadHub();
       renderAll();
     }
-    const channels = state.channels;
-    if (!channels.some((c) => c.id === state.channelId)) await openChannel(channels[0]?.id ?? null);
+    // The channel you're in may be gone (#practice isn't in the list, but counts).
+    if (!currentChannel()) await openChannel(state.channels[0]?.id ?? null);
     renderAll();
     renderInbox();
   } catch (error) {

@@ -29,8 +29,8 @@ beforeEach(async () => {
   serverId = (await call("GET", "/api/hub")).data.servers[0].id;
   // Group channels and DMs need Kinwriters together (Settings → Advanced).
   await call("PATCH", "/api/hub/options", { together: true });
-  wren = (await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Wren", prompt: "Your name is Wren." })).data.kinwriterId;
-  sol = (await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Sol", prompt: "Your name is Sol." })).data.kinwriterId;
+  wren = (await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Wren", prompt: "Your name is Wren." })).data.kinwriterId;
+  sol = (await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Sol", prompt: "Your name is Sol." })).data.kinwriterId;
   for (const app of hub.apps.values()) app.store.appState.set("orientation.pending", null);
 });
 
@@ -57,7 +57,7 @@ const home = () => app("home");
 const writers = () => fake.requests.map((r) => (JSON.stringify(r.messages).match(/Your name is (\w+)/)?.[1] ?? "?"));
 
 async function makeGroup(): Promise<string> {
-  const { data } = await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "Lounge", friends: ["home", wren, sol] });
+  const { data } = await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "Lounge", kinwriters: ["home", wren, sol] });
   return data.group.id;
 }
 
@@ -66,9 +66,9 @@ describe("group channels", () => {
     const id = await makeGroup();
     for (const f of ["home", wren, sol]) expect(app(f).store.getChannel(id)).toMatchObject({ kind: "group", name: "lounge" });
     const { data } = await call("GET", "/api/hub");
-    expect(data.servers[0].groups).toMatchObject([{ id, kind: "group", name: "lounge", friends: ["home", wren, sol] }]);
-    expect(data.servers[0].friends[0].channels.map((c: any) => c.name)).toEqual(["story", "ooc"]);
-    expect((await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "x", friends: ["home"] })).status).toBe(400);
+    expect(data.servers[0].groups).toMatchObject([{ id, kind: "group", name: "lounge", kinwriters: ["home", wren, sol] }]);
+    expect(data.servers[0].kinwriters[0].channels.map((c: any) => c.name)).toEqual(["story", "ooc"]);
+    expect((await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "x", kinwriters: ["home"] })).status).toBe(400);
   });
 
   test("your message starts a round: each kinwriter may write once, seeing the others; doing nothing is fine", async () => {
@@ -90,7 +90,7 @@ describe("group channels", () => {
     const firstId = { Arlo: "home", Wren: wren, Sol: sol }[firstBy]!;
     for (const f of ["home", wren, sol]) {
       const message = app(f).store.getMessages(id)[1]!;
-      if (f === firstId) expect(message.author).toBe("friend");
+      if (f === firstId) expect(message.author).toBe("kinwriter");
       else expect(message).toMatchObject({ author: "peer", speaker: { id: firstId, name: firstBy } });
     }
   });
@@ -109,7 +109,7 @@ describe("group channels", () => {
     fake.replies.push({ content: "[nothing]" }, { content: "[nothing]" }, { content: "[nothing]" });
     await call("POST", `/p/home/api/channels/${id}/messages`, { content: "hi all" });
     await hub.groups.settle();
-    app(wren).store.addTurn([{ channelId: id, author: "friend", content: "Wren here" }]);
+    app(wren).store.addTurn([{ channelId: id, author: "kinwriter", content: "Wren here" }]);
     const prompt = promptForChannel(home().store, id, { profile: pickProfile(home().store, home().store.getChannel(id)), groups: home().kinwriter.groups });
     const text = JSON.stringify(prompt);
     expect(text).toContain("This is a group channel: you, the user, and Wren and Sol.");
@@ -119,12 +119,12 @@ describe("group channels", () => {
 
   test("edits and deletions reach every copy; yours of a kinwriter's message is kept in their history", async () => {
     const id = await makeGroup();
-    const [mine] = app(wren).store.addTurn([{ channelId: id, author: "friend", content: "Wren's lne" }]);
+    const [mine] = app(wren).store.addTurn([{ channelId: id, author: "kinwriter", content: "Wren's lne" }]);
     await call("PATCH", `/p/home/api/messages/${mine!.id}`, { content: "Wren's line" });
     expect(app(sol).store.getMessage(mine!.id).content).toBe("Wren's line");
-    expect(app(wren).store.history(mine!.id).revisions.map((r) => r.author)).toEqual(["friend", "user"]);
+    expect(app(wren).store.history(mine!.id).revisions.map((r) => r.author)).toEqual(["kinwriter", "user"]);
     expect(app(wren).store.interventions.recent()[0]!.summary).toContain("edited your message");
-    app(wren).store.deleteMessage(mine!.id, "friend");
+    app(wren).store.deleteMessage(mine!.id, "kinwriter");
     expect(home().store.getMessages(id)).toEqual([]);
   });
 
@@ -171,6 +171,16 @@ describe("DMs", () => {
     await call("PATCH", `/api/hub/groups/${group.id}`, { visible: false });
     expect((await call("GET", `/p/${wren}/api/channels/${group.id}/messages`)).status).toBe(403);
     expect((await call("GET", `/p/${wren}/api/state`)).data.channels.map((c: any) => c.kind)).not.toContain("dm");
+    // Not its newest message either, nor its messages and comments by their own addresses.
+    expect(Object.keys((await call("GET", `/p/${wren}/api/state`)).data.activity)).not.toContain(group.id);
+    const message = app(wren).store.getMessages(group.id)[0]!;
+    expect((await call("PATCH", `/p/${wren}/api/messages/${message.id}`, { content: "changed" })).status).toBe(403);
+    expect((await call("DELETE", `/p/${wren}/api/messages/${message.id}`, {})).status).toBe(403);
+    expect((await call("POST", `/p/${wren}/api/messages/${message.id}/reactions`, { emoji: "👍" })).status).toBe(403);
+    expect((await call("POST", `/p/${wren}/api/messages/${message.id}/comments`, { note: "hm" })).status).toBe(403);
+    const thread = app(wren).store.comments.start("user", message.id, "an old note");
+    expect((await call("POST", `/p/${wren}/api/comments/${thread.id}/replies`, { note: "hm" })).status).toBe(403);
+    expect((await call("DELETE", `/p/${wren}/api/comments/${thread.id}`, {})).status).toBe(403);
     expect(JSON.stringify(home().store.toolLog.forChannel(home().store.listChannels().find((c) => c.kind === "ooc")!.id))).not.toContain("SECRET-DM");
     const inDm = promptForChannel(app(wren).store, group.id, { profile: pickProfile(app(wren).store, app(wren).store.getChannel(group.id)), groups: app(wren).kinwriter.groups });
     expect(inDm[0]!.content).toContain("The user chose not to see it");
@@ -179,7 +189,7 @@ describe("DMs", () => {
 
 describe("kinwriters kept apart (the default)", () => {
   test("off: no groups or DMs, no message_kinwriter or notes on each other, not in each other's prompts; all kept", async () => {
-    const group = (await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "lounge", friends: ["home", wren] })).data.group;
+    const group = (await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "lounge", kinwriters: ["home", wren] })).data.group;
     expect(group.id).toBeTruthy();
     const off = await call("PATCH", "/api/hub/options", { together: false });
     expect(off.data.together).toBe(false);
@@ -193,7 +203,7 @@ describe("kinwriters kept apart (the default)", () => {
     const prompt = promptForChannel(store, ooc.id, { profile: pickProfile(store, ooc), peers: hub.apps.get("home")!.kinwriter.peers() })[0]!.content;
     expect(prompt).not.toContain("Wren");
     expect((await call("GET", `/p/home/api/channels/${group.id}/messages`)).status).toBe(403);
-    expect((await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "den", friends: ["home", wren] })).status).toBe(400);
+    expect((await call("POST", `/api/hub/servers/${serverId}/groups`, { name: "den", kinwriters: ["home", wren] })).status).toBe(400);
     // Back on: the group channel is still there.
     await call("PATCH", "/api/hub/options", { together: true });
     expect(store.listChannels().some((c) => c.id === group.id)).toBe(true);

@@ -36,7 +36,7 @@ export function stillSeedDraft(store: Store): boolean {
   const seed = store.seeds.get();
   if (!seed) return false;
   const body = seed.seed.body.trim();
-  return !store.identity.history().some((v) => v.author === "friend" && v.status === "accepted" && v.identity.trim() !== body);
+  return !store.identity.history().some((v) => v.author === "kinwriter" && v.status === "accepted" && v.identity.trim() !== body);
 }
 
 /** The seed's Left open questions, or Leanings, as written. */

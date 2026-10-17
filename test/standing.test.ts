@@ -65,48 +65,48 @@ describe("standing permissions", () => {
     const store = home().store;
     const entry = store.notebook.createEntry("user", { kind: "character", name: "Kestrel", fields: [] });
     store.notebook.updateEntrySettings("user", entry.id, { editing: "suggest" });
-    expect(store.notebook.getEntry("friend", entry.id).access.edit).toBe("suggest");
+    expect(store.notebook.getEntry("kinwriter", entry.id).access.edit).toBe("suggest");
     await call("PUT", "/api/permissions/edit-notebook", { granted: true });
-    expect(store.notebook.getEntry("friend", entry.id).access.edit).toBe("direct");
-    store.notebook.editEntry("friend", entry.id, { name: "Kestrel Vane" });
+    expect(store.notebook.getEntry("kinwriter", entry.id).access.edit).toBe("direct");
+    store.notebook.editEntry("kinwriter", entry.id, { name: "Kestrel Vane" });
     expect(store.notebook.getEntry("user", entry.id).name).toBe("Kestrel Vane");
     // Locked stays locked.
     store.notebook.updateEntrySettings("user", entry.id, { editing: "locked" });
-    expect(store.notebook.getEntry("friend", entry.id).access.edit).toBe("none");
+    expect(store.notebook.getEntry("kinwriter", entry.id).access.edit).toBe("none");
   });
 });
 
 describe("retirement", () => {
   test("archived with a last note, set aside whole, and restored as they were", async () => {
-    const { data: made } = await call("POST", `/api/hub/servers/${(await call("GET", "/api/hub")).data.servers[0].id}/friends`, { name: "Wren" });
+    const { data: made } = await call("POST", `/api/hub/servers/${(await call("GET", "/api/hub")).data.servers[0].id}/kinwriters`, { name: "Wren" });
     const wren = made.kinwriterId;
     hub.apps.get(wren)!.store.appState.set("orientation.pending", null);
     const ooc = hub.apps.get(wren)!.store.listChannels().find((c) => c.kind === "ooc")!;
     hub.apps.get(wren)!.store.addTurn([{ channelId: ooc.id, author: "user", content: "REMEMBER-THIS" }]);
 
     fake.replies.push({ content: "Thank you for all of it. Wake me for the next storm." });
-    const { data } = await call("POST", `/api/hub/friends/${wren}/archive`, {});
+    const { data } = await call("POST", `/api/hub/kinwriters/${wren}/archive`, {});
     expect(data.note).toBe("Thank you for all of it. Wake me for the next storm.");
     expect(JSON.stringify(fake.requests[0]!.messages)).toContain("The user is archiving you");
     expect(data.archived).toMatchObject([{ id: wren, name: "Wren", note: "Thank you for all of it. Wake me for the next storm." }]);
     expect(hub.apps.has(wren)).toBe(false);
-    expect(data.servers.flatMap((s: any) => s.friends.map((f: any) => f.id))).toEqual(["home"]);
+    expect(data.servers.flatMap((s: any) => s.kinwriters.map((f: any) => f.id))).toEqual(["home"]);
     expect((await call("GET", `/p/${wren}/api/state`)).status).toBe(404);
 
     // Restored, with everything they remembered.
     const serverId = data.servers[0].id;
-    const restored = await call("POST", `/api/hub/friends/${wren}/restore`, { serverId });
+    const restored = await call("POST", `/api/hub/kinwriters/${wren}/restore`, { serverId });
     expect(restored.data.archived).toEqual([]);
     expect(hub.apps.get(wren)!.store.getMessages(ooc.id).map((m) => m.content)).toContain("REMEMBER-THIS");
   });
 
   test("the last kinwriter can't be archived; an archived kinwriter can be deleted for good", async () => {
-    expect((await call("POST", "/api/hub/friends/home/archive", {})).status).toBe(400);
+    expect((await call("POST", "/api/hub/kinwriters/home/archive", {})).status).toBe(400);
     const serverId = (await call("GET", "/api/hub")).data.servers[0].id;
-    const wren = (await call("POST", `/api/hub/servers/${serverId}/friends`, { name: "Wren" })).data.kinwriterId;
+    const wren = (await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Wren" })).data.kinwriterId;
     fake.replies.push({ content: "[nothing]" });
-    expect((await call("POST", `/api/hub/friends/${wren}/archive`, {})).data.note).toBe("");
-    const { data } = await call("DELETE", `/api/hub/friends/${wren}`, {});
+    expect((await call("POST", `/api/hub/kinwriters/${wren}/archive`, {})).data.note).toBe("");
+    const { data } = await call("DELETE", `/api/hub/kinwriters/${wren}`, {});
     expect(data.archived).toEqual([]);
   });
 });

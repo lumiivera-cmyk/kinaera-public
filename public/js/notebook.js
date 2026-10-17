@@ -53,12 +53,12 @@ export function findEntry(id) {
 export function ownerLabel(owner) {
   if (owner === "user") return "yours";
   if (owner === "joint") return "shared";
-  return `${state.settings.friendName}'s`;
+  return `${state.settings.kinwriterName}'s`;
 }
 
 /** Short badges for an entry in lists: its kind, owner, and what's special about it. */
 function entryBadges(entry) {
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   const badges = [entry.kind === "lore" ? "lore" : "character", ownerLabel(entry.owner)];
   if (entry.owner === "user") {
     if (entry.settings.visibility === "hidden") badges.push(`hidden from ${kinwriter}`);
@@ -67,7 +67,7 @@ function entryBadges(entry) {
     if (entry.proxyPrefix) badges.push(`${entry.proxyPrefix}:`);
   } else if (entry.owner === "joint") {
     if (entry.proxyPrefix) badges.push(`${entry.proxyPrefix}:`);
-  } else if (entry.owner === "friend") {
+  } else if (entry.owner === "kinwriter") {
     if (entry.access.edit === "suggest") badges.push("you suggest");
     if (entry.access.edit === "none") badges.push("read only");
   }
@@ -89,7 +89,7 @@ export function openNotebook() {
   hideFormError($("notebook-dialog"));
   renderNotebook();
   $("notebook-dialog").showModal();
-  // Get the latest (your kinwriter may change it, from stage 6).
+  // Get the latest (your kinwriter may have changed it).
   refreshNotebook().catch((error) => showFormError($("notebook-dialog"), error.message));
 }
 
@@ -127,7 +127,7 @@ function renderNotebook() {
           name.textContent = folder.name;
           header.append(name);
           if (folder.owner !== "user") header.append(badge(ownerLabel(folder.owner)));
-          if (folder.visibility === "hidden") header.append(badge(`hidden from ${state.settings.friendName}`));
+          if (folder.visibility === "hidden") header.append(badge(`hidden from ${state.settings.kinwriterName}`));
           if (folder.owner === "user") {
             const edit = document.createElement("button");
             edit.type = "button";
@@ -267,7 +267,7 @@ export function fitToText(box) {
 
 /** The line under the entry's title: whose it is, and what you can do with it. */
 function accessNote(entry, isNew) {
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   if (isNew) return `Pick who owns it below: you, ${kinwriter}, or both of you (shared).`;
   if (entry.owner === "joint") {
     const play = entry.kind === "character" ? " Either of you can play them, and the proxy prefix is yours to set." : "";
@@ -332,11 +332,11 @@ export function readEntryFields(keepBlank = false) {
 
 /** Fill the settings selects for an entry. */
 function renderEntrySettings(entry) {
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   const fields = $("entry-form").elements;
   fields.owner.replaceChildren(
     new Option("You", "user"),
-    new Option(kinwriter, "friend"),
+    new Option(kinwriter, "kinwriter"),
     new Option("Shared (both of you)", "joint"),
   );
   fields.owner.value = entry.owner;
@@ -357,7 +357,7 @@ export function fillEntrySettingChoices(visibility, editing) {
   const fields = $("entry-form").elements;
   const owner = fields.owner.value;
   const folder = state.notebook.folders.find((f) => f.id === fields.folderId.value);
-  const other = owner === "friend" ? "you" : state.settings.friendName;
+  const other = owner === "kinwriter" ? "you" : state.settings.kinwriterName;
 
   const visibilityNames = { visible: "Visible to both", hidden: `Hidden from ${other}` };
   const editingNames = { open: "Edit it", suggest: "Suggest changes", locked: "Only read it" };
@@ -374,7 +374,7 @@ export function fillEntrySettingChoices(visibility, editing) {
   );
   fields.visibility.value = visibility ?? "";
   fields.editing.value = editing ?? "";
-  $("entry-editing-label").textContent = owner === "friend" ? "You can" : `${state.settings.friendName} can`;
+  $("entry-editing-label").textContent = owner === "kinwriter" ? "You can" : `${state.settings.kinwriterName} can`;
 }
 
 /**
@@ -385,7 +385,7 @@ export function updateEntryForm() {
   const entry = state.editingEntry;
   const fields = $("entry-form").elements;
   const owner = fields.owner.value;
-  const fixed = owner === "joint" || (entry.isNew && owner === "friend");
+  const fixed = owner === "joint" || (entry.isNew && owner === "kinwriter");
   fields.visibility.disabled = fields.editing.disabled = fixed;
   $("entry-prefix-row").hidden = !canHavePrefix(entry.kind, owner);
 }
@@ -579,7 +579,7 @@ export async function deleteFolder() {
 export function renderCastEditor() {
   const channel = currentChannel();
   if (!channel || channel.kind !== "rp") return;
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
 
   const list = $("cast-list");
   list.replaceChildren(

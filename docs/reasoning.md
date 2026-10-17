@@ -34,3 +34,22 @@ aren't.
 `reasoning` in `defaults/standing.md`, in every turn's prompt: that their
 reasoning is saved with the turn, that the user can open it under their
 messages, and that it's in the developer panel.
+
+## Turning it off
+
+A profile's Reasoning setting is the model's default, Off, or Low / Medium /
+High effort. Off sends `reasoning_effort: "none"`, which nanoGPT honours on
+models that can answer without thinking; a model that always thinks refuses
+it, and the error says so. (Migration 16 rebuilt `profiles` so its CHECK
+rule allows `none`.)
+
+## Only the settings a model supports
+
+nanoGPT's `GET /models?detailed=true` says, per model, whether it reasons,
+whether it calls tools natively, and its output limit (`listModels` in
+`src/nanogpt.ts`; `/api/models` returns it as `info`). The profile editors
+(`public/js/model-info.js`) use it to hide Reasoning for a model that can't
+reason, cap Max tokens at the model's limit, and note when a model has no
+native tool calling (it may still manage tools as text, so the checkbox
+stays). nanoGPT says nothing about temperature, Top P or Min P, so those
+always show, and a model the list doesn't know shows everything.

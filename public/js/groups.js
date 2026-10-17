@@ -14,15 +14,15 @@ import { paintAvatar, switchKinwriter } from "./kinwriter-page.js";
 import { seenMessages } from "./live.js";
 
 /** The open server's groups and DMs (from the hub), visible ones only. */
-export function serverGroups() {
-  const server = (state.hub ?? []).find((s) => s.friends.some((p) => p.id === state.kinwriterId));
+function serverGroups() {
+  const server = (state.hub ?? []).find((s) => s.kinwriters.some((p) => p.id === state.kinwriterId));
   return (server?.groups ?? []).filter((g) => g.visible);
 }
 
 /** A kinwriter on the hub, by id: {name, avatar, color}. */
-export function hubKinwriter(id) {
+function hubKinwriter(id) {
   for (const server of state.hub ?? []) {
-    const kinwriter = server.friends.find((p) => p.id === id);
+    const kinwriter = server.kinwriters.find((p) => p.id === id);
     if (kinwriter) return kinwriter;
   }
   return null;
@@ -48,7 +48,7 @@ export function groupItems() {
     link.draggable = false;
     link.href = `#/p/${encodeURIComponent(state.kinwriterId)}/channel/${group.id}`;
     if (group.id === state.channelId) link.setAttribute("aria-current", "page");
-    const names = group.friends.map((id) => hubKinwriter(id)?.name ?? "?");
+    const names = group.kinwriters.map((id) => hubKinwriter(id)?.name ?? "?");
     link.title = group.kind === "dm" ? `${names.join(" & ")}'s DM (you can read it)` : `You, ${names.join(", ")}`;
     const name = document.createElement("span");
     name.className = "channel-link-name";
@@ -66,9 +66,9 @@ export function groupItems() {
     }
     // Opened as a kinwriter who's in it: the open one if they are.
     link.addEventListener("click", (event) => {
-      if (group.friends.includes(state.kinwriterId)) return;
+      if (group.kinwriters.includes(state.kinwriterId)) return;
       event.preventDefault();
-      switchKinwriter(group.friends[0], group.id);
+      switchKinwriter(group.kinwriters[0], group.id);
     });
     item.append(link);
     return item;
@@ -79,7 +79,7 @@ export function groupItems() {
 /** Who a group channel is with, for the top of the channel. */
 export function groupTopic(channel) {
   const group = serverGroups().find((g) => g.id === channel.id);
-  const names = (group?.friends ?? []).map((id) => hubKinwriter(id)?.name ?? "?");
+  const names = (group?.kinwriters ?? []).map((id) => hubKinwriter(id)?.name ?? "?");
   if (channel.kind === "dm") return `${names.join(" & ")}'s DM. You can read it; you can't write in it.`;
   return `You, ${names.join(", ")}. When you write, each kinwriter may take a turn.`;
 }
@@ -134,8 +134,8 @@ export function renderServerGroups(server) {
     list.append(empty);
   }
   // Kinwriters to pick for a new group channel.
-  $("group-friends").replaceChildren(
-    ...server.friends.map((kinwriter) => {
+  $("group-kinwriters").replaceChildren(
+    ...server.kinwriters.map((kinwriter) => {
       const label = document.createElement("label");
       label.className = "check-inline";
       const box = document.createElement("input");
@@ -149,7 +149,7 @@ export function renderServerGroups(server) {
       return label;
     }),
   );
-  $("new-group").hidden = server.friends.length < 2;
+  $("new-group").hidden = server.kinwriters.length < 2;
 }
 
 async function updateGroup(id, change) {
@@ -174,12 +174,20 @@ async function deleteGroup(group) {
 /** Make a group channel with the kinwriters ticked. */
 export async function createGroup(serverId) {
   const name = $("group-name").value.trim();
-  const friends = [...$("group-friends").querySelectorAll("input:checked")].map((box) => box.value);
+  const kinwriters = [...$("group-kinwriters").querySelectorAll("input:checked")].map((box) => box.value);
   try {
-    const data = await api("POST", `/api/hub/servers/${encodeURIComponent(serverId)}/groups`, { name, friends });
+    const data = await api("POST", `/api/hub/servers/${encodeURIComponent(serverId)}/groups`, { name, kinwriters });
     state.hub = data.servers;
-    switchKinwriter(friends.includes(state.kinwriterId) ? state.kinwriterId : friends[0], data.group.id);
+    switchKinwriter(kinwriters.includes(state.kinwriterId) ? state.kinwriterId : kinwriters[0], data.group.id);
   } catch (error) {
     showFormError($("server-form"), error.message);
   }
 }
+
+// Enter in the group's name makes the group (it's inside the server form,
+// which Enter would otherwise submit, renaming the server and closing it).
+$("group-name").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  $("create-group").click();
+});

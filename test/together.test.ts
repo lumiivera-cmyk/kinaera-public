@@ -82,8 +82,8 @@ describe("dice", () => {
 
 describe("replies", () => {
   test("your reply quotes the message, in the app and in their prompt", async () => {
-    const [earlier] = app.store.addTurn([{ channelId: ooc.id, author: "friend", content: "should Ilse trust Kestrel?" }]);
-    app.store.addTurn([{ channelId: ooc.id, author: "friend", content: "anyway" }]);
+    const [earlier] = app.store.addTurn([{ channelId: ooc.id, author: "kinwriter", content: "should Ilse trust Kestrel?" }]);
+    app.store.addTurn([{ channelId: ooc.id, author: "kinwriter", content: "anyway" }]);
     const { data } = await call("POST", `/api/channels/${ooc.id}/messages`, { content: "no way", replyTo: earlier!.id });
     expect(data.userMessages[0].replyTo).toBe(earlier!.id);
     expect(JSON.stringify(fake.requests[0]!.messages)).toContain('(replying to you: \\"should Ilse trust Kestrel?\\") no way');

@@ -36,6 +36,7 @@ import type { WakeResult, Wakeups } from "./wakeups.ts";
 import { fill, wording } from "./wording.ts";
 import { practiceWorld, rollCharacterSeed } from "./practiceworld.ts";
 import { seedHandoff } from "./handoff.ts";
+import { setOwnGroup } from "./universal.ts";
 
 /** Where things are kept between runs (app_state). */
 const STATUS = "orientation.status";
@@ -145,7 +146,9 @@ export function orientationStep(id: string, version: OrientationVersion = "full"
       .split("\n")
       .map((line) => line.split("|").map((p) => p.trim()))
       .filter((p) => p.length === 2 && p[0] && p[1])
-      .map(([selector, text]) => ({ selector: selector!, text: text! })),
+      // Your own wording from before the second rename may point at the
+      // page's old ids (#friend-card is #kinwriter-card now).
+      .map(([selector, text]) => ({ selector: selector!.replace(/#friend-/g, "#kinwriter-"), text: text! })),
     table: part("table"),
     where: part("where").trim() === "scene" ? "scene" : "practice",
     after: (["you", "message"] as const).find((a) => a === part("after").trim()) ?? "start",
@@ -207,7 +210,9 @@ export function orientationRunning(store: Store): OrientationSession | null {
 export function requestOrientation(store: Store, note?: string): void {
   const { status } = orientationState(store);
   if (status === "running") throw new Error("You're in an orientation now.");
-  store.appState.set(REQUEST, JSON.stringify({ note: note?.trim().slice(0, 500) || null, at: new Date().toISOString(), before: status }));
+  // Asking again keeps the status from before the first ask, for a "not now".
+  const before = status === "requested" ? (json<{ before?: OrientationStatus }>(store.appState.get(REQUEST))?.before ?? "none") : status;
+  store.appState.set(REQUEST, JSON.stringify({ note: note?.trim().slice(0, 500) || null, at: new Date().toISOString(), before }));
   store.appState.set(STATUS, "requested");
 }
 
@@ -334,6 +339,8 @@ export function applyOrientationChoices(store: Store, choices: OrientationChoice
     if (n > 0) done.push("the orientation conversation was set aside");
   }
   if (choices.chattiness && choices.chattiness !== store.getSettings().wakeups) {
+    // Chosen for this kinwriter: reaching out becomes theirs, apart from everyone's (src/universal.ts).
+    setOwnGroup(store, "reaching", true);
     store.updateSettings({ wakeups: choices.chattiness });
   }
   if (done.length) {
@@ -344,7 +351,7 @@ export function applyOrientationChoices(store: Store, choices: OrientationChoice
   const ooc = store.listChannels().find((c) => c.kind === "ooc");
   if (session.questions?.length && ooc) {
     const words = wording("orientation");
-    store.addTurn([{ channelId: ooc.id, author: "friend", content: fill(words["questions-message"] ?? "{questions}", { questions: session.questions.map((q) => `- ${q}`).join("\n") }) }]);
+    store.addTurn([{ channelId: ooc.id, author: "kinwriter", content: fill(words["questions-message"] ?? "{questions}", { questions: session.questions.map((q) => `- ${q}`).join("\n") }) }]);
   }
   finishOrientation(store);
 }
@@ -373,11 +380,11 @@ export function madeInOrientation(store: Store): {
   // As you see them: their secrets only as a count, never a name.
   const entries = store.notebook.listEntries("user").filter((e) => e.createdAt >= session.startedAt);
   const theirsHidden = store.db
-    .query("SELECT COUNT(*) AS n FROM notebook_entries WHERE owner = 'friend' AND created_at >= $since AND COALESCE(visibility, '') = 'hidden'")
+    .query("SELECT COUNT(*) AS n FROM notebook_entries WHERE owner = 'kinwriter' AND created_at >= $since AND COALESCE(visibility, '') = 'hidden'")
     .get({ since: session.startedAt }) as { n: number };
   return {
     yours: entries.filter((e) => e.kind === "character" && e.owner === "user").map((e) => ({ id: e.id, name: e.name })),
-    theirs: entries.filter((e) => e.kind === "character" && e.owner === "friend").map((e) => ({ id: e.id, name: e.name })),
+    theirs: entries.filter((e) => e.kind === "character" && e.owner === "kinwriter").map((e) => ({ id: e.id, name: e.name })),
     yourSecrets: entries.filter((e) => e.owner === "user" && e.settings.visibility === "hidden").length,
     theirSecrets: theirsHidden.n,
   };
@@ -426,7 +433,7 @@ export function makeStarterScene(store: Store): string {
   const channel = store.createChannel({ name, kind: "rp", mode: "literary" });
   const made = madeInOrientation(store);
   for (const c of made.yours) store.notebook.pin("user", channel.id, c.id);
-  for (const c of made.theirs) store.notebook.pin("friend", channel.id, c.id);
+  for (const c of made.theirs) store.notebook.pin("kinwriter", channel.id, c.id);
   let partner: string | null = null;
   if (practice?.partnerName) {
     // The partner is yours (the "yours" column), standing in for you.
@@ -755,17 +762,22 @@ export class Rhythms {
     try {
       // A wake-up they scheduled for themselves (src/schedule.ts), soonest
       // first. Held by a rule, it stays waiting for the next tick.
+      // Held, the rest below still gets its chance this tick.
       const scheduled = this.store.schedule.due(this.now())[0];
+      let held: WakeResult | null = null;
       if (scheduled) {
         // One set to run a script: a tools-only turn. It only becomes a
         // turn (below) if it couldn't run or a step failed.
-        if (scheduled.script) {
-          const ran = await this.wakeups.script(scheduled);
-          if (ran.outcome !== "wake") return null;
+        const ran = scheduled.script ? await this.wakeups.script(scheduled) : null;
+        if (ran?.outcome === "ran" || ran?.outcome === "stopped") return null;
+        if (!ran || ran.outcome === "wake") {
+          const result = await this.wakeups.event("scheduled", { scheduleId: scheduled.id, channelId: scheduled.channelId ?? undefined });
+          if (result.outcome !== null) {
+            this.store.schedule.markDone(scheduled.id);
+            return result;
+          }
+          held = result;
         }
-        const result = await this.wakeups.event("scheduled", { scheduleId: scheduled.id, channelId: scheduled.channelId ?? undefined });
-        if (result.outcome !== null) this.store.schedule.markDone(scheduled.id);
-        return result;
       }
       // The weekly wellbeing reading (src/wellbeing.ts), before the look
       // back, which shows it. It costs one Jev call; nothing else waits on it.
@@ -775,9 +787,9 @@ export class Rhythms {
       const last = this.store.appState.get(LOOKBACK_LAST);
       if (!last) {
         this.store.appState.set(LOOKBACK_LAST, this.now().toISOString());
-        return null;
+        return held;
       }
-      if (this.now().getTime() - new Date(last).getTime() < LOOKBACK_DAYS * 86_400_000) return null;
+      if (this.now().getTime() - new Date(last).getTime() < LOOKBACK_DAYS * 86_400_000) return held;
       const result = await this.wakeups.event("lookback", { since: last });
       if (result.outcome !== null) this.store.appState.set(LOOKBACK_LAST, this.now().toISOString());
       return result;

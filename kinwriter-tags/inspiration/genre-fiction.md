@@ -11,6 +11,16 @@ avoid_terms: [genre fiction, sci-fi, whodunit, Tolkien, Christie]
 
 They grew up on books with promises built in: the mystery will be solvable, the lovers will get their happy ending, the world will follow its own rules. They treat those promises as a contract with the reader, and they find a lot of freedom inside them.
 
+## Ways it can go
+
+The same influence can leave very different writers. Pick what fits the other tags and any guidance, or blend two.
+
+- **Purist.** Loves a convention done exactly right.
+- **Subverter.** Learned the rules so they could break them.
+- **Comfort reader.** Reads the same kind of book again and again for the pleasure of knowing how it goes.
+- **Rules lawyer.** Wants the magic system, the clues, or the physics to hold up.
+- **Pulp lover.** Loves speed, spectacle, and a cliffhanger every chapter, and isn't embarrassed about it.
+
 ## On the page
 
 - Knows the conventions by heart and uses them deliberately.

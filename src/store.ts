@@ -12,11 +12,12 @@
 
 import { Rewrites } from "./rewrites.ts";
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { openDatabase } from "./db.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
+import { BACKGROUND_FILE } from "./backgrounds.ts";
 import { Notebook } from "./notebook.ts";
 import { Profiles } from "./profiles.ts";
 import { Comments, ReasoningLog, ToolLog } from "./activity.ts";
@@ -41,6 +42,7 @@ import { Relationships } from "./relationships.ts";
 import { granted } from "./standing.ts";
 import { awaitExampleCharacter, builtInWorld } from "./practiceworld.ts";
 import { deletePads } from "./scratchpads.ts";
+import { defaultText } from "./wording.ts";
 import type {
   Category,
   Author,
@@ -58,17 +60,12 @@ import type {
   Settings,
 } from "./types.ts";
 
-// The error types live in their own file (so the notebook can use them
-// too); re-exported here, where most code already imports them from.
+// The error types live in src/errors.ts; re-exported here for server.ts,
+// which still imports them from the store.
 export { NotFoundError, ValidationError };
-
-/** Where the starting kinwriter prompt and character sheet are kept. */
-const DEFAULTS_DIR = resolve(import.meta.dir, "..", "defaults");
 
 /** Jev's model on nanoGPT, pinned: upgrade on purpose, not by surprise (see src/jev.ts). */
 export const DEFAULT_DECISION_MODEL = "typesafe/jev-1.13";
-
-
 
 // ------------------------------------------------------------- defaults
 
@@ -81,13 +78,13 @@ export const DEFAULT_DECISION_MODEL = "typesafe/jev-1.13";
  */
 export function defaultSettings(): Settings {
   return {
-    friendName: "Arlo",
+    kinwriterName: "Arlo",
     // Which profile writes each job. "" means the first profile. (Models and
     // their settings live in connection profiles; see src/profiles.ts.)
     rpAssignment: "",
     oocAssignment: "",
     themeOptions: {},
-    friendPrompt: readDefault("kinwriter.md"),
+    kinwriterPrompt: readDefault("kinwriter.md"),
     literaryPrompt: readDefault("literary.md"),
     casualPrompt: readDefault("casual.md"),
     oocPrompt: readDefault("ooc.md"),
@@ -107,15 +104,18 @@ export function defaultSettings(): Settings {
     quietStart: -1,
     quietEnd: 8,
     heartbeatHours: 0,
-    friendAvatar: "",
-    friendPronouns: "",
-    friendColor: -1,
+    heartbeatAssignment: "",
+    kinwriterAvatar: "",
+    kinwriterPronouns: "",
+    kinwriterColor: -1,
     oocBubbles: true,
     matchPace: true,
     typingBaseMs: 600,
     typingPerCharMs: 40,
     replyDelayMs: 2500,
     appTheme: "classic",
+    appBackground: "",
+    backgroundDim: 0,
   };
 }
 
@@ -135,9 +135,9 @@ export function defaultCharacter(): { name: string; fields: EntryField[] } {
   return { name, fields: fields.filter((f) => f.label.toLowerCase() !== "name") };
 }
 
+/** `defaults/<fileName>`, trimmed, or "" if there's no such file (read by src/wording.ts). */
 function readDefault(fileName: string): string {
-  const path = join(DEFAULTS_DIR, fileName);
-  return existsSync(path) ? readFileSync(path, "utf8").trim() : "";
+  return defaultText(fileName.replace(/\.md$/, "")).trim();
 }
 
 // ------------------------------------------------------------ validation
@@ -158,6 +158,7 @@ const LIMITS = {
   typingBaseMs: { min: 0, max: 10_000 },
   typingPerCharMs: { min: 0, max: 1000 },
   replyDelayMs: { min: 0, max: 30_000 },
+  backgroundDim: { min: 0, max: 0.8 },
   /** Longest kinwriter prompt, in characters. */
   longText: 100_000,
   /** Longest name (channel, kinwriter), in characters. */
@@ -176,8 +177,8 @@ export function validateSettings(input: unknown): Partial<Settings> {
   const raw = requireObject(input, "Settings");
   const clean: Partial<Settings> = {};
 
-  if (raw.friendName !== undefined) clean.friendName = name(raw.friendName, "friendName");
-  for (const key of ["friendPrompt", "literaryPrompt", "casualPrompt", "oocPrompt"] as const) {
+  if (raw.kinwriterName !== undefined) clean.kinwriterName = name(raw.kinwriterName, "kinwriterName");
+  for (const key of ["kinwriterPrompt", "literaryPrompt", "casualPrompt", "oocPrompt"] as const) {
     if (raw[key] !== undefined) clean[key] = longText(raw[key], key);
   }
 
@@ -187,6 +188,9 @@ export function validateSettings(input: unknown): Partial<Settings> {
   if (raw.oocAssignment !== undefined) clean.oocAssignment = assignment(raw.oocAssignment, "oocAssignment") ?? "";
   if (raw.summaryAssignment !== undefined) {
     clean.summaryAssignment = assignment(raw.summaryAssignment, "summaryAssignment") ?? "";
+  }
+  if (raw.heartbeatAssignment !== undefined) {
+    clean.heartbeatAssignment = assignment(raw.heartbeatAssignment, "heartbeatAssignment") ?? "";
   }
   if (raw.hardLimits !== undefined) {
     if (typeof raw.hardLimits !== "string" || raw.hardLimits.length > 4000) throw new ValidationError("hardLimits must be text, 4000 characters at most");
@@ -235,17 +239,17 @@ export function validateSettings(input: unknown): Partial<Settings> {
     // Five minutes at the shortest (hours, so 0.25 is every 15 minutes).
     if (clean.heartbeatHours > 0 && clean.heartbeatHours < 5 / 60) throw new ValidationError("heartbeatHours must be 0 (off) or at least 5 minutes (0.0834)");
   }
-  if (raw.friendAvatar !== undefined) {
-    if (typeof raw.friendAvatar !== "string" || [...raw.friendAvatar.trim()].length > 8) {
-      throw new ValidationError("friendAvatar must be an emoji (or empty)");
+  if (raw.kinwriterAvatar !== undefined) {
+    if (typeof raw.kinwriterAvatar !== "string" || [...raw.kinwriterAvatar.trim()].length > 8) {
+      throw new ValidationError("kinwriterAvatar must be an emoji (or empty)");
     }
-    clean.friendAvatar = raw.friendAvatar.trim();
+    clean.kinwriterAvatar = raw.kinwriterAvatar.trim();
   }
-  if (raw.friendPronouns !== undefined) {
-    if (typeof raw.friendPronouns !== "string" || raw.friendPronouns.trim().length > 40) throw new ValidationError("friendPronouns must be text, 40 characters at most");
-    clean.friendPronouns = raw.friendPronouns.trim();
+  if (raw.kinwriterPronouns !== undefined) {
+    if (typeof raw.kinwriterPronouns !== "string" || raw.kinwriterPronouns.trim().length > 40) throw new ValidationError("kinwriterPronouns must be text, 40 characters at most");
+    clean.kinwriterPronouns = raw.kinwriterPronouns.trim();
   }
-  if (raw.friendColor !== undefined) clean.friendColor = numberInRange(raw.friendColor, "friendColor", { min: -1, max: 359 }, true);
+  if (raw.kinwriterColor !== undefined) clean.kinwriterColor = numberInRange(raw.kinwriterColor, "kinwriterColor", { min: -1, max: 359 }, true);
   if (raw.oocBubbles !== undefined) {
     if (typeof raw.oocBubbles !== "boolean") throw new ValidationError("oocBubbles must be true or false");
     clean.oocBubbles = raw.oocBubbles;
@@ -264,6 +268,14 @@ export function validateSettings(input: unknown): Partial<Settings> {
   // Only the id's form is checked here; the server checks the theme exists.
   if (raw.appTheme !== undefined) clean.appTheme = themeId(raw.appTheme, "appTheme");
   if (raw.themeOptions !== undefined) clean.themeOptions = themeOptions(raw.themeOptions);
+  // Only the name's form is checked here; the server checks the picture exists.
+  if (raw.appBackground !== undefined) {
+    if (raw.appBackground !== "" && (typeof raw.appBackground !== "string" || !BACKGROUND_FILE.test(raw.appBackground))) {
+      throw new ValidationError("appBackground must be a background picture's file name, or empty");
+    }
+    clean.appBackground = raw.appBackground;
+  }
+  if (raw.backgroundDim !== undefined) clean.backgroundDim = numberInRange(raw.backgroundDim, "backgroundDim", LIMITS.backgroundDim, false);
 
   return clean;
 }
@@ -345,7 +357,7 @@ export function validateNewChannel(input: unknown): NewChannel {
 export type ChannelUpdate = Partial<Pick<Channel, "name" | "mode" | "theme" | "assignment" | "categoryId" | "about">>;
 
 /** How long a channel's "what it's for" line can be. */
-export const CHANNEL_ABOUT_LIMIT = 300;
+const CHANNEL_ABOUT_LIMIT = 300;
 
 /** Check a partial channel update. The kind can't be changed, so it's ignored. */
 export function validateChannelUpdate(input: unknown): ChannelUpdate {
@@ -355,7 +367,7 @@ export function validateChannelUpdate(input: unknown): ChannelUpdate {
   if (raw.mode !== undefined) clean.mode = mode(raw.mode);
   // `null` (or "") means "use the app theme".
   if (raw.theme !== undefined) clean.theme = raw.theme === null || raw.theme === "" ? null : themeId(raw.theme, "theme");
-  // `null` (or "") means "use the server-wide profile for this kind of channel".
+  // `null` (or "") means "use the profile Settings assigns to this kind of channel".
   if (raw.assignment !== undefined) clean.assignment = assignment(raw.assignment, "assignment");
   // `null` (or "") means "in no category". The store checks it exists.
   if (raw.categoryId !== undefined) {
@@ -527,7 +539,7 @@ const SELECT_MESSAGES = `
   SELECT m.id, m.channel_id, m.kind, m.mode, m.turn_id, m.author, m.content, m.created_at, m.edited_at, m.model, m.profile, m.reply_to, m.speaker_id, m.speaker_name,
     m.edited_by, m.deleted_at, m.deleted_by, m.superseded_by,
     (SELECT COUNT(DISTINCT COALESCE(a.turn_id, a.id)) FROM messages a
-       WHERE m.turn_id IS NOT NULL AND a.superseded_by = m.turn_id AND a.channel_id = m.channel_id) AS alternates,
+       WHERE m.turn_id IS NOT NULL AND a.superseded_by = m.turn_id AND a.channel_id = m.channel_id AND a.deleted_at IS NULL) AS alternates,
     (SELECT json_group_array(character_name)
        FROM (SELECT character_name FROM message_characters
               WHERE message_id = m.id ORDER BY position)) AS characters,
@@ -545,7 +557,14 @@ const LIVE = "m.deleted_at IS NULL AND m.superseded_by IS NULL";
 /** How `superseded_by` marks a message set aside in a branch (see `Store.branchFrom`). */
 const BRANCH = "branch:";
 
-/** A branch's fork message id, or `null` if `mark` isn't a branch's (a regeneration's turn id). */
+/**
+ * The fork "message" of a branch that starts at the very beginning of the
+ * channel: what's left of one whose fork message (the channel's first) was
+ * deleted. It's always there to go back to.
+ */
+export const CHANNEL_START = "start";
+
+/** A branch's fork message id (or `CHANNEL_START`), or `null` if `mark` isn't a branch's (a regeneration's turn id). */
 function forkOf(mark: string): string | null {
   if (!mark.startsWith(BRANCH)) return null;
   const end = mark.lastIndexOf(":");
@@ -642,8 +661,39 @@ export class Store {
   }
 
   private messagesChanged(channelId: string): void {
-    this.revision++;
-    for (const watcher of this.messageWatchers) watcher(channelId);
+    this.afterCommit(() => {
+      this.revision++;
+      for (const watcher of this.messageWatchers) watcher(channelId);
+    });
+  }
+
+  /** Notifications held back until `atomically`'s transaction commits (`null` outside one). */
+  private deferred: (() => void)[] | null = null;
+
+  /** Run `notify` now, or once the surrounding `atomically` transaction commits (never, if it rolls back). */
+  private afterCommit(notify: () => void): void {
+    if (this.deferred) this.deferred.push(notify);
+    else notify();
+  }
+
+  /**
+   * Run `work` in one transaction, holding back message notifications (the
+   * summarizer, and group copies) until it commits: if it rolls back,
+   * nobody hears of messages that were never saved.
+   */
+  private atomically<T>(work: () => T): T {
+    if (this.deferred) return this.db.transaction(work)();
+    this.deferred = [];
+    let held: (() => void)[];
+    try {
+      const result = this.db.transaction(work)();
+      held = this.deferred;
+      this.deferred = null;
+      for (const notify of held) notify();
+      return result;
+    } finally {
+      this.deferred = null;
+    }
   }
 
   /**
@@ -654,11 +704,13 @@ export class Store {
   onMessageEvent: ((event: "added" | "edited" | "deleted", message: Message) => void) | null = null;
 
   private messageEvent(event: "added" | "edited" | "deleted", message: Message): void {
-    try {
-      this.onMessageEvent?.(event, message);
-    } catch (error) {
-      console.warn("[store] couldn't pass on a message change", error);
-    }
+    this.afterCommit(() => {
+      try {
+        this.onMessageEvent?.(event, message);
+      } catch (error) {
+        console.warn("[store] couldn't pass on a message change", error);
+      }
+    });
   }
 
   // ------------------------------------------------ mirrored (group) copies
@@ -671,18 +723,25 @@ export class Store {
 
   /** An edit made in another kinwriter's store. The owner's own copy keeps the revision; copies just follow. */
   mirrorEdit(id: string, content: string): void {
-    const row = this.db.query("SELECT channel_id FROM messages WHERE id = $id").get({ id }) as { channel_id: string } | null;
-    if (!row) return;
+    if (!this.hasMessage(id)) return;
+    const message = this.getMessage(id);
+    // Summaries that cover it are out of date now, as with `editMessage`.
+    if (!message.deletedAt && !message.supersededBy && content !== message.content) this.summaries.messageChanging(message, false);
     this.db.query("UPDATE messages SET content = $content, edited_at = $now WHERE id = $id").run({ id, content, now: new Date().toISOString() });
-    this.messagesChanged(row.channel_id);
+    this.messagesChanged(message.channelId);
   }
 
   /** A deletion made in another kinwriter's store. */
   mirrorDelete(id: string): void {
-    const row = this.db.query("SELECT channel_id FROM messages WHERE id = $id").get({ id }) as { channel_id: string } | null;
-    if (!row) return;
+    if (!this.hasMessage(id)) return;
+    const message = this.getMessage(id);
+    if (!message.deletedAt && !message.supersededBy) this.summaries.messageChanging(message, true);
     this.db.query("UPDATE messages SET deleted_at = $now WHERE id = $id AND deleted_at IS NULL").run({ id, now: new Date().toISOString() });
-    this.messagesChanged(row.channel_id);
+    this.messagesChanged(message.channelId);
+  }
+
+  private hasMessage(id: string): boolean {
+    return this.db.query("SELECT 1 FROM messages WHERE id = $id").get({ id }) !== null;
   }
 
   /**
@@ -700,8 +759,10 @@ export class Store {
     if (!inMemory) mkdirSync(dataDir, { recursive: true });
     const path = inMemory ? ":memory:" : join(dataDir, "kinaera.db");
 
-    const isNew = inMemory || !existsSync(path);
     this.db = openDatabase(path);
+    // New if it has no channels at all (the practice channel is always made,
+    // so only a fresh database has none): a new file, or one left empty.
+    const isNew = this.db.query("SELECT 1 FROM channels LIMIT 1").get() === null;
     this.notebook = new Notebook(this.db);
     this.profiles = new Profiles(this.db);
     this.toolLog = new ToolLog(this.db);
@@ -717,7 +778,7 @@ export class Store {
     this.wakeLog = new WakeLog(this.db);
     this.appState = new AppState(this.db);
     this.interventions = new Interventions(this.db);
-    this.identity = new Identity(this.db, (identity) => this.updateSettings({ friendPrompt: identity }));
+    this.identity = new Identity(this.db, (identity) => this.updateSettings({ kinwriterPrompt: identity }));
     this.seeds = new SeedArchive(this.db);
     this.selfPage = new SelfPage(this.db);
     this.journal = new Journal(this.db);
@@ -730,11 +791,15 @@ export class Store {
     // Standing permission to edit your entries directly (src/standing.ts).
     this.notebook.directEdits = () => granted(this, "edit-notebook");
 
-    // A new kinwriter is offered an orientation in the app (src/orientation.ts); nothing runs by itself.
-    if (isNew) this.seed(options.example ?? true);
-    // Every kinwriter has an identity of their own, and a practice channel.
-    if (!this.identity.current()) this.identity.begin(this.getSettings().friendPrompt, isNew && options.example !== false ? readDefault("tastes.md") : "");
-    this.ensurePractice();
+    // All of the starting content, or none: a crash halfway can't leave a
+    // store that looks set up but has no #story.
+    this.db.transaction(() => {
+      // A new kinwriter is offered an orientation in the app (src/orientation.ts); nothing runs by itself.
+      if (isNew) this.seed(options.example ?? true);
+      // Every kinwriter has an identity of their own, and a practice channel.
+      if (!this.identity.current()) this.identity.begin(this.getSettings().kinwriterPrompt, isNew && options.example !== false ? readDefault("tastes.md") : "");
+      this.ensurePractice();
+    })();
   }
 
   /**
@@ -749,9 +814,9 @@ export class Store {
     if (!this.notebook.practiceFolder()) {
       const folder = this.notebook.createPracticeFolder();
       for (const note of builtInWorld().notes) {
-        const entry = this.notebook.createEntry("friend", { kind: note.kind, name: note.name, fields: note.fields });
-        this.notebook.updateEntrySettings("friend", entry.id, { folderId: folder.id });
-        this.notebook.pin("friend", channel.id, entry.id);
+        const entry = this.notebook.createEntry("kinwriter", { kind: note.kind, name: note.name, fields: note.fields });
+        this.notebook.updateEntrySettings("kinwriter", entry.id, { folderId: folder.id });
+        this.notebook.pin("kinwriter", channel.id, entry.id);
       }
     }
     return channel;
@@ -775,7 +840,7 @@ export class Store {
     const character = defaultCharacter();
     const entry = this.notebook.createEntry("user", {
       kind: "character",
-      owner: "friend",
+      owner: "kinwriter",
       name: character.name,
       fields: character.fields,
     });
@@ -1049,10 +1114,6 @@ export class Store {
   }
 
   /**
-   * Delete a channel and, through `ON DELETE CASCADE`, all its messages.
-   * Throws `NotFoundError` if there's no such channel.
-   */
-  /**
    * Your kinwriter pauses a roleplay storyline (`pause_storyline`), with their
    * reason, or picks it back up (`reason` null). You still can write there.
    */
@@ -1067,6 +1128,10 @@ export class Store {
     return this.getChannel(id);
   }
 
+  /**
+   * Delete a channel and, through `ON DELETE CASCADE`, all its messages.
+   * Throws `NotFoundError` if there's no such channel.
+   */
   deleteChannel(id: string): void {
     if (this.hasChannel(id) && this.getChannel(id).kind === "practice") {
       throw new ValidationError("The practice channel is your kinwriter's own, and can't be deleted.");
@@ -1163,7 +1228,7 @@ export class Store {
    * Used for a casual reply's bubbles, or several lines you sent together.
    */
   addTurn(messages: Omit<NewMessage, "turnId">[], turnId: string = crypto.randomUUID()): Message[] {
-    return this.db.transaction(() => messages.map((m) => this.addMessage({ ...m, turnId })))();
+    return this.atomically(() => messages.map((m) => this.addMessage({ ...m, turnId })));
   }
 
   /**
@@ -1179,7 +1244,7 @@ export class Store {
     const channel = this.getChannel(channelId); // throws if missing
     if (channel.kind !== "rp") throw new ValidationError("Scene breaks are only for roleplay channels.");
 
-    return this.db.transaction(() => {
+    return this.atomically(() => {
       const sceneBreak = this.addMessage({ channelId, author, content: title.trim(), kind: "scene_break" });
       if (channel.pendingMode) {
         this.db
@@ -1187,7 +1252,7 @@ export class Store {
           .run({ channelId });
       }
       return { sceneBreak, channel: this.getChannel(channelId) };
-    })();
+    });
   }
 
   /**
@@ -1197,7 +1262,7 @@ export class Store {
    */
   lastKinwriterTurn(channelId: string): Message[] {
     const last = this.lastMessage(channelId);
-    if (!last || last.kind !== "post" || last.author !== "friend") return [];
+    if (!last || last.kind !== "post" || last.author !== "kinwriter") return [];
     if (!last.turnId) return [last];
     const rows = this.db
       .query(`${SELECT_MESSAGES} WHERE m.channel_id = $channelId AND m.turn_id = $turnId AND ${LIVE} ORDER BY m.seq`)
@@ -1215,7 +1280,7 @@ export class Store {
    */
   editMessage(id: string, content: string, by: Author = "user"): Message {
     const message = this.getLiveMessage(id);
-    if (by === "friend" && message.author !== "friend") throw new ValidationError("You can only edit your own messages.");
+    if (by === "kinwriter" && message.author !== "kinwriter") throw new ValidationError("You can only edit your own messages.");
     if (content === message.content) return message;
     this.summaries.messageChanging(message, false);
     const now = new Date().toISOString();
@@ -1236,7 +1301,7 @@ export class Store {
       if (n === 0) insert.run({ id, content: message.content, author: message.author, at: message.createdAt });
       insert.run({ id, content, author: by, at: now });
       this.db.query("UPDATE messages SET content = $content, edited_at = $now, edited_by = $by WHERE id = $id").run({ id, content, now, by });
-      if (by === "user" && message.author === "friend") {
+      if (by === "user" && message.author === "kinwriter") {
         this.interventions.add({
           kind: "edit",
           summary: `The user edited ${message.kind === "scene_break" ? "the title of a scene break you made" : "your message"} in #${this.getChannel(message.channelId).name}.`,
@@ -1259,12 +1324,12 @@ export class Store {
    */
   deleteMessage(id: string, by: Author = "user"): void {
     const message = this.getLiveMessage(id);
-    if (by === "friend" && message.author !== "friend") throw new ValidationError("You can only delete your own messages.");
+    if (by === "kinwriter" && message.author !== "kinwriter") throw new ValidationError("You can only delete your own messages.");
     this.summaries.messageChanging(message, true);
     this.db.transaction(() => {
       this.rehomeBranches(message);
       this.db.query("UPDATE messages SET deleted_at = $now, deleted_by = $by WHERE id = $id").run({ id, now: new Date().toISOString(), by });
-      if (by === "user" && message.author === "friend") {
+      if (by === "user" && message.author === "kinwriter") {
         this.interventions.add({
           kind: "delete",
           summary: `The user deleted ${message.kind === "scene_break" ? "a scene break you made" : "your message"} in #${this.getChannel(message.channelId).name}: "${snippet(message.content)}"`,
@@ -1366,7 +1431,7 @@ export class Store {
     const id = `${BRANCH}${fork.id}:${crypto.randomUUID()}`;
     this.db.transaction(() => {
       this.shelve(after, id);
-      if (after.some((m) => m.author === "friend")) {
+      if (after.some((m) => m.author === "kinwriter")) {
         this.interventions.add({
           kind: "branch",
           summary: `The user went back to an earlier point in #${this.getChannel(fork.channelId).name}. The ${after.length} message${after.length === 1 ? "" : "s"} after it are kept as a branch they can return to.`,
@@ -1386,25 +1451,28 @@ export class Store {
    */
   switchBranch(branchId: string): Branch | null {
     const target = this.branch(branchId); // throws NotFoundError
-    const fork = this.getMessage(target.forkId);
-    if (fork.deletedAt || fork.supersededBy) {
+    // From the channel's start, everything in the chat now is set aside.
+    const fromStart = target.forkId === CHANNEL_START;
+    const fork = fromStart ? null : this.getMessage(target.forkId);
+    if (fork && (fork.deletedAt || fork.supersededBy)) {
       throw new ValidationError("That branch starts from a message that isn't in the chat now.");
     }
-    const after = this.liveAfter(fork);
-    const shelvedId = after.length > 0 ? `${BRANCH}${fork.id}:${crypto.randomUUID()}` : null;
+    const channelId = target.channelId;
+    const after = fork ? this.liveAfter(fork) : this.getMessages(channelId);
+    const shelvedId = after.length > 0 ? `${BRANCH}${target.forkId}:${crypto.randomUUID()}` : null;
     this.db.transaction(() => {
       if (shelvedId) this.shelve(after, shelvedId);
       this.db.query("UPDATE messages SET superseded_by = NULL WHERE superseded_by = $id").run({ id: branchId });
-      if (after.some((m) => m.author === "friend") || target.messages.some((m) => m.author === "friend")) {
+      if (after.some((m) => m.author === "kinwriter") || target.messages.some((m) => m.author === "kinwriter")) {
         this.interventions.add({
           kind: "branch",
-          summary: `The user switched #${this.getChannel(fork.channelId).name} to another branch of the conversation: ${target.count} message${target.count === 1 ? "" : "s"} came back${after.length > 0 ? `, and the ${after.length} that were there are kept as a branch` : ""}.`,
-          channelId: fork.channelId,
-          messageId: fork.id,
+          summary: `The user switched #${this.getChannel(channelId).name} to another branch of the conversation: ${target.count} message${target.count === 1 ? "" : "s"} came back${after.length > 0 ? `, and the ${after.length} that were there are kept as a branch` : ""}.`,
+          channelId,
+          messageId: fork?.id ?? null,
         });
       }
     })();
-    this.messagesChanged(fork.channelId);
+    this.messagesChanged(channelId);
     return shelvedId ? this.branch(shelvedId) : null;
   }
 
@@ -1421,7 +1489,7 @@ export class Store {
 
   /**
    * The branches you can go to in a channel: those whose fork message is in
-   * the chat, oldest first (by their first message). Without their messages,
+   * the chat (or that start at the channel's start), oldest first (by their first message). Without their messages,
    * apart from the first and last.
    */
   branches(channelId: string): BranchSummary[] {
@@ -1435,7 +1503,7 @@ export class Store {
     const live = new Set(this.getMessages(channelId).map((m) => m.id));
     const at = (seq: number) => toMessage(this.db.query(`${SELECT_MESSAGES} WHERE m.seq = $seq`).get({ seq }) as MessageRow);
     return rows
-      .filter((r) => live.has(forkOf(r.id) ?? ""))
+      .filter((r) => forkOf(r.id) === CHANNEL_START || live.has(forkOf(r.id) ?? ""))
       .map((r) => ({ id: r.id, forkId: forkOf(r.id)!, count: r.n, first: at(r.first), last: at(r.last) }));
   }
 
@@ -1504,17 +1572,17 @@ export class Store {
 
   /**
    * A message leaving the chat for good: the branches after it now follow
-   * the message before it, so they can still be reached.
+   * the message before it, so they can still be reached. If it was the
+   * first, they start at the channel's start (`CHANNEL_START`).
    */
   private rehomeBranches(message: Message): void {
     const previous = this.db
       .query(`SELECT m.id FROM messages m WHERE m.channel_id = $channelId AND ${LIVE} AND m.seq < (SELECT seq FROM messages WHERE id = $id) ORDER BY m.seq DESC LIMIT 1`)
       .get({ channelId: message.channelId, id: message.id }) as { id: string } | null;
-    if (!previous) return;
     const from = `${BRANCH}${message.id}:`;
     this.db
       .query("UPDATE messages SET superseded_by = $to || substr(superseded_by, $cut) WHERE channel_id = $channelId AND substr(superseded_by, 1, $len) = $from")
-      .run({ to: `${BRANCH}${previous.id}:`, cut: from.length + 1, len: from.length, from, channelId: message.channelId });
+      .run({ to: `${BRANCH}${previous?.id ?? CHANNEL_START}:`, cut: from.length + 1, len: from.length, from, channelId: message.channelId });
   }
 
   /** Mark messages as part of a branch (in a transaction of the caller's). */
@@ -1546,11 +1614,12 @@ export class Store {
     this.db.transaction(() => {
       const proposal = this.inbox.resolveProposal(id, approve ? "approved" : "denied");
       if (approve && proposal.kind === "delete_channel") {
-        this.db.query("DELETE FROM channels WHERE id = $id").run({ id: proposal.targetId! });
+        // As if you'd deleted it yourself: its scratchpads and library limits go with it.
+        if (this.hasChannel(proposal.targetId!)) this.deleteChannel(proposal.targetId!);
       }
       // A new name they asked for: their display name, and their self-notes' header, which is built from it.
       if (approve && proposal.kind === "rename" && proposal.targetName) {
-        this.updateSettings({ friendName: proposal.targetName });
+        this.updateSettings({ kinwriterName: proposal.targetName });
       }
     })();
   }
@@ -1561,7 +1630,7 @@ export class Store {
    */
   clearMessages(channelId: string, by: Author = "user"): void {
     const channel = this.getChannel(channelId); // throws NotFoundError for an unknown channel
-    const hadKinwriter = this.getMessages(channelId).some((m) => m.author === "friend");
+    const hadKinwriter = this.getMessages(channelId).some((m) => m.author === "kinwriter");
     this.db.transaction(() => {
       this.db
         .query("UPDATE messages SET deleted_at = $now, deleted_by = $by WHERE channel_id = $channelId AND deleted_at IS NULL AND superseded_by IS NULL")

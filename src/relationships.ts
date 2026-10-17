@@ -26,8 +26,8 @@ export class Relationships {
   ) {}
 
   all(): Map<string, RelationshipNote> {
-    const rows = this.db.query("SELECT * FROM relationships").all() as { friend_id: string; name: string; note: string; updated_at: string }[];
-    return new Map(rows.map((r) => [r.friend_id, { kinwriterId: r.friend_id, name: r.name, note: r.note, updatedAt: r.updated_at }]));
+    const rows = this.db.query("SELECT * FROM relationships").all() as { kinwriter_id: string; name: string; note: string; updated_at: string }[];
+    return new Map(rows.map((r) => [r.kinwriter_id, { kinwriterId: r.kinwriter_id, name: r.name, note: r.note, updatedAt: r.updated_at }]));
   }
 
   count(): number {
@@ -39,13 +39,13 @@ export class Relationships {
     const clean = note.trim();
     if (clean.length > 2000) throw new ValidationError("That's too long for a note (2,000 characters at most).");
     if (!clean) {
-      this.db.query("DELETE FROM relationships WHERE friend_id = $kinwriterId").run({ kinwriterId });
+      this.db.query("DELETE FROM relationships WHERE kinwriter_id = $kinwriterId").run({ kinwriterId });
       return;
     }
     this.db
       .query(
-        `INSERT INTO relationships (friend_id, name, note, updated_at) VALUES ($kinwriterId, $name, $note, $now)
-         ON CONFLICT (friend_id) DO UPDATE SET name = excluded.name, note = excluded.note, updated_at = excluded.updated_at`,
+        `INSERT INTO relationships (kinwriter_id, name, note, updated_at) VALUES ($kinwriterId, $name, $note, $now)
+         ON CONFLICT (kinwriter_id) DO UPDATE SET name = excluded.name, note = excluded.note, updated_at = excluded.updated_at`,
       )
       .run({ kinwriterId, name, note: clean, now: this.now().toISOString() });
   }
