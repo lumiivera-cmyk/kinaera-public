@@ -10,6 +10,7 @@ import { badge, formatTime } from "./format.js";
 import { checkLive, loadState } from "./live.js";
 import { renderToolCall } from "./messages.js";
 import { loadModelInfo, maxTokensFor, modelInfo, onModelInfo, toolNote } from "./model-info.js";
+import { loadoutJobs, profileGauges, profileSwitches, rouletteShares, shortNumber } from "./loadout.js";
 import { profileEditor, refreshProfileEditors, resolveAssignment } from "./profile-inline.js";
 
 // ---------------------------------------------------------------- dialogs
@@ -341,63 +342,173 @@ export function openModels() {
   hideFormError($("models-dialog"));
   renderModels();
   $("models-dialog").showModal();
+  // Focus Done, not the first card, so no focus ring sits on a card in a screenshot.
+  $("models-dialog").querySelector("[data-close]").focus();
+  // What each model supports (its token limit, whether it reasons): the cards redraw when it arrives.
+  loadModelInfo();
 }
 
-/** Draw the lists of profiles and roulettes. */
+/** Draw the lists of profiles and roulettes, and who writes what. */
 function renderModels() {
   const inUse = (value) => {
     const jobs = [];
     if (state.settings.rpAssignment === value) jobs.push("roleplay");
     if (state.settings.oocAssignment === value) jobs.push("OOC");
+    if (state.settings.summaryAssignment === value) jobs.push("summaries");
     if (state.settings.heartbeatAssignment === value) jobs.push("the heartbeat check");
+    if (state.settings.decisionFallback === value) jobs.push("Jev's fallback");
     const channels = state.channels.filter((c) => c.assignment === value).map((c) => `#${c.name}`);
     return [...jobs, ...channels];
   };
+
+  $("loadout-for").textContent = state.settings.kinwriterName ?? "your kinwriter";
+  $("loadout-jobs").replaceChildren(...loadoutJobs(state.settings, state.channels, state.ownSettings ?? []).map(jobRow));
 
   $("profile-list").replaceChildren(
     ...state.profiles.map((profile, index) => {
       const uses = inUse(`profile:${profile.id}`);
       if (index === 0 && !state.settings.rpAssignment) uses.unshift("roleplay");
       if (index === 0 && !state.settings.oocAssignment) uses.unshift("OOC");
-      return profileRow(
-        profile.name,
-        [profile.model.split("/").at(-1), profile.supportsTools ? "tools" : "no tools", ...(profile.consultant ? ["consultant"] : []), ...(profile.kinwriterMaker ? ["creates kinwriters"] : []), ...uses.map((u) => `used by ${u}`)],
-        () => openProfile(profile),
-      );
+      return profileCard(profile, uses);
     }),
   );
 
-  const byId = new Map(state.profiles.map((p) => [p.id, p]));
   $("roulette-list").replaceChildren(
-    ...state.roulettes.map((roulette) => {
-      const total = roulette.entries.reduce((sum, e) => sum + e.weight, 0);
-      const shares = roulette.entries.map(
-        (e) => `${Math.round((e.weight / total) * 100)}% ${byId.get(e.profileId)?.name ?? "?"}`,
-      );
-      return profileRow(
-        `🎲 ${roulette.name}`,
-        [...(shares.length ? shares : ["empty"]), ...inUse(`roulette:${roulette.id}`).map((u) => `used by ${u}`)],
-        () => openRoulette(roulette),
-      );
-    }),
+    ...state.roulettes.map((roulette) => rouletteCard(roulette, inUse(`roulette:${roulette.id}`))),
   );
 }
 
-/** One row in the profile or roulette list: a name, badges, and the whole row opens it. */
-function profileRow(name, badges, onOpen) {
-  const item = document.createElement("li");
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "profile-row";
-  const title = document.createElement("span");
-  title.className = "profile-row-name";
-  title.textContent = name;
-  const tags = document.createElement("span");
-  tags.className = "notebook-entry-badges";
-  tags.append(...badges.map(badge));
-  button.append(title, tags);
-  button.addEventListener("click", onOpen);
-  item.append(button);
+// The Profiles page redraws once nanoGPT says what each model supports (model limits, reasoning).
+onModelInfo(() => {
+  if ($("models-dialog").open) renderModels();
+});
+
+/** An element with a class and, optionally, text. */
+function el(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+/** One line of "Who writes what": the job, and the profile or roulette doing it. */
+function jobRow(job) {
+  const row = el("li", "loadout-job");
+  const name = el("span", "loadout-job-name", job.job);
+  const what = el("span", "loadout-job-what");
+  const value = job.value;
+  if (typeof value === "string") {
+    what.textContent = assignmentName(value);
+  } else if (value.same) {
+    what.textContent = `${value.same} (${assignmentName(state.settings.rpAssignment)})`;
+  } else if ("model" in value) {
+    what.textContent = value.model ? `${value.model} · sure at ${value.confidence}` : "Off";
+    what.classList.add(value.model ? "loadout-mono" : "loadout-none");
+  } else {
+    what.textContent = value.none;
+    what.classList.add("loadout-none");
+  }
+  if (job.own) what.append(badge(`just for ${state.settings.kinwriterName}`));
+  if (job.channel) what.append(badge("channel's own"));
+  row.append(name, what);
+  return row;
+}
+
+/** A card that opens its editor when tapped (or Enter is pressed on it). */
+function card(onOpen) {
+  const item = el("li", "profile-row loadout-card");
+  item.tabIndex = 0;
+  item.setAttribute("role", "button");
+  item.addEventListener("click", onOpen);
+  item.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target === item) onOpen();
+  });
+  return item;
+}
+
+/** A card header: the name, and badges for what uses it. */
+function cardHead(name, uses) {
+  const head = el("div", "loadout-card-head");
+  head.append(el("span", "profile-row-name", name));
+  if (uses.length) {
+    const tags = el("span", "notebook-entry-badges");
+    tags.append(...uses.map((u) => badge(`used by ${u}`)));
+    head.append(tags);
+  }
+  return head;
+}
+
+/** One profile with every setting shown: its model, bars for the numbers, its switches and notes. */
+function profileCard(profile, uses) {
+  const item = card(() => openProfile(profile));
+  const info = modelInfo(profile.model);
+  item.append(cardHead(profile.name, uses), el("div", "loadout-model", profile.model));
+
+  const gauges = el("div", "loadout-gauges");
+  for (const row of profileGauges(profile, info)) {
+    const label = el("span", "loadout-label", row.label);
+    let meter;
+    if (row.steps !== undefined) {
+      meter = el("span", "loadout-steps");
+      meter.setAttribute("aria-hidden", "true");
+      for (let i = 0; i < 4; i++) meter.append(el("span", i <= row.steps ? "lit" : ""));
+    } else if (row.fill !== undefined) {
+      meter = el("span", "loadout-bar");
+      meter.setAttribute("aria-hidden", "true");
+      const bar = el("span");
+      bar.style.width = `${Math.round(row.fill * 100)}%`;
+      meter.append(bar);
+    } else {
+      meter = el("span", "loadout-bar loadout-bar-auto");
+      meter.setAttribute("aria-hidden", "true");
+    }
+    const value = el("span", "loadout-value", row.value);
+    if (row.scale) value.append(el("span", "loadout-scale", ` ${row.scale}`));
+    gauges.append(label, meter, value);
+  }
+  item.append(gauges);
+
+  const switches = el("div", "loadout-switches");
+  for (const s of profileSwitches(profile)) {
+    switches.append(el("span", `loadout-switch${s.on ? " on" : ""}`, `${s.on ? "✓" : "✕"} ${s.label}`));
+  }
+  item.append(switches);
+  const note = toolNote(profile.model);
+  if (note && profile.supportsTools) item.append(el("p", "hint", note));
+
+  if (profile.quirkPrompt.trim()) {
+    item.append(el("div", "loadout-label", "Model notes"), el("div", "loadout-text", profile.quirkPrompt));
+  } else {
+    const none = el("div", "loadout-label", "Model notes: ");
+    none.append(el("span", "loadout-none", "none"));
+    item.append(none);
+  }
+  if (profile.extraParams.trim()) {
+    item.append(el("div", "loadout-label", "Extra request fields"), el("div", "loadout-text loadout-mono", profile.extraParams));
+  }
+  return item;
+}
+
+/** One roulette: a bar split by each profile's share, and the weights written out. */
+function rouletteCard(roulette, uses) {
+  const item = card(() => openRoulette(roulette));
+  item.append(cardHead(`🎲 ${roulette.name}`, uses));
+  const shares = rouletteShares(roulette, state.profiles);
+  if (!shares.length) {
+    item.append(el("div", "loadout-none", "Empty"));
+    return item;
+  }
+  const bar = el("div", "loadout-split");
+  bar.setAttribute("aria-hidden", "true");
+  shares.forEach((share, index) => {
+    const part = el("span", "", `${share.share}%`);
+    part.style.flexGrow = String(share.weight);
+    part.style.setProperty("--part", String(index));
+    bar.append(part);
+  });
+  const list = el("ul", "loadout-shares");
+  list.append(...shares.map((s) => el("li", "", `${s.share}% ${s.name} (weight ${shortNumber(s.weight)})`)));
+  item.append(bar, list);
   return item;
 }
 

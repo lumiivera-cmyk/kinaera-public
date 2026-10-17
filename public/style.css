@@ -1698,7 +1698,6 @@ button:disabled {
 
 .entry-link.missing {
   color: var(--text-muted);
-  text-decoration: line-through;
 }
 
 .entry-settings {
@@ -1801,6 +1800,203 @@ button:disabled {
 .profile-row-name {
   font-weight: 600;
   color: var(--text-strong);
+}
+
+/* The Profiles page's loadout: who writes what, and every profile's settings drawn out. Kept compact. */
+.loadout-jobs {
+  display: grid;
+  margin: 0 0 8px;
+  padding: 2px 0;
+  list-style: none;
+  border: var(--input-border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  font-size: 13px;
+}
+
+.loadout-job {
+  display: grid;
+  grid-template-columns: 9.5em minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0 8px;
+  padding: 2px 8px;
+}
+
+/* "just for …" and "channel's own" sit right after what it uses. */
+.loadout-job-what > .entry-badge {
+  margin-left: 6px;
+}
+
+.loadout-job-name {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.loadout-job-what {
+  overflow-wrap: anywhere;
+}
+
+.loadout-card {
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 6px 10px 8px;
+  border: var(--input-border);
+  background: var(--input-bg);
+  font-size: 13px;
+}
+
+.loadout-card:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.loadout-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.loadout-model,
+.loadout-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.loadout-model {
+  margin-top: -3px;
+  color: var(--text-muted);
+}
+
+.loadout-gauges {
+  display: grid;
+  grid-template-columns: auto minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: 1px 8px;
+}
+
+/* Wide enough: two settings per line. */
+@media (min-width: 560px) {
+  .loadout-gauges {
+    grid-template-columns: auto minmax(40px, 1fr) auto auto minmax(40px, 1fr) auto;
+    column-gap: 8px;
+  }
+}
+
+.loadout-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.loadout-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.loadout-scale {
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.loadout-bar {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--channel-link-active-bg);
+  overflow: hidden;
+}
+
+.loadout-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* "auto": left to the model, so no bar of its own. */
+.loadout-bar-auto {
+  background: repeating-linear-gradient(135deg, var(--channel-link-active-bg) 0 3px, transparent 3px 6px);
+}
+
+.loadout-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+
+.loadout-steps > span {
+  height: 5px;
+  border-radius: 2px;
+  background: var(--channel-link-active-bg);
+}
+
+.loadout-steps > span.lit {
+  background: var(--accent);
+}
+
+.loadout-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.loadout-switch {
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--channel-link-active-bg);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.loadout-switch.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.loadout-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--channel-link-active-bg);
+  font-size: 12px;
+}
+
+.loadout-none {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* A roulette: one bar split by weight, each part in its own shade. */
+.loadout-split {
+  display: flex;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.loadout-split > span {
+  flex-basis: 0;
+  min-width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent);
+  background: hsl(from var(--accent) calc(h + var(--part) * 47) s l);
+  box-shadow: inset 1px 0 0 rgb(0 0 0 / 25%);
+}
+
+.loadout-shares {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
 }
 
 .assignment-grid {

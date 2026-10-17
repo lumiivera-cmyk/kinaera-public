@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  buildCheckPrompt,
   buildPromptStack,
   describeChannels,
   modeInstructions,
@@ -434,5 +435,39 @@ describe("matching the user's pace", () => {
     const ooc = channel({ kind: "ooc" });
     expect(build({ settings: paced, channel: ooc, channels: [ooc], messages: [msg("user", post)] }).at(-1)!.content).toBe(post);
     expect(build({ settings: paced, messages: [] }).at(-1)!.content).toBe(nudges("rp").opening);
+  });
+});
+
+describe("prompt caching", () => {
+  // A provider's prompt cache reuses a prompt only up to the first thing that
+  // differs from the last one. Two heartbeats an hour apart differ in the
+  // time, the "ago"s and why they're up: all of it after everything else.
+  const beat = (now: string, ago: string): PromptInput => ({
+    settings,
+    channel: ooc,
+    channels: [story, ooc],
+    messages: [msg("user", "Hi"), msg("kinwriter", "Hello.")],
+    overview: { castNames: { story: ["Ilse Marrow"] }, entries: [ilse] },
+    tools: true,
+    memory: { earlier: "They talked about the storm." },
+    schedule: { now, waiting: [] },
+    recentActions: [`saved a draft (${ago})`],
+    wake: { reason: "heartbeat", sinceUser: ago, waiting: [] },
+  });
+  const firstDifference = (a: string, b: string) => [...a].findIndex((c, i) => c !== b[i]);
+
+  test("in a turn, everything before what changes from turn to turn stays the same", () => {
+    const [one] = buildPromptStack(beat("Sat 17 Oct, 10:00", "2 hours ago"));
+    const [two] = buildPromptStack(beat("Sat 17 Oct, 11:00", "3 hours ago"));
+    const at = firstDifference(one!.content as string, two!.content as string);
+    expect(at).toBeGreaterThan((one!.content as string).indexOf("## Earlier in this conversation"));
+    expect(at).toBeGreaterThan((one!.content as string).indexOf("## Tools"));
+  });
+
+  test("in the heartbeat's check, too", () => {
+    const [one] = buildCheckPrompt({ ...beat("Sat 17 Oct, 10:00", "2 hours ago"), modelNotes: "Keep it short." });
+    const [two] = buildCheckPrompt({ ...beat("Sat 17 Oct, 11:00", "3 hours ago"), modelNotes: "Keep it short." });
+    const at = firstDifference(one!.content as string, two!.content as string);
+    expect(at).toBeGreaterThan((one!.content as string).indexOf("## Model notes"));
   });
 });
