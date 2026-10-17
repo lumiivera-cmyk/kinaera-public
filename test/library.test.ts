@@ -4,7 +4,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cueName, ftsQuery, headingOf, PASSAGE_TARGET, splitPassages } from "../src/library.ts";
+import { bookmarks, markRead } from "../src/bookmarks.ts";
+import { cueName, ftsQuery, headingOf, PASSAGE_TARGET, splitLong, splitPassages } from "../src/library.ts";
 import { promptForChannel } from "../src/kinwriter.ts";
 import { createApp, type App } from "../src/server.ts";
 import { runTool, toolSpecs } from "../src/tools.ts";
@@ -141,8 +142,8 @@ describe("searching", () => {
     expect(ftsQuery('what happened to "the bell"')).toBe('"the bell" OR "happened"');
     expect(ftsQuery("the of and")).toBeNull();
     expect(ftsQuery("Ilse's lamp")).toBe('"Ilses" OR "lamp"');
-    // FTS5's own syntax is never passed through: every term is quoted.
-    expect(ftsQuery('NEAR(lamp* NOT -bell) "(*)"')).toBe('"NEAR" OR "lamp" OR "NOT" OR "bell"');
+    // FTS5's own syntax is never passed through: every term is quoted (and "not" is a stopword).
+    expect(ftsQuery('NEAR(lamp* NOT -bell) "(*)"')).toBe('"NEAR" OR "lamp" OR "bell"');
   });
 
   test("finds passages, stemmed, with a snippet", async () => {
@@ -202,6 +203,22 @@ describe("documents", () => {
     const doc = addScript({ channelIds: [story.id] });
     app.store.deleteChannel(story.id);
     expect(app.store.library.get(doc.id).channelIds).toEqual([]);
+    // Its only channel is gone: it's in no roleplay channel now, not everywhere.
+    expect(app.store.library.get(doc.id).nowhere).toBe(true);
+    const other = app.store.createChannel({ name: "other", kind: "rp" });
+    expect(app.store.library.forChannel(other)).toHaveLength(0);
+    expect(app.store.library.forChannel(ooc)).toHaveLength(1);
+    // Editing it without choosing channels keeps it so; saying "everywhere" (or choosing some) ends it.
+    expect(app.store.library.update(doc.id, { title: "Renamed", channelIds: [] }).nowhere).toBe(true);
+    expect(app.store.library.update(doc.id, { channelIds: [], everywhere: true }).nowhere).toBe(false);
+    expect(app.store.library.forChannel(other)).toHaveLength(1);
+  });
+
+  test("deleting a document forgets their bookmark in it", async () => {
+    const doc = addScript();
+    markRead(app.store, doc.id, 2);
+    app.store.library.remove(doc.id);
+    expect(bookmarks(app.store)[doc.id]).toBeUndefined();
   });
 
   test("reading passages", async () => {
@@ -281,5 +298,27 @@ describe("the API", () => {
   test("bad input", async () => {
     expect((await call("POST", "/api/library", { title: "x" })).status).toBe(400);
     expect((await call("GET", "/api/library/nope/passages/abc")).status).toBe(400);
+  });
+});
+
+describe("splitting text", () => {
+  test("a long paragraph loses no characters, even punctuation that starts a sentence", () => {
+    const sentence = '..."Who\'s there?" .38 calibre!!! She waited. ?! Then nothing. ';
+    const paragraph = sentence.repeat(80).trim();
+    const pieces = splitLong(paragraph);
+    expect(pieces.length).toBeGreaterThan(1);
+    const squash = (t: string) => t.replace(/\s+/g, "");
+    expect(squash(pieces.join(" "))).toBe(squash(paragraph));
+    // And the same through splitPassages.
+    expect(squash(splitPassages(paragraph).map((p) => p.content).join(" "))).toBe(squash(paragraph));
+  });
+
+  test("headings, and prose that only starts like one", () => {
+    for (const heading of ["Chapter 12", "CHAPTER IV", "Chapter One: The Storm", "Prologue", "Epilogue: Ten Years Later", "Part Two", "Act I, Scene 2", "Book 3 The Return", "Act 1"]) {
+      expect(headingOf(heading)).toBe(heading);
+    }
+    for (const prose of ["Part of me wanted to leave.", "Act natural, she said.", "Book it, Danno.", "Chapter and verse, he quoted.", "Part one of the plan was simple."]) {
+      expect(headingOf(prose)).toBeNull();
+    }
   });
 });

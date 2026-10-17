@@ -47,7 +47,7 @@ async function call(method: string, path: string, body?: unknown) {
   return { status: response.status, data: (text.startsWith("{") ? JSON.parse(text) : text) as any, response };
 }
 
-const say = (content: string, author: "user" | "friend" = "user", channel = ooc) =>
+const say = (content: string, author: "user" | "kinwriter" = "user", channel = ooc) =>
   app.store.addMessage({ channelId: channel.id, author, content });
 const reload = (message: Message) => app.store.getMessage(message.id);
 
@@ -63,12 +63,12 @@ describe("reactions", () => {
     const m = say("guess what, I got a puppy");
     app.store.reactions.add(m.id, "user", "❤️");
     app.store.reactions.add(m.id, "user", "❤️");
-    app.store.reactions.add(m.id, "friend", "❤️");
-    app.store.reactions.add(m.id, "friend", " 🎉 ");
+    app.store.reactions.add(m.id, "kinwriter", "❤️");
+    app.store.reactions.add(m.id, "kinwriter", " 🎉 ");
     expect(reload(m).reactions).toEqual([
       { emoji: "❤️", author: "user" },
-      { emoji: "❤️", author: "friend" },
-      { emoji: "🎉", author: "friend" },
+      { emoji: "❤️", author: "kinwriter" },
+      { emoji: "🎉", author: "kinwriter" },
     ]);
     app.store.reactions.toggle(m.id, "user", "❤️");
     expect(reload(m).reactions).toHaveLength(2);
@@ -86,7 +86,7 @@ describe("reactions", () => {
   test("they change the revision (so the app notices), and go with their message", async () => {
     const m = say("hi");
     const before = app.store.revision;
-    app.store.reactions.add(m.id, "friend", "👋");
+    app.store.reactions.add(m.id, "kinwriter", "👋");
     expect(app.store.revision).toBeGreaterThan(before);
     // Deleting the message leaves a tombstone, reactions and all (for its
     // history); deleting the channel takes them with it.
@@ -127,13 +127,13 @@ describe("your kinwriter", () => {
 
   test("reacts to your latest message, or the one quoted", async () => {
     const first = say("I finished the lighthouse chapter");
-    say("It's alright", "friend");
+    say("It's alright", "kinwriter");
     const latest = say("also I adopted a cat");
     const r1 = await runTool(ctx(), "react_to_message", { emoji: "😻" });
     expect(r1).toMatchObject({ ok: true, summary: 'reacted 😻 to "also I adopted a cat"' });
-    expect(reload(latest).reactions).toEqual([{ emoji: "😻", author: "friend" }]);
+    expect(reload(latest).reactions).toEqual([{ emoji: "😻", author: "kinwriter" }]);
     await runTool(ctx(), "react_to_message", { emoji: "🎉", quote: "lighthouse chapter" });
-    expect(reload(first).reactions).toEqual([{ emoji: "🎉", author: "friend" }]);
+    expect(reload(first).reactions).toEqual([{ emoji: "🎉", author: "kinwriter" }]);
   });
 
   test("mistakes are explained, with the custom emojis there are", async () => {
@@ -147,11 +147,11 @@ describe("your kinwriter", () => {
   });
 
   test("sees reactions in the prompt, and its custom emojis with tools", async () => {
-    const mine = say("*Arlo grins* want to try a heist story next?", "friend");
+    const mine = say("*Arlo grins* want to try a heist story next?", "kinwriter");
     const yours = say("YES");
     app.store.reactions.add(mine.id, "user", "❤️");
     app.store.reactions.add(mine.id, "user", "🔥");
-    app.store.reactions.add(yours.id, "friend", "😂");
+    app.store.reactions.add(yours.id, "kinwriter", "😂");
     app.store.reactions.addEmoji("blob_wave", Buffer.from(PNG, "base64"));
     const profile = app.store.profiles.list()[0]!;
     const text = promptForChannel(app.store, ooc.id, { profile })[0]!.content;

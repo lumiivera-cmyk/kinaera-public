@@ -127,7 +127,7 @@ describe("drafts", () => {
     expect(JSON.stringify(app.store.toolLog.forChannel(ooc.id))).not.toContain("SECRET");
     expect(systemPrompt()).toContain("SECRET-TITLE");
     expect(JSON.stringify((await call("GET", `/api/channels/${ooc.id}/prompt`)).data)).not.toContain("SECRET");
-    const page = (await call("GET", "/api/friend-page")).data;
+    const page = (await call("GET", "/api/kinwriter-page")).data;
     expect(JSON.stringify(page)).not.toContain("SECRET");
     expect(page.drafts).toBe(1);
     // check can search them, privately.

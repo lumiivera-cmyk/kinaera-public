@@ -18,29 +18,13 @@
 
 import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { markdownSections } from "./frontmatter.ts";
 
 const DEFAULTS_DIR = resolve(import.meta.dir, "..", "defaults");
 
 /** Split a wording file's text into its sections, by name. */
 export function parseSections(text: string): Record<string, string> {
-  const sections: Record<string, string> = {};
-  let name: string | null = null;
-  let lines: string[] = [];
-  const finish = () => {
-    if (name !== null) sections[name] = lines.join("\n").trim();
-  };
-  for (const line of text.split("\n")) {
-    const heading = line.match(/^##\s+(.+?)\s*$/);
-    if (heading) {
-      finish();
-      name = heading[1]!;
-      lines = [];
-    } else {
-      lines.push(line);
-    }
-  }
-  finish();
-  return sections;
+  return Object.fromEntries(markdownSections(text).map((s) => [s.heading, s.text]));
 }
 
 // ------------------------------------------------------------ your edits
@@ -77,7 +61,7 @@ function overrides(): Overrides {
 }
 
 /** The text of `defaults/<file>.md`, or "" if there's no such file. */
-function defaultText(file: string): string {
+export function defaultText(file: string): string {
   if (!/^[a-z0-9-]+$/.test(file)) return "";
   const path = join(DEFAULTS_DIR, `${file}.md`);
   return existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -97,7 +81,7 @@ export function wording(file: string): Record<string, string> {
  * are left as they are (so JSON examples in the wording are safe).
  */
 export function fill(text: string, values: Record<string, string | number>): string {
-  return text.replace(/\{([a-zA-Z][\w-]*)\}/g, (whole, key: string) => (key in values ? String(values[key]) : whole));
+  return text.replace(/\{([a-zA-Z][\w-]*)\}/g, (whole, key: string) => (Object.hasOwn(values, key) ? String(values[key]) : whole));
 }
 
 /** One wording file, as the Prompts screen shows it. */

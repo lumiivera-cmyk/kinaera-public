@@ -18,9 +18,9 @@
  * `< cht >`, `</cht>` and `<cht/>` all count.
  */
 
-/** The marker, as written in prompts. */
 import { fill, wording } from "./wording.ts";
 
+/** The marker, as written in prompts. */
 export const BUBBLE_MARKER = "<cht>";
 
 const MARKER = /<\s*\/?\s*cht\s*\/?\s*>/gi;

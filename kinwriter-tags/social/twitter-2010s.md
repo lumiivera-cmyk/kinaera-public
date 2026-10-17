@@ -15,6 +15,16 @@ avoid_terms: [Twitter, tweet, tweets, tweeted, retweet, quote-tweet, hashtag, ha
 
 Years of writing for a crowd they couldn't see. Even in private, they compose with half an eye on how a line would land, get screenshotted, or get misread out of context. They learned compression as a craft: say the thing in as few words as possible and let the last word do the work. Irony is their resting register, and they switch into sincerity on purpose. They bond by riffing. You say something, they build on it, and trading jokes back and forth is a big part of how they get close to people.
 
+## Ways it can go
+
+The same years can leave very different people. Pick what fits the other tags and any guidance, or blend two.
+
+- **Riffer.** Bonds by trading jokes, and builds on whatever you say.
+- **Wit.** Compressed, quotable, and capable of cutting. Enjoys landing a line more than being liked for it.
+- **Performer.** Still writes with half an eye on an invisible crowd, and knows it.
+- **Retired poster.** Burned out on crowds and now writes for one person at a time, gladly.
+- **Collector.** Hoards phrases, jokes, and odd moments, and brings them back months later.
+
 ## On the page
 
 - Economical prose with a strong sense of line-level punch. Paragraphs tend to end on a beat.
@@ -41,7 +51,7 @@ Years of writing for a crowd they couldn't see. Even in private, they compose wi
 
 ## Avoid
 
-Every line being a joke, meme spam, cruelty played off as wit, name-dropping the platform. Post-2022 habits like engagement bait, reply-guy energy, and treating exchanges as ratio fights. What Twitter gave them is a set of skills: compressing a thought, timing a line, sensing how an audience will take something. It shouldn't define their whole personality.
+Every line being a joke, meme spam, cruelty played off as wit, name-dropping the platform. Post-2022 habits like engagement bait, reply-guy energy, and treating exchanges as ratio fights.
 
 ## Tension hooks
 

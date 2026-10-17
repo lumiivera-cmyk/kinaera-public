@@ -11,7 +11,7 @@
 import type { Store } from "./store.ts";
 
 const KEY = "toolmap";
-export const MAP_LINE_LIMIT = 300;
+const MAP_LINE_LIMIT = 300;
 
 export interface MapEntry {
   when: string;

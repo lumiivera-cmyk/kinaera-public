@@ -12,7 +12,8 @@ import { promptForChannel } from "../src/kinwriter.ts";
 import { describeWake, isNothing, type WakeContext } from "../src/prompt.ts";
 import { createApp, type App } from "../src/server.ts";
 import { validateSettings } from "../src/store.ts";
-import { homeChannel, humanDuration, inQuietHours, Wakeups, type WakeEvent } from "../src/wakeups.ts";
+import { ago, humanDuration } from "../src/ago.ts";
+import { homeChannel, inQuietHours, Wakeups, type WakeEvent } from "../src/wakeups.ts";
 import type { Channel } from "../src/types.ts";
 import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
 
@@ -84,6 +85,15 @@ describe("helpers", () => {
     expect(humanDuration(5 * 60_000)).toBe("5 minutes");
     expect(humanDuration(3 * HOUR)).toBe("3 hours");
     expect(humanDuration(72 * HOUR)).toBe("3 days");
+  });
+
+  test("ago", () => {
+    const now = Date.now();
+    const at = (ms: number) => new Date(now - ms).toISOString();
+    expect(ago(at(10_000), now)).toBe("just now");
+    expect(ago(at(60_000), now)).toBe("1 minute ago");
+    expect(ago(at(30 * HOUR), now)).toBe("30 hours ago");
+    expect(ago(at(72 * HOUR), now)).toBe("3 days ago");
   });
 
   test("quiet hours, wrapping past midnight", () => {
@@ -246,7 +256,7 @@ describe("a scene ending", () => {
 describe("reviews", () => {
   test("a suggestion for your kinwriter wakes them, even in quiet hours", async () => {
     settings({ quietStart: 10, quietEnd: 14 });
-    const ilse = app.store.notebook.createEntry("friend", { kind: "character", name: "Ilse", editing: "suggest" });
+    const ilse = app.store.notebook.createEntry("kinwriter", { kind: "character", name: "Ilse", editing: "suggest" });
     app.store.notebook.editEntry("user", ilse.id, { name: "Ilse Marrow" });
     youWrote(0.1);
     fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: {} }] });
@@ -262,7 +272,7 @@ describe("reviews answer right away", () => {
   test("whatever the chattiness or cooldown; and only when something's waiting", async () => {
     settings({ wakeups: "off", wakeCooldownMinutes: 600 });
     expect((await wake("review")).detail).toBe("Nothing is waiting for their review.");
-    const ilse = app.store.notebook.createEntry("friend", { kind: "character", name: "Ilse", editing: "suggest" });
+    const ilse = app.store.notebook.createEntry("kinwriter", { kind: "character", name: "Ilse", editing: "suggest" });
     app.store.notebook.editEntry("user", ilse.id, { name: "Ilse Marrow" });
     fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: {} }] }, { toolCalls: [{ name: "do_nothing", arguments: {} }] });
     expect((await wake("review")).reason).toBe("review");
@@ -271,7 +281,7 @@ describe("reviews answer right away", () => {
   });
 
   test("busy when you suggest: they answer as soon as they're free", async () => {
-    const ilse = app.store.notebook.createEntry("friend", { kind: "character", name: "Ilse", editing: "suggest" });
+    const ilse = app.store.notebook.createEntry("kinwriter", { kind: "character", name: "Ilse", editing: "suggest" });
     app.store.notebook.editEntry("user", ilse.id, { name: "Ilse Marrow" });
     fake.replies.push({ toolCalls: [{ name: "do_nothing", arguments: {} }] });
     (wakeups as any).running = true; // another wake-up, still going
@@ -343,7 +353,7 @@ describe("the API", () => {
 describe("after a story post (an aside)", () => {
   test("a moment in OOC about the story they just posted in; doing nothing is the normal choice", async () => {
     youWrote(0.02, story, "*Kestrel knocks.*");
-    app.store.addMessage({ channelId: story.id, author: "friend", content: "*Ilse opens the door.* You're late.", createdAt: new Date(now.getTime() - 60_000).toISOString() });
+    app.store.addMessage({ channelId: story.id, author: "kinwriter", content: "*Ilse opens the door.* You're late.", createdAt: new Date(now.getTime() - 60_000).toISOString() });
     fake.replies.push({ content: "ok I love that Kestrel knocked" });
     const result = await wake("aside", { channelId: story.id });
     expect(result).toMatchObject({ outcome: "posted", reason: "aside" });

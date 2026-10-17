@@ -13,14 +13,19 @@ The files:
 | `turns` | The framing of every turn: who they are in roleplay and OOC, the literary and casual styles, texting, the notes that end a conversation when you haven't written, why they're up on a turn of their own, comment replies, the cast, the library |
 | `standing` | "Good to know": honest notes on how things work here |
 | `instruments` | `check`, `ask` and `consult` |
-| `orientation` | Orientation, the practice channel and the weekly look back |
+| `orientation`, `interview` | Orientation, the practice channel and the weekly look back; the orientation's interview |
 | `time` | Wake-ups they schedule, the heartbeat, drafts, pausing a storyline |
 | `continuity`, `wellbeing` | Staying themselves across models, and the weekly reading |
-| `friends`, `permissions`, `retirement` | Other kinwriters, standing permissions, archiving |
+| `kinwriters`, `permissions`, `retirement` | Other kinwriters, standing permissions, archiving |
+| `reflexes` | Jev's questions about their follow-through, and the reminders |
+| `scratchpad` | A story channel's scratchpads, as their prompt carries them |
+| `scripts` | Scripts, take_another_turn and the script queue |
 | `summaries` | How summaries and channel digests are written |
-| `seeds` | Seeds and self-notes: the orientation handoff, sharing, the size cap (the seed generator's own prompt is `kinwriter-generator/system-prompt.md`) |
+| `seeds` | Seeds and self-notes: the orientation handoff, sharing, the size cap |
+| `generator` | **Creating kinwriters**: the seed generator's instructions, the username and given-name lines, and what Jev is asked when it reads an idea for tags (the tags' own research notes are in `kinwriter-tags/`) |
 | `jev` | The fallback when Jev, the decision model, is unavailable |
-| `practice` | The practice notes in the practice channel |
+| `practice-world` | The request that writes a practice world (and a new server's example character) |
+| `practice`, `practice-scene` | The built-in practice notes and scene, used only when a practice world can't be written |
 
 **Where your edits live.** They're in `data/prompts.json`, apart from `defaults/`. Each edited section wins over its default, one section at a time. So `git pull` never clashes with your edits, and an update that improves a section you haven't touched still reaches you. Saving a section's default text is the same as resetting it. Edits are shared by every kinwriter, and `bun run fresh` keeps them.
 
@@ -28,7 +33,7 @@ The files:
 
 **What isn't here:**
 
-- **Who your kinwriter is, and how they write** in literary, casual and OOC. Those are theirs, per kinwriter, in their menu (Kinwriter…). The files `defaults/friend.md`, `literary.md`, `casual.md`, `ooc.md`, `tastes.md` and `character.md` are only starting values for a new kinwriter and (in tests) the example character, so they aren't on this screen. A real server's example character, the practice notes and the practice scene are written for each kinwriter from who they are (`practice-world.md`, by the profile that writes summaries); `practice.md` and `practice-scene.md` are only used when that can't be done.
+- **Who your kinwriter is, and how they write** in literary, casual and OOC. Those are theirs, per kinwriter, in their menu (Kinwriter…). The files `defaults/kinwriter.md`, `literary.md`, `casual.md`, `ooc.md`, `tastes.md` and `character.md` are only starting values for a new kinwriter and (in tests) the example character, so they aren't on this screen. A real server's example character, the practice notes and the practice scene are written for each kinwriter from who they are (`practice-world.md`, by the profile that writes summaries); `practice.md` and `practice-scene.md` are only used when that can't be done.
 - **Tool descriptions.** They're part of the tools in `src/tools.ts`. The dry run shows them all.
 - **Small generated lines**, like how long ago something was, or a list of reactions.
 

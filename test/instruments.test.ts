@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { CHECK_LIMIT, gatherEvidence, runCheck } from "../src/check.ts";
-import { MIGRATIONS, openDatabase } from "../src/db.ts";
+import { MIGRATIONS, openDatabase, runStep } from "../src/db.ts";
 import { inboxFor, promptForChannel } from "../src/kinwriter.ts";
 import { createApp, type App } from "../src/server.ts";
 import { runTool, toolSpecs, type ToolContext } from "../src/tools.ts";
@@ -39,7 +39,7 @@ afterEach(() => {
   dir.cleanup();
 });
 
-const say = (author: "user" | "friend", content: string, channel = story) =>
+const say = (author: "user" | "kinwriter", content: string, channel = story) =>
   app.store.addTurn([{ channelId: channel.id, author, content }])[0]!;
 
 async function call(method: string, path: string, body?: unknown) {
@@ -245,7 +245,7 @@ describe("ask and the inbox", () => {
     const path = join(dir.path, "stage2.db");
     const old = new Database(path);
     old.exec("PRAGMA foreign_keys = ON");
-    for (const step of MIGRATIONS.slice(0, 2)) typeof step === "string" ? old.exec(step) : typeof step === "function" ? step(old) : old.exec(step.rebuild);
+    for (const step of MIGRATIONS.slice(0, 2)) runStep(old, step);
     old.exec("PRAGMA user_version = 2");
     old.exec(`INSERT INTO proposals (id, kind, target_id, target_name, reason, status, created_at) VALUES ('p1', 'delete_channel', 'c', 'old', 'Done.', 'pending', 'then')`);
     old.close();
@@ -269,7 +269,7 @@ describe("consult", () => {
 
   test("sends the question and attachments with the framing; only your kinwriter gets the reply; once per turn", async () => {
     app.store.profiles.create({ name: "Opus", model: "strong/model", temperature: 0.7, maxTokens: 800, consultant: true });
-    say("friend", "*Ilse sets the lamp down, again.*");
+    say("kinwriter", "*Ilse sets the lamp down, again.*");
     fake.replies.push({ content: "You open three posts in a row with the lamp. Try starting with Kestrel." });
     const turn = ctx();
     const outcome = await runTool(turn, "consult", { question: "Am I repeating myself?", messages: ["sets the lamp"], entries: ["Ilse Marrow"], draft: "*Ilse lights the lamp.*" });

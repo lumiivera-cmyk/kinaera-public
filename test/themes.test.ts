@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NotFoundError, ValidationError } from "../src/store.ts";
+import { NotFoundError, ValidationError } from "../src/errors.ts";
 import {
   extractRootTokens,
   parseThemeOptions,
@@ -139,6 +139,11 @@ describe("ThemeLibrary", () => {
     expect(library.details(theme.id).css).toContain("--accent: #8b7cf6;");
   });
 
+  test("a long name cut at a space still makes a theme", () => {
+    const theme = library.create(`${"a".repeat(49)} bc`);
+    expect(theme.id).toBe("a".repeat(49));
+  });
+
   test("a copy of another theme keeps its CSS, Lite version and images", () => {
     const theme = library.create("Sky", "frutiger-aero");
     const details = library.details(theme.id);
@@ -163,6 +168,13 @@ describe("ThemeLibrary", () => {
     library.remove(id);
     expect(library.exists(id)).toBe(false);
     expect(() => library.details(id)).toThrow(NotFoundError);
+  });
+
+  test("an update with a bad part changes nothing", () => {
+    const { id } = library.create("Sky");
+    const before = library.details(id).css;
+    expect(() => library.update(id, { css: ":root { --text: red; }", liteCss: 42 })).toThrow(ValidationError);
+    expect(library.details(id).css).toBe(before);
   });
 
   test("Rainy Window offers sliders, and a copy keeps them", () => {

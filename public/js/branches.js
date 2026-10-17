@@ -100,6 +100,6 @@ export function openBranches(forkId) {
   ];
   $("branches-list").replaceChildren(...cards);
   $("branches-note").textContent =
-    `Where the conversation went from here. Going to a branch keeps what's there now as a branch too. ${state.settings.friendName} sees only the branch you're on.`;
+    `Where the conversation went from here. Going to a branch keeps what's there now as a branch too. ${state.settings.kinwriterName} sees only the branch you're on.`;
   dialog.showModal();
 }

@@ -16,7 +16,7 @@
  * - `"user"`: you.
  * - `"kinwriter"`: your AI RP kinwriter.
  */
-export type Author = "user" | "friend";
+export type Author = "user" | "kinwriter";
 
 /**
  * What a channel is for.
@@ -71,7 +71,7 @@ export type MessageKind = "post" | "scene_break";
  * - `"joint"`: shared lore. Always visible to both, and always
  *   suggest-only: changes go through a suggestion the other person reviews.
  */
-export type Owner = "user" | "friend" | "joint";
+export type Owner = "user" | "kinwriter" | "joint";
 
 /** Whether the *other* person (not the owner) can see an entry. */
 export type Visibility = "visible" | "hidden";
@@ -158,6 +158,8 @@ export interface SuggestedChange {
   fields?: EntryField[];
   systemPrompt?: string;
   delete?: true;
+  /** Stored only: the entry as it was when suggested (src/notebook.ts, `rebase`). */
+  base?: { name: string; fields: EntryField[]; systemPrompt: string };
 }
 
 /**
@@ -224,8 +226,8 @@ export interface Channel {
    */
   theme: string | null;
   /**
-   * The profile or roulette that writes here, overriding the server-wide
-   * one for this kind of channel (see `Settings.rpAssignment`), or `null`.
+   * The profile or roulette that writes here, overriding the one Settings
+   * assigns to this kind of channel (see `Settings.rpAssignment`), or `null`.
    */
   assignment: string | null;
   /** Where the channel sits in the sidebar: 0 is the top (channels are ordered together, then grouped by category). */
@@ -315,12 +317,12 @@ export interface Message {
  */
 export interface Settings {
   /** Your kinwriter's name, shown on their OOC messages. */
-  friendName: string;
+  kinwriterName: string;
   /**
    * Layer 1 of the prompt stack, in every channel: who your kinwriter is.
    * This describes the *writer*, not a character they play.
    */
-  friendPrompt: string;
+  kinwriterPrompt: string;
   /**
    * Layer 2, per kind of channel: how your kinwriter writes there. Each is
    * only sent in its own kind of channel, so instructions for one (long
@@ -332,7 +334,7 @@ export interface Settings {
   /** How your kinwriter talks out of character (see `literaryPrompt`). */
   oocPrompt: string;
   /**
-   * Which connection profile or roulette writes each job, server-wide:
+   * Which connection profile or roulette writes each job, in Settings:
    * `"profile:<id>"`, `"roulette:<id>"`, or `""` for the first profile.
    * A channel can override its own (`Channel.assignment`).
    */
@@ -347,6 +349,14 @@ export interface Settings {
    * use the theme's defaults.
    */
   themeOptions: Record<string, Record<string, number>>;
+  /**
+   * Your own background picture, shown behind the app in place of the
+   * theme's backdrop (see src/backgrounds.ts): its file name, or "" for the
+   * theme's own. Chosen per kinwriter, like `appTheme`.
+   */
+  appBackground: string;
+  /** How much the background picture is darkened (or, in light themes, washed out), 0 to 0.8. */
+  backgroundDim: number;
   /**
    * How many of the most recent messages in a channel are always sent to
    * the model in full. Older ones are remembered through summaries
@@ -416,12 +426,19 @@ export interface Settings {
    * (roughly: each gap varies by ±20%). 0 turns it off. See src/heartbeat.ts.
    */
   heartbeatHours: number;
+  /**
+   * The heartbeat's check: a profile or roulette (see `rpAssignment`) that
+   * reads each beat first and answers whether your kinwriter would take the
+   * moment at all. Only a yes asks the model that writes OOC. "" means no
+   * check: that model gets every beat. See src/heartbeat.ts.
+   */
+  heartbeatAssignment: string;
   /** Your kinwriter's avatar: an emoji, or "" for their initial. */
-  friendAvatar: string;
+  kinwriterAvatar: string;
   /** Their pronouns, like "she/her" ("" when not given): from their seed, on their page and in their self-notes. */
-  friendPronouns: string;
+  kinwriterPronouns: string;
   /** Their colour, as a hue (0–359), or -1 for the theme's accent. */
-  friendColor: number;
+  kinwriterColor: number;
   /** OOC: your kinwriter texts in short bubbles (split at `<cht>`), shown one at a time. */
   oocBubbles: boolean;
   /** Literary RP: your kinwriter writes about as much as your latest post (src/prompt.ts, paceNote). */
@@ -463,11 +480,11 @@ export interface ApiToolCall {
 
 // ------------------------------------------------------------ stage 5
 
-/** How hard a reasoning model thinks before answering (`null`: the model's default). */
-export type ReasoningEffort = "low" | "medium" | "high";
-
-/** What a turn is for: roleplay writing, or OOC chat. */
-export type Job = "rp" | "ooc";
+/**
+ * How hard a reasoning model thinks before answering (`null`: the model's
+ * default). "none" turns reasoning off, on models that can answer without it.
+ */
+export type ReasoningEffort = "none" | "low" | "medium" | "high";
 
 /**
  * A connection profile: one model and its settings (see `src/profiles.ts`).
@@ -640,7 +657,11 @@ export interface MessageHistory {
 export interface Branch {
   id: string;
   channelId: string;
-  /** The message the branch follows. It shows there, while that message is in the chat. */
+  /**
+   * The message the branch follows. It shows there, while that message is in
+   * the chat. `"start"` (`CHANNEL_START` in src/store.ts): it starts at the
+   * channel's beginning (its fork message, the first, was deleted).
+   */
   forkId: string;
   /** How many messages it has. */
   count: number;

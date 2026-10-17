@@ -23,8 +23,8 @@ import type { Store } from "./store.ts";
 import type { Channel, Message } from "./types.ts";
 
 /** How many anchors a prompt carries, and how long each excerpt is at most. */
-export const ANCHOR_COUNT = 3;
-export const ANCHOR_LENGTH = 400;
+const ANCHOR_COUNT = 3;
+const ANCHOR_LENGTH = 400;
 /** How far back each channel is looked through for anchors. */
 const ANCHOR_SCAN = 200;
 
@@ -135,7 +135,7 @@ export function voiceAnchors(store: Store, channel: Channel, exclude: Set<string
         .slice(-ANCHOR_SCAN)
         .filter(
           (m) =>
-            m.author === "friend" &&
+            m.author === "kinwriter" &&
             m.kind === "post" &&
             m.content.trim().length > 0 &&
             !exclude.has(m.id) &&

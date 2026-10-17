@@ -28,7 +28,7 @@ export function splitFrontmatter(text: string): { header: Header; body: string; 
 }
 
 /** Read the lines between the `---` lines. */
-export function parseHeader(text: string): Header {
+function parseHeader(text: string): Header {
   const header: Header = {};
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -51,7 +51,17 @@ export function parseHeader(text: string): Header {
 
 function unquote(value: string): string {
   const v = value.trim();
-  if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) return v.slice(1, -1);
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+    // Written back with JSON.stringify (see `formatValue`): its escapes (\" \\) are undone.
+    try {
+      const parsed = JSON.parse(v) as unknown;
+      if (typeof parsed === "string") return parsed;
+    } catch {
+      // Not JSON (a hand-written "C:\path"): just the quotes come off.
+    }
+    return v.slice(1, -1);
+  }
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1);
   return v;
 }
 
@@ -114,4 +124,19 @@ function formatValue(key: string, value: HeaderValue): string {
 export function writeFrontmatter(header: Header, body: string): string {
   const lines = Object.entries(header).map(([key, value]) => `${key}: ${formatValue(key, value)}`);
   return `---\n${lines.join("\n")}\n---\n\n${body.trim()}\n`;
+}
+
+/**
+ * A Markdown body's `## ` sections, in the order they're written, each with
+ * its text (trimmed). Anything before the first is left out. Used for seed
+ * and tag files, and the wording files in defaults/ (src/wording.ts).
+ */
+export function markdownSections(body: string): { heading: string; text: string }[] {
+  const sections: { heading: string; text: string }[] = [];
+  for (const line of body.split("\n")) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) sections.push({ heading: heading[1]!, text: "" });
+    else if (sections.length) sections.at(-1)!.text += `${line}\n`;
+  }
+  return sections.map((s) => ({ heading: s.heading, text: s.text.trim() }));
 }

@@ -45,7 +45,7 @@ test("after a fresh start, you make your new kinwriter, and are offered their or
   expect((await call("POST", "/api/setup", { name: "Wren", prompt: "  " })).status).toBe(400);
   const { status } = await call("POST", "/api/setup", { name: "Wren", avatar: "🦉", color: 30, prompt: "You are Wren, a night owl.", tastes: "Loves fog." });
   expect(status).toBe(200);
-  expect(app.store.getSettings()).toMatchObject({ friendName: "Wren", friendAvatar: "🦉", friendColor: 30 });
+  expect(app.store.getSettings()).toMatchObject({ kinwriterName: "Wren", kinwriterAvatar: "🦉", kinwriterColor: 30 });
   expect(app.store.identity.history()).toMatchObject([{ identity: "You are Wren, a night owl.", tastes: "Loves fog.", author: "user" }]);
   // Offered, not run: nothing starts until you pick a version.
   expect((await call("GET", "/api/state")).data).toMatchObject({ setup: false, orientation: { status: "none" } });

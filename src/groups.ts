@@ -46,7 +46,7 @@ export interface HubGroup {
   /** The server it's in. */
   serverId: string;
   /** Its kinwriters' ids. */
-  friends: string[];
+  kinwriters: string[];
   /** DMs: whether you can see it. */
   visible: boolean;
   createdAt: string;
@@ -56,9 +56,9 @@ export interface HubGroup {
 export const ROUND_DELAY_MS = 1500;
 
 /** "@Name" mentions of the given kinwriters in some text (whole names, any case). */
-export function mentionsIn(text: string, friends: Peer[]): string[] {
+export function mentionsIn(text: string, kinwriters: Peer[]): string[] {
   const found: string[] = [];
-  for (const kinwriter of friends) {
+  for (const kinwriter of kinwriters) {
     const escaped = kinwriter.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`(^|[^\\w@])@${escaped}(?![\\w])`, "i").test(text)) found.push(kinwriter.id);
   }
@@ -85,16 +85,16 @@ export class Groups {
   }
 
   private nameOf(kinwriterId: string): string {
-    return this.apps.get(kinwriterId)?.store.getSettings().friendName ?? "a kinwriter";
+    return this.apps.get(kinwriterId)?.store.getSettings().kinwriterName ?? "a kinwriter";
   }
 
   /** What a kinwriter in a group knows of it: the other members, and whether you can see it. */
   info(kinwriterId: string, channelId: string): GroupInfo | null {
     const group = this.get(channelId);
-    if (!group || !group.friends.includes(kinwriterId)) return null;
+    if (!group || !group.kinwriters.includes(kinwriterId)) return null;
     return {
       kind: group.kind,
-      members: group.friends.filter((id) => id !== kinwriterId).map((id) => ({ id, name: this.nameOf(id) })),
+      members: group.kinwriters.filter((id) => id !== kinwriterId).map((id) => ({ id, name: this.nameOf(id) })),
       visible: group.kind === "group" || group.visible,
     };
   }
@@ -105,9 +105,9 @@ export class Groups {
    * Make a group channel (you and several kinwriters) or a DM (two kinwriters):
    * a channel with the same id in each member's store.
    */
-  create(kind: "group" | "dm", serverId: string, friends: string[], name: string): HubGroup {
-    const group: HubGroup = { id: crypto.randomUUID(), kind, name, serverId, friends, visible: true, createdAt: new Date().toISOString() };
-    for (const kinwriterId of friends) this.addCopy(group, kinwriterId);
+  create(kind: "group" | "dm", serverId: string, kinwriters: string[], name: string): HubGroup {
+    const group: HubGroup = { id: crypto.randomUUID(), kind, name, serverId, kinwriters, visible: true, createdAt: new Date().toISOString() };
+    for (const kinwriterId of kinwriters) this.addCopy(group, kinwriterId);
     this.list().push(group);
     this.save();
     return group;
@@ -117,14 +117,14 @@ export class Groups {
   private addCopy(group: HubGroup, kinwriterId: string): void {
     const store = this.apps.get(kinwriterId)?.store;
     if (!store || store.hasChannel(group.id)) return;
-    const other = group.friends.find((id) => id !== kinwriterId);
+    const other = group.kinwriters.find((id) => id !== kinwriterId);
     const name = group.kind === "dm" ? `dm-${this.nameOf(other ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : group.name;
     store.createChannel({ id: group.id, name, kind: group.kind });
   }
 
   /** The DM between two kinwriters, made if there isn't one yet. */
   dm(serverId: string, a: string, b: string): HubGroup {
-    const existing = this.list().find((g) => g.kind === "dm" && g.friends.includes(a) && g.friends.includes(b));
+    const existing = this.list().find((g) => g.kind === "dm" && g.kinwriters.includes(a) && g.kinwriters.includes(b));
     return existing ?? this.create("dm", serverId, [a, b], "dm");
   }
 
@@ -132,7 +132,7 @@ export class Groups {
     const group = this.get(id);
     if (!group || group.kind !== "group") return;
     group.name = name;
-    for (const kinwriterId of group.friends) this.apps.get(kinwriterId)?.store.updateChannel(id, { name });
+    for (const kinwriterId of group.kinwriters) this.apps.get(kinwriterId)?.store.updateChannel(id, { name });
     this.save();
   }
 
@@ -140,7 +140,7 @@ export class Groups {
   remove(id: string): void {
     const group = this.get(id);
     if (!group) return;
-    for (const kinwriterId of group.friends) {
+    for (const kinwriterId of group.kinwriters) {
       const store = this.apps.get(kinwriterId)?.store;
       if (store?.hasChannel(id)) store.deleteChannel(id);
     }
@@ -151,7 +151,7 @@ export class Groups {
 
   /** A kinwriter was deleted: they leave their groups (their copies go with them). */
   kinwriterGone(kinwriterId: string): void {
-    for (const group of this.list()) group.friends = group.friends.filter((id) => id !== kinwriterId);
+    for (const group of this.list()) group.kinwriters = group.kinwriters.filter((id) => id !== kinwriterId);
     this.save();
   }
 
@@ -163,10 +163,10 @@ export class Groups {
    */
   onEvent(kinwriterId: string, event: "added" | "edited" | "deleted", message: Message): void {
     const group = this.get(message.channelId);
-    if (!group || !group.friends.includes(kinwriterId)) return;
+    if (!group || !group.kinwriters.includes(kinwriterId)) return;
     // Whose message it is: yours, or which kinwriter's.
-    const owner = message.author === "user" ? null : message.author === "friend" ? kinwriterId : (message.speaker?.id ?? null);
-    for (const otherId of group.friends) {
+    const owner = message.author === "user" ? null : message.author === "kinwriter" ? kinwriterId : (message.speaker?.id ?? null);
+    for (const otherId of group.kinwriters) {
       if (otherId === kinwriterId) continue;
       const store = this.apps.get(otherId)?.store;
       if (!store || !store.hasChannel(group.id)) continue;
@@ -184,7 +184,7 @@ export class Groups {
           ...(owner === null
             ? { author: "user" as const }
             : owner === otherId
-              ? { author: "friend" as const }
+              ? { author: "kinwriter" as const }
               : { author: "peer" as const, speaker: { id: owner, name: this.nameOf(owner) } }),
         });
       } else if (event === "edited") {
@@ -200,9 +200,9 @@ export class Groups {
     if (event !== "added" || message.kind !== "post") return;
     if (message.author === "user" && group.kind === "group") {
       this.scheduleRound(group.id);
-    } else if (message.author === "friend" && !this.inRound.has(`${group.id}:${kinwriterId}`)) {
+    } else if (message.author === "kinwriter" && !this.inRound.has(`${group.id}:${kinwriterId}`)) {
       // A kinwriter writing outside a round: their @mentions give one turn each.
-      const mentioned = mentionsIn(message.content, group.friends.filter((id) => id !== kinwriterId).map((id) => ({ id, name: this.nameOf(id) })));
+      const mentioned = mentionsIn(message.content, group.kinwriters.filter((id) => id !== kinwriterId).map((id) => ({ id, name: this.nameOf(id) })));
       for (const id of mentioned) this.track(this.turn(group.id, id));
     }
   }
@@ -242,7 +242,7 @@ export class Groups {
   private async round(groupId: string): Promise<void> {
     const group = this.get(groupId);
     if (!group) return;
-    const queue = this.shuffle([...group.friends]).map((id) => ({ id, grants: true }));
+    const queue = this.shuffle([...group.kinwriters]).map((id) => ({ id, grants: true }));
     const mentionTurns = new Set<string>();
     while (queue.length > 0) {
       const { id, grants } = queue.shift()!;
@@ -255,7 +255,7 @@ export class Groups {
         this.inRound.delete(key);
       }
       if (!grants) continue;
-      const others = group.friends.filter((f) => f !== id).map((f) => ({ id: f, name: this.nameOf(f) }));
+      const others = group.kinwriters.filter((f) => f !== id).map((f) => ({ id: f, name: this.nameOf(f) }));
       for (const mentioned of mentionsIn(written.map((m) => m.content).join("\n"), others)) {
         if (mentionTurns.has(mentioned)) continue;
         mentionTurns.add(mentioned);
@@ -298,6 +298,11 @@ export class Groups {
 
   private track(work: Promise<unknown>): void {
     this.pending.push(work);
+    // Forgotten once done, so the list doesn't grow for as long as the server runs.
+    const forget = () => {
+      this.pending = this.pending.filter((p) => p !== work);
+    };
+    work.then(forget, forget);
   }
 
   /** Wait for every round and turn started so far (tests). */

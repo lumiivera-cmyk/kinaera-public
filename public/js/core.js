@@ -6,7 +6,8 @@
  *   server sends back.
  * - `$` and `els`: finding elements on the page.
  * - `api`: talking to the server.
- * - Showing errors, and remembering small things in the browser.
+ * - Showing errors, remembering small things in the browser, and reading
+ *   files you pick.
  *
  * This module imports nothing, so it's always ready before any other
  * module runs.
@@ -17,16 +18,17 @@
 /** Everything the page is currently showing. */
 export const state = {
   /**
-   * Server-wide settings: friendName, friendPrompt (who they are),
-   * literaryPrompt, casualPrompt and oocPrompt (how they write in each kind
-   * of channel), model, temperature, maxTokens, historyLimit, appTheme.
+   * The open kinwriter's settings: who they are and how they write
+   * (kinwriterName, literaryPrompt, casualPrompt, oocPrompt, ...), their look
+   * (appTheme), and Settings, which every kinwriter shares unless a section
+   * is just theirs (`ownSettings`; src/universal.ts).
    */
   settings: null,
   /**
    * Every channel, in sidebar order: {id, name, kind, mode, pendingMode,
    * theme, position, cast}. `cast` is the entries pinned to it, as you see
    * them: {entryId, name, playedBy, owner, kind, hidden, proxyPrefix}.
-   * `playedBy` is "user", "kinwriter" or "both" (shared characters).
+   * `playedBy` is "user", "kinwriter" (your kinwriter) or "both" (shared characters).
    */
   channels: [],
   /**
@@ -75,7 +77,7 @@ export const state = {
   reasoning: [],
   /** The open channel's comment threads: {id, messageId, quote, resolved, comments}. */
   threads: [],
-  /** The open channel's summaries (stage 7): {scenes, story, current, digest, running, error}. */
+  /** The open channel's summaries: {scenes, story, current, digest, running, error}. */
   summaries: null,
   /** Scene breaks whose scene summary is showing. */
   openSummaries: new Set(),
@@ -89,6 +91,8 @@ export const state = {
   openActivity: new Set(),
   /** Turns whose reasoning is unfolded. */
   openReasoning: new Set(),
+  /** Runs of quiet turns that are unfolded, by the run's first turn id. */
+  openQuiet: new Set(),
   /** Notebook entries attached to the message you're writing, by channel id: a Set of entry ids. */
   attachments: new Map(),
   /** The comment thread open in the thread dialog, or a new comment: {messageId, quote}. */
@@ -116,6 +120,54 @@ export const state = {
   editingTheme: null,
   /** Fingerprint of the app's files when this page loaded (see `checkForUpdate`). */
   appVersion: null,
+
+  // Kinwriters and servers (js/kinwriter-page.js)
+  /** Id of the kinwriter you're looking at; their API is under /p/<id> (see `scoped`). */
+  kinwriterId: null,
+  /** The hub's servers, each with its kinwriters and their news (null until loaded). */
+  hub: null,
+  /** Archived kinwriters. */
+  archived: [],
+  /** The server a new kinwriter is being made in (null: a new server). */
+  newKinwriterServer: null,
+
+  // From the server's state (js/live.js)
+  /** Sections of Settings that are just this kinwriter's; the rest are shared. */
+  ownSettings: [],
+  /** Their self-notes: whether they share them with you (src/selfnotes.ts). */
+  selfNotes: null,
+  /** True after a fresh start, until you've made your new kinwriter (js/setup.js). */
+  setup: false,
+  /** Whether the developer panel is on (DEVELOPER_PANEL=1). */
+  developerPanel: false,
+  /** Their orientation: {status, session, step, ...} (js/orientation.js). */
+  orientation: null,
+  /** The server's message revision; when it changes, something new was written. */
+  revision: null,
+  /** Each channel's newest message: {channelId: {lastId, author}}, for unread dots. */
+  activity: {},
+  /** Custom emojis: {name, file}. */
+  emojis: [],
+  /** Whether phone notifications work on the server (Termux:API). */
+  notifications: false,
+  /** When the next heartbeat is due (ISO time), or null. */
+  heartbeatNext: null,
+
+  // The open channel, and what's going on in it
+  /** Your suggested rewrites in the open channel (js/rewrites.js). */
+  rewrites: [],
+  /** A burst of texts being shown one at a time: {channelId, queue, timer} (js/texting.js). */
+  reveal: null,
+  /** Waiting for you to pause before your kinwriter answers your texts, and where. */
+  replyTimer: 0,
+  replyChannel: null,
+
+  // The sidebar
+  /** True while a channel or category is being dragged in the sidebar. */
+  dragging: false,
+  /** The category open in the category dialog (null for a new one), and what to do once one is made. */
+  editingCategory: null,
+  afterCategory: null,
 };
 
 // Shortcut for looking up elements by id.
@@ -128,8 +180,8 @@ export const els = {
     className: "channel-indicator",
     ariaHidden: "true",
   }),
-  friendName: $("friend-name"),
-  friendAvatar: $("friend-avatar"),
+  kinwriterName: $("kinwriter-name"),
+  kinwriterAvatar: $("kinwriter-avatar"),
   channelView: $("channel-view"),
   channelName: $("channel-name"),
   channelTitleIcon: $("channel-title-icon"),
@@ -178,7 +230,10 @@ export async function api(method, path, body) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || `Request failed (HTTP ${response.status})`);
+    const error = new Error(data.error || `Request failed (HTTP ${response.status})`);
+    // The rest of the body, for errors that carry more (a seed's tries).
+    error.data = data;
+    throw error;
   }
   return data;
 }
@@ -226,7 +281,7 @@ export function showFormError(form, message) {
 
 export function hideFormError(form) {
   form.querySelector(".form-error").hidden = true;
-} // to apply the theme before the server answers
+}
 
 /*
  * localStorage can be unavailable (private browsing, storage turned off),
@@ -247,4 +302,14 @@ export function writeLocal(key, value) {
   } catch {
     // Nothing to do: the setting just won't be remembered.
   }
+}
+
+/** A file's contents as base64 text (the "data:...;base64," prefix removed). */
+export function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(new Error("Couldn't read the file."));
+    reader.readAsDataURL(file);
+  });
 }

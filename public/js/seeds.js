@@ -4,13 +4,17 @@
  *
  *   entry    the default kinwriters as cards (name, pronouns, tagline), next
  *            to "Make a new one" (the tags) and "Generate from idea"
- *   tags     five categories, each on "Surprise me" to start; Advanced, for
+ *   tags     a required name choice (random name, random username, or
+ *            typed), then five categories, each on "Surprise me" to start (personality
+ *            takes several, as chips); Advanced, for
  *            a platform's or an influence's corner; "Surprise me, don't show me"
  *   details  the primary social media options, each with its era and tics
- *   idea     your own words, as much or as little as you like
+ *   idea     your own words, as much or as little as you like, and any
+ *            tags you want to attach (the same pickers, kept apart from the
+ *            tags screen's); categories left open come from your words
  *   preview  the seed: name, pronouns, tags as chips (🎲 for what chance
- *            picked), and the body; Reroll, Reroll the dice, Back to tags,
- *            Edit, Accept
+ *            picked), and the body; Reroll, Reroll the dice, Back to tags
+ *            (or Back to idea), Edit, Accept
  *   edit     name, pronouns and the body; saving re-checks the headings
  *
  * Accept hands the seed to whoever opened the picker (the setup, or a new
@@ -32,14 +36,25 @@ const picker = {
   categories: [],
   defaults: [],
   testSeed: null,
-  /** Your picks: { category: tagId | null } (null is "Surprise me"), and chosen corners: { tagId: pocket }. */
+  /**
+   * Your picks: { category: tagId | null } (null is "Surprise me"; personality
+   * takes a list, [tagId, ...]), and chosen corners: { tagId: pocket }.
+   */
   picks: {},
   pockets: {},
+  /** Tags attached to an idea, the same shape: null is "From the idea". */
+  ideaPicks: {},
+  ideaPockets: {},
+  /** What they'll be called: "" (not chosen yet), "name", "username" or "given", and the name you typed. */
+  naming: "",
+  givenName: "",
   /** The seed in the preview: { text, header, body, generation }, and how it was made ("tags", "idea", "default", "test"). */
   seed: null,
   made: null,
   /** The idea's text, for Try again and Reroll. */
   idea: "",
+  /** The last failed seed: { expected, attempts: [{ raw, error, problems }] }, for "What they wrote". */
+  failure: null,
   /** What Try again repeats. */
   retry: null,
   /** Where the dev screen goes back to. */
@@ -53,19 +68,38 @@ export async function openSeedPicker({ accept }) {
   const dialog = $("seed-dialog");
   for (const element of dialog.querySelectorAll("[data-developer]")) element.hidden = !state.developerPanel;
   show("entry");
+  // The entry screen is never blank: "Generate from idea" works without the
+  // lists, so it's there at once, with a line saying the rest is on its way.
+  setEntryStatus("loading");
+  renderEntry();
   if (!dialog.open) dialog.showModal();
   try {
-    const [{ defaults, test }, { categories }] = await Promise.all([api("GET", "/api/seeds/defaults"), api("GET", "/api/seeds/tags")]);
-    picker.defaults = defaults;
-    picker.testSeed = test;
-    picker.categories = categories;
-    for (const category of categories) if (!(category.id in picker.picks)) picker.picks[category.id] = null;
+    const [seeds, tags] = await Promise.all([api("GET", "/api/seeds/defaults"), api("GET", "/api/seeds/tags")]);
+    if (!Array.isArray(seeds?.defaults) || !Array.isArray(tags?.categories)) {
+      throw new Error("The server sent something unexpected. If you just updated, restart the server and reload.");
+    }
+    picker.defaults = seeds.defaults.filter((d) => d?.header);
+    picker.testSeed = seeds.test ?? null;
+    picker.categories = tags.categories;
+    for (const category of picker.categories) {
+      if (!(category.id in picker.picks)) picker.picks[category.id] = null;
+      if (!(category.id in picker.ideaPicks)) picker.ideaPicks[category.id] = null;
+    }
+    setEntryStatus(null);
   } catch (error) {
-    picker.defaults = [];
-    picker.categories = [];
     console.warn(error);
+    setEntryStatus("error", error.message);
   }
   renderEntry();
+}
+
+/** The line under the entry's cards: loading, why the lists didn't load, or nothing. */
+function setEntryStatus(kind, message = "") {
+  const loading = $("seed-entry-loading");
+  const failed = $("seed-entry-error");
+  loading.hidden = kind !== "loading";
+  failed.hidden = kind !== "error";
+  failed.textContent = kind === "error" ? `Couldn't load the ready-made kinwriters and tags: ${message}` : "";
 }
 
 /** Show one screen. */
@@ -103,25 +137,78 @@ function renderEntry() {
   );
   // "Make a new one" opens the tags, once there are any.
   if (picker.categories.length) cards.push(card("Make a new one", ["From tags you pick, or leave to chance."], () => openTags(), "seed-card-new"));
-  cards.push(card("Generate from idea", ["Write a little or a lot, and get a whole person."], () => show("idea"), "seed-card-new"));
+  cards.push(card("Generate from idea", ["Write a little or a lot, and get a whole person."], () => openIdea(), "seed-card-new"));
   $("seed-cards").replaceChildren(...cards);
 }
 
 // ------------------------------------------------------------------- tags
 
+/**
+ * Where a set of tag pickers draws and keeps its picks: the tags screen
+ * (open categories are "Surprise me") or the idea screen (open categories
+ * come from your words). Each keeps its own picks.
+ */
+const TAGS = {
+  get picks() {
+    return picker.picks;
+  },
+  get pockets() {
+    return picker.pockets;
+  },
+  prefix: "seed",
+  form: "seed-tags-form",
+  pocketsBox: "seed-pockets",
+  empty: "seed-advanced-empty",
+  open: "Surprise me",
+  openMulti: "Surprise me. Pick as many as you like, and they'll be blended into one person.",
+};
+const IDEA_TAGS = {
+  get picks() {
+    return picker.ideaPicks;
+  },
+  get pockets() {
+    return picker.ideaPockets;
+  },
+  prefix: "seed-idea",
+  form: "seed-idea-tags",
+  pocketsBox: "seed-idea-pockets",
+  empty: null,
+  open: "From the idea",
+  openMulti: "From the idea. Pick as many as you like, and they'll be blended into one person.",
+};
+
 function openTags() {
-  renderTags();
-  renderPockets();
+  hideFormError($("seed-dialog").querySelector('[data-screen="tags"]'));
+  $("seed-naming").value = picker.naming;
+  $("seed-given-name").value = picker.givenName;
+  $("seed-given-name").hidden = picker.naming !== "given";
+  renderTags(TAGS);
+  renderPockets(TAGS);
   show("tags");
 }
 
-/** The five categories, each a choice with "Surprise me" first. */
-function renderTags() {
+/** The idea screen: your words, and (folded away until you want them) tags to attach. */
+function openIdea() {
+  $("seed-idea-tagbox").hidden = picker.categories.length === 0;
+  renderTags(IDEA_TAGS);
+  renderPockets(IDEA_TAGS);
+  updateIdeaSummary();
+  show("idea");
+}
+
+/** "Attach tags (optional)", with how many are attached. */
+function updateIdeaSummary() {
+  const count = picker.categories.reduce((n, c) => n + picked(c.id, IDEA_TAGS).length, 0);
+  $("seed-idea-tagbox-summary").textContent = count ? `Tags (${count} attached)` : "Attach tags (optional)";
+}
+
+/** The five categories, each a choice with "Surprise me" (or "From the idea") first. */
+function renderTags(ctx) {
   const fields = picker.categories.map((category) => {
     const field = document.createElement("div");
     field.className = "seed-tag";
     const label = document.createElement("label");
-    label.htmlFor = `seed-tag-${category.id}`;
+    label.htmlFor = `${ctx.prefix}-tag-${category.id}`;
     label.textContent = category.label;
     field.append(label);
     if (category.subtitle) {
@@ -130,74 +217,125 @@ function renderTags() {
       link.type = "button";
       link.className = "link-button seed-subtitle";
       link.textContent = category.subtitle;
-      link.addEventListener("click", () => openDetails(category));
+      link.addEventListener("click", () => openDetails(category, ctx));
       field.append(link);
     }
+    if (category.multiple) {
+      field.append(...multiPicker(category, ctx));
+      return field;
+    }
     const select = document.createElement("select");
-    select.id = `seed-tag-${category.id}`;
-    select.append(new Option("Surprise me", ""));
+    select.id = `${ctx.prefix}-tag-${category.id}`;
+    select.append(new Option(ctx.open, ""));
     for (const option of category.options) {
       const item = new Option(option.label, option.id);
       item.title = option.blurb;
       select.append(item);
     }
-    select.value = picker.picks[category.id] ?? "";
+    select.value = ctx.picks[category.id] ?? "";
     const blurb = document.createElement("p");
     blurb.className = "hint seed-blurb";
     const describe = () => {
       blurb.textContent = category.options.find((o) => o.id === select.value)?.blurb ?? "";
     };
     select.addEventListener("change", () => {
-      picker.picks[category.id] = select.value || null;
+      ctx.picks[category.id] = select.value || null;
       // A corner belongs to its tag: a new pick starts on "Surprise me" again.
-      for (const tag of Object.keys(picker.pockets)) if (tag.startsWith(`${category.id}.`)) delete picker.pockets[tag];
+      for (const tag of Object.keys(ctx.pockets)) if (tag.startsWith(`${category.id}.`)) delete ctx.pockets[tag];
       describe();
-      renderPockets();
+      renderPockets(ctx);
     });
     describe();
     field.append(select, blurb);
     return field;
   });
-  $("seed-tags-form").replaceChildren(...fields);
+  $(ctx.form).replaceChildren(...fields);
+}
+
+/** Your picks in a category, as a list (several for personality, else none or one). */
+function picked(categoryId, ctx = TAGS) {
+  const value = ctx.picks[categoryId];
+  return Array.isArray(value) ? value : value ? [value] : [];
+}
+
+/** A category that takes several (personality): a chip per option to toggle. None picked is "Surprise me". */
+function multiPicker(category, ctx) {
+  const chips = document.createElement("div");
+  chips.className = "seed-multi";
+  chips.id = `${ctx.prefix}-tag-${category.id}`;
+  chips.setAttribute("role", "group");
+  chips.setAttribute("aria-label", category.label);
+  const blurb = document.createElement("p");
+  blurb.className = "hint seed-blurb";
+  const describe = () => {
+    const chosen = picked(category.id, ctx).map((id) => category.options.find((o) => o.id === id)).filter(Boolean);
+    blurb.textContent = chosen.length
+      ? chosen.map((o) => (chosen.length > 1 ? `${o.label}: ${o.blurb}` : o.blurb)).join(" · ")
+      : ctx.openMulti;
+  };
+  for (const option of category.options) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "seed-multi-chip";
+    chip.textContent = option.label;
+    chip.title = option.blurb;
+    const sync = () => chip.setAttribute("aria-pressed", String(picked(category.id, ctx).includes(option.id)));
+    chip.addEventListener("click", () => {
+      const now = picked(category.id, ctx);
+      const next = now.includes(option.id) ? now.filter((id) => id !== option.id) : [...now, option.id];
+      ctx.picks[category.id] = next.length ? next : null;
+      // A corner belongs to its tag: dropping the tag drops its corner.
+      if (!next.includes(option.id)) delete ctx.pockets[option.id];
+      sync();
+      describe();
+      renderPockets(ctx);
+    });
+    sync();
+    chips.append(chip);
+  }
+  describe();
+  return [chips, blurb];
 }
 
 /** Advanced: a corner for each picked tag that has them. None for a category still on "Surprise me". */
-function renderPockets() {
+function renderPockets(ctx) {
+  if (ctx === IDEA_TAGS) updateIdeaSummary();
   const rows = [];
   for (const category of picker.categories) {
-    const tag = category.options.find((o) => o.id === picker.picks[category.id]);
-    if (!tag?.pockets.length) continue;
-    const field = document.createElement("div");
-    field.className = "seed-tag";
-    const label = document.createElement("label");
-    label.htmlFor = `seed-pocket-${tag.id}`;
-    label.textContent = `${tag.label}: which corner`;
-    const select = document.createElement("select");
-    select.id = `seed-pocket-${tag.id}`;
-    select.append(new Option("Surprise me", ""));
-    for (const pocket of tag.pockets) select.append(new Option(pocket.label, pocket.slug));
-    select.value = picker.pockets[tag.id] ?? "";
-    const blurb = document.createElement("p");
-    blurb.className = "hint seed-blurb";
-    const describe = () => {
-      const pocket = tag.pockets.find((p) => p.slug === select.value);
-      blurb.textContent = pocket ? pocket.blurb : tag.pockets.map((p) => `${p.label}: ${p.blurb}`).join(" · ");
-    };
-    select.addEventListener("change", () => {
-      if (select.value) picker.pockets[tag.id] = select.value;
-      else delete picker.pockets[tag.id];
+    for (const tag of picked(category.id, ctx).map((id) => category.options.find((o) => o.id === id))) {
+      if (!tag?.pockets.length) continue;
+      const field = document.createElement("div");
+      field.className = "seed-tag";
+      const label = document.createElement("label");
+      label.htmlFor = `${ctx.prefix}-pocket-${tag.id}`;
+      label.textContent = `${tag.label}: which corner`;
+      const select = document.createElement("select");
+      select.id = `${ctx.prefix}-pocket-${tag.id}`;
+      select.append(new Option("Surprise me", ""));
+      for (const pocket of tag.pockets) select.append(new Option(pocket.label, pocket.slug));
+      select.value = ctx.pockets[tag.id] ?? "";
+      const blurb = document.createElement("p");
+      blurb.className = "hint seed-blurb";
+      const describe = () => {
+        const pocket = tag.pockets.find((p) => p.slug === select.value);
+        blurb.textContent = pocket ? pocket.blurb : tag.pockets.map((p) => `${p.label}: ${p.blurb}`).join(" · ");
+      };
+      select.addEventListener("change", () => {
+        if (select.value) ctx.pockets[tag.id] = select.value;
+        else delete ctx.pockets[tag.id];
+        describe();
+      });
       describe();
-    });
-    describe();
-    field.append(label, select, blurb);
-    rows.push(field);
+      field.append(label, select, blurb);
+      rows.push(field);
+    }
   }
-  $("seed-pockets").replaceChildren(...rows);
-  $("seed-advanced-empty").hidden = rows.length > 0;
+  $(ctx.pocketsBox).replaceChildren(...rows);
+  if (ctx.empty) $(ctx.empty).hidden = rows.length > 0;
 }
 
 /** The details page: each option in a category, its blurb, era and tics. */
-function openDetails(category) {
+function openDetails(category, ctx = TAGS) {
   const sections = category.options.map((option) => {
     const section = document.createElement("section");
     section.className = "seed-detail";
@@ -225,6 +363,9 @@ function openDetails(category) {
     return section;
   });
   $("seed-details").replaceChildren(...sections);
+  const back = $("seed-details-back");
+  back.dataset.seedBack = ctx === IDEA_TAGS ? "idea" : "tags";
+  back.textContent = ctx === IDEA_TAGS ? "Back to idea" : "Back to tags";
   show("details");
 }
 
@@ -235,14 +376,43 @@ function tagRequest(mode) {
   if (mode === "reroll" && picker.seed?.header) {
     const h = picker.seed.header;
     const rolledTags = h.rolled.filter((r) => !r.includes("#"));
-    const tags = Object.fromEntries(picker.categories.map((c) => [c.id, h.tags.find((t) => t.startsWith(`${c.id}.`)) ?? null]));
-    return { tags, rolledTags, pockets: { ...picker.pockets } };
+    const tags = Object.fromEntries(
+      picker.categories.map((c) => {
+        const inCategory = h.tags.filter((t) => t.startsWith(`${c.id}.`));
+        return [c.id, c.multiple ? (inCategory.length ? inCategory : null) : (inCategory[0] ?? null)];
+      }),
+    );
+    return { tags, rolledTags, pockets: { ...picker.pockets }, naming: namingRequest() };
   }
-  return { tags: { ...picker.picks }, rolledTags: [], pockets: { ...picker.pockets } };
+  return { tags: { ...picker.picks }, rolledTags: [], pockets: { ...picker.pockets }, naming: namingRequest() };
+}
+
+/** The name choice, as the server takes it. */
+function namingRequest() {
+  // Roll 5 (dev) doesn't ask: a random name, unless you chose otherwise.
+  return picker.naming === "given" ? { given: picker.givenName.trim() } : picker.naming || "name";
+}
+
+/** The name is required: a random name, a random username, or one you type. Says what's missing, if anything. */
+function namingReady() {
+  const screen = $("seed-dialog").querySelector('[data-screen="tags"]');
+  hideFormError(screen);
+  if (!picker.naming) {
+    showFormError(screen, "Choose how they'll be named first.");
+    $("seed-naming").focus();
+    return false;
+  }
+  if (picker.naming === "given" && !picker.givenName.trim()) {
+    showFormError(screen, "Type their name, or pick a random one.");
+    $("seed-given-name").focus();
+    return false;
+  }
+  return true;
 }
 
 /** Generate from the tags. `mode`: "fresh" (Make them), "reroll" or "dice". */
 async function generateFromTags(mode = "fresh") {
+  if (mode === "fresh" && !namingReady()) return;
   const body = tagRequest(mode);
   picker.made = "tags";
   await generate("/api/seeds/generate", body, () => generateFromTags(mode));
@@ -256,7 +426,7 @@ async function generateFromIdea() {
   }
   picker.idea = text;
   picker.made = "idea";
-  await generate("/api/seeds/idea", { text }, () => generateFromIdea());
+  await generate("/api/seeds/idea", { text, tags: { ...picker.ideaPicks }, pockets: { ...picker.ideaPockets } }, () => generateFromIdea());
 }
 
 /** One generation (the server checks it, and tries once more if it fails). */
@@ -276,6 +446,9 @@ async function generate(path, body, again) {
     setSeed(result);
   } catch (error) {
     $("seed-error-text").textContent = error.message;
+    // Only when the model wrote something: a failure to reach it has nothing to show.
+    picker.failure = error.data?.attempts?.some?.((a) => a.raw != null) ? error.data : null;
+    $("seed-error-compare").hidden = !picker.failure;
     show("error");
   }
 }
@@ -289,7 +462,7 @@ function setSeed(seed) {
 }
 
 /** A seed's body as HTML: its headings, bullets and paragraphs. Built from text nodes, so nothing in it runs. */
-export function renderSeedBody(body) {
+function renderSeedBody(body) {
   const box = document.createDocumentFragment();
   let list = null;
   let paragraph = null;
@@ -372,8 +545,10 @@ function renderPreview() {
   const fromTags = picker.made === "tags";
   $("seed-reroll").hidden = !(fromTags || picker.made === "idea");
   $("seed-reroll-dice").hidden = !(fromTags && rolled.size > 0);
-  $("seed-back-tags").hidden = !fromTags;
-  $("seed-back-entry").hidden = fromTags;
+  // Back to what made them: the tags, or your idea (with its attached tags).
+  $("seed-back-tags").hidden = !(fromTags || picker.made === "idea");
+  $("seed-back-tags").textContent = picker.made === "idea" ? "Back to idea" : "Back to tags";
+  $("seed-back-entry").hidden = fromTags || picker.made === "idea";
   $("seed-raw").hidden = $("seed-show-prompt").hidden = !state.developerPanel || !picker.seed.generation;
   $("seed-trace").hidden = !state.developerPanel || !(header.tags ?? []).length;
 }
@@ -469,6 +644,22 @@ function showDev(title, blocks, back = "preview") {
   show("dev");
 }
 
+/** A failed seed: what it needed, then each try's problems and what it actually wrote. */
+function showFailure() {
+  const { expected = [], attempts = [] } = picker.failure ?? {};
+  showDev(
+    "What they wrote",
+    [
+      ...(expected.length ? [{ heading: "What a seed needs", text: expected.map((rule) => `• ${rule}`).join("\n") }] : []),
+      ...attempts.map((a, i) => ({
+        heading: `Try ${i + 1}`,
+        text: `${a.problems.map((p) => `✗ ${p}`).join("\n")}${a.problems.length ? "\n\n" : ""}${a.raw ?? a.error ?? ""}` || "(nothing came back)",
+      })),
+    ],
+    "error",
+  );
+}
+
 async function showLast(what, back = "preview") {
   try {
     const last = await api("GET", "/api/seeds/last");
@@ -490,7 +681,7 @@ async function showLast(what, back = "preview") {
 }
 
 /** Trace: the tags, rolled tags and pockets behind a seed, each linking to its tag file. */
-export function traceNode(header, onOpen) {
+function traceNode(header, onOpen) {
   const list = document.createElement("ul");
   const rolled = new Set(header.rolled ?? []);
   const item = (id, kind) => {
@@ -596,7 +787,10 @@ export async function openSeedVsSelf() {
 
 $("seed-dialog").addEventListener("click", (event) => {
   const back = event.target.closest("[data-seed-back]");
-  if (back) back.dataset.seedBack === "tags" ? openTags() : show(back.dataset.seedBack);
+  if (!back) return;
+  if (back.dataset.seedBack === "tags") openTags();
+  else if (back.dataset.seedBack === "idea") openIdea();
+  else show(back.dataset.seedBack);
 });
 $("seed-test").addEventListener("click", () => {
   if (!picker.testSeed) return;
@@ -607,18 +801,27 @@ $("seed-test").addEventListener("click", () => {
     .catch((error) => alert(error.message));
 });
 $("seed-generate").addEventListener("click", () => generateFromTags("fresh"));
+$("seed-naming").addEventListener("change", () => {
+  picker.naming = $("seed-naming").value;
+  $("seed-given-name").hidden = picker.naming !== "given";
+  if (picker.naming === "given") $("seed-given-name").focus();
+});
+$("seed-given-name").addEventListener("input", () => {
+  picker.givenName = $("seed-given-name").value;
+});
 $("seed-idea-generate").addEventListener("click", generateFromIdea);
 $("seed-reroll").addEventListener("click", () => (picker.made === "idea" ? generateFromIdea() : generateFromTags("reroll")));
 $("seed-reroll-dice").addEventListener("click", () => generateFromTags("dice"));
-$("seed-back-tags").addEventListener("click", openTags);
+$("seed-back-tags").addEventListener("click", () => (picker.made === "idea" ? openIdea() : openTags()));
 $("seed-back-entry").addEventListener("click", () => show("entry"));
 $("seed-edit").addEventListener("click", openEdit);
 $("seed-edit-cancel").addEventListener("click", () => show("preview"));
 $("seed-edit-form").addEventListener("submit", saveEdit);
 $("seed-accept").addEventListener("click", acceptSeed);
 $("seed-retry").addEventListener("click", () => picker.retry?.());
-$("seed-error-back").addEventListener("click", () => (picker.made === "idea" ? show("idea") : openTags()));
+$("seed-error-back").addEventListener("click", () => (picker.made === "idea" ? openIdea() : openTags()));
 $("seed-error-raw").addEventListener("click", () => showLast("raw", "error"));
+$("seed-error-compare").addEventListener("click", showFailure);
 $("seed-show-prompt").addEventListener("click", () => showLast("prompt"));
 $("seed-raw").addEventListener("click", () => showLast("raw"));
 $("seed-trace").addEventListener("click", showTrace);

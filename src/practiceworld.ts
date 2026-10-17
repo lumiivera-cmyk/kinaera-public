@@ -167,7 +167,7 @@ export interface WorldFor {
  * world at sea is written again with new seeds, once. Throws if the reply
  * can't be read, or it's still at sea.
  */
-export async function writePracticeWorld(
+async function writePracticeWorld(
   api: ApiOptions,
   request: ReturnType<typeof profileRequest>,
   who: WorldFor,
@@ -214,8 +214,10 @@ export function readWorld(json: unknown): PracticeWorld {
     if (!name) return null;
     const fields = Object.entries(o)
       .filter(([key]) => key !== "name")
-      .map(([key, v]) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), value: text(v) }))
-      .filter((f) => f.value);
+      // Within the notebook's limits (labels of 60 characters, 50 fields), so saving it can't fail.
+      .map(([key, v]) => ({ label: (key.charAt(0).toUpperCase() + key.slice(1)).slice(0, 60).trim(), value: text(v) }))
+      .filter((f) => f.label && f.value)
+      .slice(0, 50);
     return { kind, name, fields };
   };
   const notes = [entry("lore", data.place), entry("character", data.local), entry("lore", data.event)].filter((e): e is WorldEntry => e !== null);
@@ -253,24 +255,27 @@ export function practiceWorld(store: Store): PracticeWorld {
 }
 
 /** Put the world's notes in the Practice folder, pinned to the practice channel (replacing what was there), and remember it. */
-export function useWorld(store: Store, world: PracticeWorld): void {
-  const channel = store.ensurePractice();
-  const folder = store.notebook.practiceFolder()!;
-  for (const entry of store.notebook.listEntries("friend", true)) {
-    if (entry.folderId === folder.id) store.notebook.deleteEntry("friend", entry.id);
-  }
-  for (const note of world.notes) {
-    const entry = store.notebook.createEntry("friend", { kind: note.kind, name: note.name, fields: note.fields });
-    store.notebook.updateEntrySettings("friend", entry.id, { folderId: folder.id });
-    store.notebook.pin("friend", channel.id, entry.id);
-  }
-  store.appState.set(WORLD, JSON.stringify(world));
+function useWorld(store: Store, world: PracticeWorld): void {
+  // All at once: if a note can't be saved, the old ones are still there.
+  store.db.transaction(() => {
+    const channel = store.ensurePractice();
+    const folder = store.notebook.practiceFolder()!;
+    for (const entry of store.notebook.listEntries("kinwriter", true)) {
+      if (entry.folderId === folder.id) store.notebook.deleteEntry("kinwriter", entry.id);
+    }
+    for (const note of world.notes) {
+      const entry = store.notebook.createEntry("kinwriter", { kind: note.kind, name: note.name, fields: note.fields });
+      store.notebook.updateEntrySettings("kinwriter", entry.id, { folderId: folder.id });
+      store.notebook.pin("kinwriter", channel.id, entry.id);
+    }
+    store.appState.set(WORLD, JSON.stringify(world));
+  })();
 }
 
 /** Who the world is for, from their settings and identity. */
-export function worldFor(store: Store): WorldFor {
+function worldFor(store: Store): WorldFor {
   const current = store.identity.current();
-  return { name: store.getSettings().friendName, identity: current?.identity ?? store.getSettings().friendPrompt, tastes: current?.tastes ?? "" };
+  return { name: store.getSettings().kinwriterName, identity: current?.identity ?? store.getSettings().kinwriterPrompt, tastes: current?.tastes ?? "" };
 }
 
 /**
@@ -316,7 +321,7 @@ export function addExampleCharacter(store: Store, world: PracticeWorld): void {
   const channelId = exampleCharacterPending(store);
   if (!channelId) return;
   if (world.character && store.hasChannel(channelId) && store.notebook.castFor("user", channelId).length === 0) {
-    const entry = store.notebook.createEntry("user", { kind: "character", owner: "friend", name: world.character.name, fields: world.character.fields });
+    const entry = store.notebook.createEntry("user", { kind: "character", owner: "kinwriter", name: world.character.name, fields: world.character.fields });
     store.notebook.pin("user", channelId, entry.id);
   }
   store.appState.set(EXAMPLE_PENDING, null);

@@ -57,7 +57,7 @@ async function call(method: string, path: string, body?: unknown) {
 /** Add posts to a channel, alternating you and your kinwriter. */
 function posts(channel: Channel, count: number, label = "Post") {
   for (let i = 1; i <= count; i++) {
-    app.store.addMessage({ channelId: channel.id, author: i % 2 ? "user" : "friend", content: `${label} ${i}` });
+    app.store.addMessage({ channelId: channel.id, author: i % 2 ? "user" : "kinwriter", content: `${label} ${i}` });
   }
 }
 
@@ -141,8 +141,10 @@ describe("splitScenes and windowStart", () => {
   test("transcripts say who's speaking, and chunks keep lines whole", async () => {
     const [post, sceneBreak] = seq([{ content: " Hi " }, { kind: "scene_break", content: "Night" }]);
     expect(transcript([post!, sceneBreak!], "rp", "Arlo")).toEqual(["The user (narration): Hi", '--- Scene break: "Night" ---']);
-    expect(transcript([{ ...post!, author: "friend", characters: ["Ilse"] }], "rp", "Arlo")).toEqual(["Ilse: Hi"]);
-    expect(transcript([{ ...post!, author: "friend" }], "ooc", "Arlo")).toEqual(["You (Arlo): Hi"]);
+    expect(transcript([{ ...post!, author: "kinwriter", characters: ["Ilse"] }], "rp", "Arlo")).toEqual(["Ilse: Hi"]);
+    expect(transcript([{ ...post!, author: "kinwriter" }], "ooc", "Arlo")).toEqual(["You (Arlo): Hi"]);
+    // Another kinwriter in a group channel is them, not you.
+    expect(transcript([{ ...post!, author: "peer", speaker: { id: "p-2", name: "Mara" } }], "group", "Arlo")).toEqual(["Mara: Hi"]);
     expect(chunkLines(["aaaa", "bbbb", "cccc"], 10)).toEqual(["aaaa\n\nbbbb", "cccc"]);
     expect(cleanSummary('Summary: "They met."')).toBe("They met.");
   });
@@ -169,9 +171,9 @@ describe("the summarizer", () => {
   });
 
   test("summaries never see the notebook, so a secret hidden from you can't reach one", async () => {
-    app.store.notebook.createEntry("friend", {
+    app.store.notebook.createEntry("kinwriter", {
       kind: "lore",
-      owner: "friend",
+      owner: "kinwriter",
       name: "The Drowned Bell",
       visibility: "hidden",
       fields: [{ label: "Summary", value: "Ilse rang it herself" }],

@@ -11,6 +11,16 @@ avoid_terms: []
 
 They write for momentum, like an editor cutting a film: short paragraphs, strong verbs, scenes that start late and end early.
 
+## Ways it can go
+
+Pick what fits the other tags and any guidance, or blend two.
+
+- **Thriller.** Momentum and dread, every post a reason to keep reading.
+- **Comic.** Timing first. Punchlines land at the end of a paragraph.
+- **Brawler.** Violence and action written fast, physical, and clear.
+- **Hook artist.** Lives for the cliffhanger and the reveal.
+- **Tight.** Brisk because they respect your time, with no showing off.
+
 ## On the page
 
 - Action-forward, cinematic framing, quick cuts between moments.

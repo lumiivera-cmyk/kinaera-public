@@ -4,7 +4,7 @@
  */
 
 import { $, api, hideFormError, showFormError, state } from "./core.js";
-import { formatTime } from "./format.js";
+import { formatTime, markQuote } from "./format.js";
 import { renderMessages, withBusyChannel } from "./messages.js";
 import { refreshNotebook } from "./notebook.js";
 
@@ -22,38 +22,18 @@ export function threadsOn(messageId) {
   return state.threads.filter((t) => t.messageId === messageId);
 }
 
-/**
- * Highlight each thread's quoted text inside a rendered message. Formatting
- * like *italics* is ignored when matching, since it isn't visible.
- */
+/** Highlight each thread's quoted text inside a rendered message. */
 export function highlightThreads(content, threads) {
   for (const thread of threads) {
-    const quote = thread.quote.replace(/[*_]/g, "").trim();
-    if (!quote) continue;
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    let text = "";
-    while (walker.nextNode()) {
-      nodes.push({ node: walker.currentNode, start: text.length });
-      text += walker.currentNode.nodeValue;
-    }
-    const start = text.toLowerCase().indexOf(quote.toLowerCase());
-    if (start < 0) continue;
-    const end = start + quote.length;
-    // Wrap the part of each text node that falls inside the quote.
-    for (const { node, start: nodeStart } of nodes) {
-      const nodeEnd = nodeStart + node.nodeValue.length;
-      if (nodeEnd <= start || nodeStart >= end) continue;
-      const range = document.createRange();
-      range.setStart(node, Math.max(0, start - nodeStart));
-      range.setEnd(node, Math.min(node.nodeValue.length, end - nodeStart));
-      const mark = document.createElement("mark");
-      mark.className = "comment-mark";
-      if (thread.resolved) mark.classList.add("resolved");
-      mark.dataset.thread = thread.id;
-      mark.title = "Open the comments";
-      range.surroundContents(mark);
-    }
+    const mark = () => {
+      const element = document.createElement("mark");
+      element.className = "comment-mark";
+      if (thread.resolved) element.classList.add("resolved");
+      element.dataset.thread = thread.id;
+      element.title = "Open the comments";
+      return element;
+    };
+    markQuote(content, thread.quote, mark, { ignoreCase: true });
   }
 }
 
@@ -93,7 +73,7 @@ function renderThread() {
   quote.hidden = !thread.quote;
   quote.textContent = thread.quote;
 
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   $("thread-comments").replaceChildren(
     ...thread.comments.map((comment) => {
       const item = document.createElement("li");
@@ -142,8 +122,10 @@ export async function sendComment(event) {
   const channelId = state.channelId;
   // Your kinwriter replies when it's their message, or they're in the thread.
   const message = state.messages.find((m) => m.id === thread.messageId);
-  thread.replying = message?.author === "friend" || thread.comments.some((c) => c.author === "friend");
-  thread.comments = [...thread.comments, { author: "user", note, createdAt: new Date().toISOString() }];
+  thread.replying = message?.author === "kinwriter" || thread.comments.some((c) => c.author === "kinwriter");
+  // Shown straight away; taken back if it couldn't be sent.
+  const mine = { author: "user", note, createdAt: new Date().toISOString() };
+  thread.comments = [...thread.comments, mine];
   $("thread-note").value = "";
   renderThread();
 
@@ -159,9 +141,15 @@ export async function sendComment(event) {
         state.toolCalls.push(...data.toolCalls);
         refreshNotebook().catch(() => {});
       }
-      if (data.error) showFormError($("thread-form"), `${state.settings.friendName} couldn't reply: ${data.error}`);
+      if (data.error) showFormError($("thread-form"), `${state.settings.kinwriterName} couldn't reply: ${data.error}`);
     } catch (error) {
       thread.replying = false;
+      // Not sent: out of the list, and back in the box to try again.
+      thread.comments = thread.comments.filter((c) => c !== mine);
+      if (state.thread === thread) {
+        if (!$("thread-note").value) $("thread-note").value = note;
+        renderThread();
+      }
       showFormError($("thread-form"), error.message);
     }
   };

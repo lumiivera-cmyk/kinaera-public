@@ -1,5 +1,5 @@
 /**
- * The summarizer (stage 7): writes a channel's summaries in the background,
+ * The summarizer: writes a channel's summaries in the background,
  * with the model, whenever its messages change (see src/summaries.ts for
  * what each summary is).
  *
@@ -49,7 +49,7 @@ export class Summarizer {
   private readonly runs = new Map<string, Promise<void>>();
   private readonly running = new Set<string>();
   private readonly errors = new Map<string, string>();
-  /** Told when a scene's summary is written (stage 8: a scene ending can wake your kinwriter). */
+  /** Told when a scene's summary is written (a scene ending can wake your kinwriter, src/wakeups.ts). */
   onSceneSummarized: ((channelId: string, breakId: string) => void) | null = null;
 
   /**
@@ -154,7 +154,7 @@ export class Summarizer {
     const profile = pickProfile(store, channel, undefined, "summary");
     const write = (job: SummaryJob, notes: string, lines: string[], heading: string, extra = "") =>
       this.fold(profile, job, notes, lines, heading, extra);
-    const lines = (posts: SeqMessage[]) => transcript(posts, channel.kind, settings.friendName);
+    const lines = (posts: SeqMessage[]) => transcript(posts, channel.kind, settings.kinwriterName);
 
     // 1. Finished scenes.
     const finished = scenes.filter((s): s is Scene & { end: SeqMessage } => s.end !== null && s.posts.length > 0);

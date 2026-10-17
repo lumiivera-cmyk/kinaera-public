@@ -56,8 +56,8 @@ const systemPrompt = (channel: Channel = story, preview = false) =>
 describe("a pad", () => {
   test("keeps the version before each change, for undo", () => {
     writePad(app.store, story.id, "shared", "Kestrel is on the roof.", "user");
-    appendToPad(app.store, story.id, "shared", "The bell is cracked.", "friend");
-    expect(getPad(app.store, story.id, "shared")).toMatchObject({ text: "Kestrel is on the roof.\nThe bell is cracked.", by: "friend" });
+    appendToPad(app.store, story.id, "shared", "The bell is cracked.", "kinwriter");
+    expect(getPad(app.store, story.id, "shared")).toMatchObject({ text: "Kestrel is on the roof.\nThe bell is cracked.", by: "kinwriter" });
     undoPad(app.store, story.id, "shared", "user");
     expect(getPad(app.store, story.id, "shared").text).toBe("Kestrel is on the roof.");
     // Undo again puts it back.
@@ -67,7 +67,7 @@ describe("a pad", () => {
 
   test("refuses a write from a version that's no longer the latest", () => {
     const opened = writePad(app.store, story.id, "shared", "One.", "user");
-    appendToPad(app.store, story.id, "shared", "Two.", "friend");
+    appendToPad(app.store, story.id, "shared", "Two.", "kinwriter");
     expect(() => writePad(app.store, story.id, "shared", "Mine.", "user", opened.rev)).toThrow(PadChangedError);
     expect(() => writePad(app.store, story.id, "shared", "Mine.", "user", 0)).toThrow(PadChangedError);
     expect(getPad(app.store, story.id, "shared").text).toBe("One.\nTwo.");
@@ -78,7 +78,7 @@ describe("a pad", () => {
   });
 
   test("goes when its channel does", () => {
-    writePad(app.store, story.id, "kinwriter", "A secret.", "friend");
+    writePad(app.store, story.id, "kinwriter", "A secret.", "kinwriter");
     app.store.deleteChannel(story.id);
     expect(app.store.appState.get(`scratchpad:${story.id}:kinwriter`)).toBeNull();
   });
@@ -94,7 +94,7 @@ describe("their tools", () => {
     await run("write_scratchpad", { find: "The tide is out.", text: "" });
     expect(getPad(app.store, story.id, "shared").text).toBe("Ilse has the lamp.");
     await run("write_scratchpad", { how: "replace", text: "Tidy." });
-    expect(getPad(app.store, story.id, "shared")).toMatchObject({ text: "Tidy.", by: "friend" });
+    expect(getPad(app.store, story.id, "shared")).toMatchObject({ text: "Tidy.", by: "kinwriter" });
   });
 
   test("explain what went wrong", async () => {
@@ -129,7 +129,7 @@ describe("their tools", () => {
 describe("in their prompt", () => {
   test("the shared pad and theirs, in a story channel only", () => {
     writePad(app.store, story.id, "shared", "SHARED-NOTE", "user");
-    writePad(app.store, story.id, "kinwriter", "THEIR-NOTE", "friend");
+    writePad(app.store, story.id, "kinwriter", "THEIR-NOTE", "kinwriter");
     const prompt = systemPrompt();
     expect(prompt).toContain("## Scratchpad");
     expect(prompt).toContain("Shared with the user (last changed by the user just now):\nSHARED-NOTE");
@@ -142,7 +142,7 @@ describe("in their prompt", () => {
   });
 
   test("the preview doesn't show theirs", async () => {
-    writePad(app.store, story.id, "kinwriter", "THEIR-NOTE", "friend");
+    writePad(app.store, story.id, "kinwriter", "THEIR-NOTE", "kinwriter");
     expect(systemPrompt(story, true)).not.toContain("THEIR-NOTE");
     expect(JSON.stringify((await call("GET", `/api/channels/${story.id}/prompt`)).data)).not.toContain("THEIR-NOTE");
   });
@@ -179,7 +179,7 @@ describe("the API", () => {
     expect(getPad(app.store, story.id, "user").text).toBe("Mine.");
 
     const opened = (await call("PUT", `/api/channels/${story.id}/scratchpads/shared`, { text: "Ours.", base: 0 })).data.shared.rev;
-    appendToPad(app.store, story.id, "shared", "Theirs too.", "friend");
+    appendToPad(app.store, story.id, "shared", "Theirs too.", "kinwriter");
     const conflict = await call("PUT", `/api/channels/${story.id}/scratchpads/shared`, { text: "Overwrite", base: opened });
     expect(conflict.status).toBe(409);
     expect(getPad(app.store, story.id, "shared").text).toBe("Ours.\nTheirs too.");
@@ -210,6 +210,17 @@ describe("merging, like a shared document", () => {
     expect(mergeText(base, "", base)).toBe("");
   });
 
+  test("both changed the same lines: their blank and repeated lines are kept", () => {
+    expect(mergeText("a\nb\nc", "a\nX\nc", "a\nY\n\nY\nX\nc")).toBe("a\nX\nY\n\nY\nc");
+  });
+
+  test("very long texts fall back to keeping both, without the line-by-line comparison", () => {
+    const base = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n");
+    const merged = mergeText(base, `${base}\nMine.`, `${base}\nTheirs.`);
+    expect(merged.startsWith(`${base}\nMine.`)).toBe(true);
+    expect(merged.endsWith("Theirs.")).toBe(true);
+  });
+
   test("the API merges your save with their change since you opened it", async () => {
     const opened = (await call("PUT", `/api/channels/${story.id}/scratchpads/shared`, { text: "One.\nTwo." })).data.shared.text;
     await run("write_scratchpad", { text: "Theirs." });
@@ -238,6 +249,14 @@ describe("saving to the notebook", () => {
     expect(getPad(app.store, story.id, "user").text).toBe("Ilse hums when she lies.");
   });
 
+  test("only a suggestion: the passage stays in the pad", () => {
+    const lamp = app.store.notebook.createEntry("user", { kind: "lore", name: "The Lamp", editing: "suggest" });
+    writePad(app.store, story.id, "shared", "The lamp is brass.", "user");
+    const saved = toNotebook(app.store, story.id, "shared", "kinwriter", { passage: "The lamp is brass.", entryId: lamp.id });
+    expect(saved.suggested).toBe(true);
+    expect(getPad(app.store, story.id, "shared").text).toBe("The lamp is brass.");
+  });
+
   test("refuses a name that's taken, or text that isn't there", () => {
     writePad(app.store, story.id, "shared", "A note.", "user");
     expect(() => toNotebook(app.store, story.id, "shared", "user", { passage: "A note.", name: "ilse marrow" })).toThrow(/already an entry/);
@@ -245,11 +264,11 @@ describe("saving to the notebook", () => {
   });
 
   test("their tool: a new entry from their private pad starts hidden", async () => {
-    writePad(app.store, story.id, "kinwriter", "Ilse's brother drowned at the bell.", "friend");
+    writePad(app.store, story.id, "kinwriter", "Ilse's brother drowned at the bell.", "kinwriter");
     const outcome = await run("scratchpad_to_notebook", { pad: "private", passage: "Ilse's brother drowned at the bell.", entry: "The Drowning", kind: "lore" });
     expect(outcome).toMatchObject({ ok: true, summary: "saved a note to the notebook as The Drowning" });
     expect(app.store.notebook.listEntries("user").some((e) => e.name === "The Drowning")).toBe(false);
-    expect(app.store.notebook.listEntries("friend").find((e) => e.name === "The Drowning")).toMatchObject({ visibility: "hidden" });
+    expect(app.store.notebook.listEntries("kinwriter").find((e) => e.name === "The Drowning")).toMatchObject({ visibility: "hidden" });
     expect(getPad(app.store, story.id, "kinwriter").text).toBe("");
   });
 

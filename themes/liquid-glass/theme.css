@@ -69,9 +69,9 @@
   --update-bg: rgb(10 124 255 / 0.12);
 
   --user-color: #d9480f;
-  --friend-color: #5f3dc4;
+  --kinwriter-color: #5f3dc4;
   --avatar-user-bg: linear-gradient(135deg, #ffb35c, #ff6b8b);
-  --avatar-friend-bg: linear-gradient(135deg, #7ab8ff, #8f6bff);
+  --avatar-kinwriter-bg: linear-gradient(135deg, #7ab8ff, #8f6bff);
   --avatar-text: #ffffff;
   --avatar-saturation: 72%;
   --avatar-lightness: 58%;

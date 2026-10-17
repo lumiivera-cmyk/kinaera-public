@@ -32,10 +32,10 @@ export interface CustomEmoji {
 export const MAX_REACTIONS_EACH = 6;
 
 /** Largest custom emoji image, in bytes. */
-export const MAX_EMOJI_BYTES = 512 * 1024;
+const MAX_EMOJI_BYTES = 512 * 1024;
 
 /** Most custom emojis. */
-export const MAX_CUSTOM_EMOJIS = 300;
+const MAX_CUSTOM_EMOJIS = 300;
 
 /** A custom emoji's name: letters, digits and underscores, like Discord's. */
 const EMOJI_NAME = /^[a-z0-9_]{2,32}$/;

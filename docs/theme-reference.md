@@ -27,6 +27,8 @@ Any theme can be a channel's own theme (channel settings → Theme). Then:
 
 All are defined in the `:root` block of `public/style.css`.
 
+**Changed later:** before the second rename ([docs/orientation-1.md](orientation-1.md)), names that now say `kinwriter` said `friend`. A theme of yours that sets `--friend-color` or `--avatar-friend-bg` still works. One that styles the old classes or values (`.friend-card`, `data-author="friend"`, and so on) needs them changed to the names below.
+
 ### Type
 
 | Variable | What it sets |
@@ -48,8 +50,8 @@ All are defined in the `:root` block of `public/style.css`.
 | `--danger`, `--danger-text` | Delete buttons |
 | `--error-bg`, `--error-text` | Error banner and form errors |
 | `--update-bg` | The "Kinaera has been updated" banner |
-| `--user-color`, `--friend-color` | Author name colours |
-| `--avatar-user-bg`, `--avatar-friend-bg`, `--avatar-text` | Avatar circles |
+| `--user-color`, `--kinwriter-color` | Author name colours |
+| `--avatar-user-bg`, `--avatar-kinwriter-bg`, `--avatar-text` | Avatar circles |
 | `--avatar-saturation`, `--avatar-lightness` | Character avatars. Each character's hue comes from their name (`--avatar-hue`, set by the app); these set the rest of the colour. |
 | `--name-saturation`, `--name-lightness` | Character names, in the same hue as their avatar |
 | `--scene-break-line`, `--scene-break-text`, `--scene-break-font` | Scene break dividers |
@@ -99,11 +101,11 @@ Every `*-bg` can be a colour, gradient or image. Every `*-backdrop` is a [`backd
 | `.sidebar`, `.sidebar-header`, `.sidebar-footer`, `.sidebar-scrim` | The sidebar and its parts |
 | `.server-name` | "Kinaera" at the top of the sidebar |
 | `.channel-list`, `.channel-link`, `.channel-link-name`, `.channel-icon`, `.channel-busy` | The channel list. The open channel's link has `aria-current="page"`; each link has `data-kind="rp"` or `"ooc"`. |
-| `.friend-card`, `.friend-card-name`, `.friend-card-role` | Your kinwriter at the bottom of the sidebar |
+| `.kinwriter-card`, `.kinwriter-card-name`, `.kinwriter-card-role` | Your kinwriter at the bottom of the sidebar |
 | `.channel-view` | The open channel. Has `data-channel-id` and `data-channel-kind`. |
 | `.channel-header`, `.channel-title`, `.channel-topic` | The bar at the top of the channel |
 | `.messages` | The scrolling message list |
-| `.message` | One message. Has `data-author="user"` or `"friend"`, and `data-mode="literary"`, `"casual"` or `"ooc"`. Also `.pending` while being sent, `.continued` when grouped under the message before it, `.has-character` when it voices a character (with `--avatar-hue` set on it), and `.selected` when a casual bubble is tapped. |
+| `.message` | One message. Has `data-author="user"` or `"kinwriter"`, and `data-mode="literary"`, `"casual"` or `"ooc"`. Also `.pending` while being sent, `.continued` when grouped under the message before it, `.has-character` when it voices a character (with `--avatar-hue` set on it), and `.selected` when a casual bubble is tapped. |
 | `.scene-break`, `.scene-break-title`, `.scene-break-actions` | Scene break dividers. The lines either side are `.scene-break::before` and `::after`. |
 | `.avatar`, `.message-meta`, `.message-author`, `.message-badge`, `.message-time`, `.message-model`, `.message-content`, `.message-actions` | Parts of a message |
 | `.composer`, `.composer-input`, `.composer-buttons`, `.status`, `.typing-dots`, `.stop-button`, `.error-banner` | The composer area |
@@ -114,13 +116,13 @@ Every `*-bg` can be a colour, gradient or image. Every `*-backdrop` is a [`backd
 | `.theme-list`, `.theme-card`, `.theme-swatch`, `.theme-name`, `.theme-badge`, `.theme-description` | The theme picker in Appearance. The chosen card has `aria-checked="true"`. |
 | `.theme-editor`, `.code-input`, `.theme-files` | The theme editor |
 | `.notebook`, `.notebook-actions`, `.notebook-list`, `.notebook-folder`, `.notebook-folder-header`, `.notebook-folder-name` | The notebook dialog and its folders |
-| `.notebook-entries`, `.notebook-entry`, `.notebook-entry-name`, `.notebook-entry-badges`, `.entry-badge` | Entries in the notebook. Each `.notebook-entry` has `data-kind` (`character` or `lore`) and `data-owner` (`user`, `friend` or `joint`). |
+| `.notebook-entries`, `.notebook-entry`, `.notebook-entry-name`, `.notebook-entry-badges`, `.entry-badge` | Entries in the notebook. Each `.notebook-entry` has `data-kind` (`character` or `lore`) and `data-owner` (`user`, `kinwriter` or `joint`). |
 | `.entry-avatar` | A character's or lore's round badge, in its own colour (`--avatar-hue`). Has `data-kind`. |
 | `.suggestion-list`, `.suggestion-title`, `.suggestion`, `.suggestion-text` | Suggested changes waiting for review. Each `.suggestion` has `data-author`. |
 | `.entry-editor`, `.entry-access`, `.entry-fields`, `.entry-field`, `.entry-field-label`, `.entry-field-value`, `.entry-field-remove`, `.add-field` | The entry editor and its fields |
 | `.entry-links`, `.entry-links-label`, `.entry-link` | The entry's `[[links]]`. A link to a name that isn't in the notebook also has `.missing`. |
 | `.entry-settings` | The entry's settings (owner, visibility, editing, folder) |
-| `.cast-list`, `.cast-member`, `.cast-member-name`, `.cast-unpin`, `.cast-add` | The cast in channel settings. Each `.cast-member` has `data-played-by` (`user`, `friend` or `both`) and `data-kind`, and `.hidden-entry` for "??? (hidden)". |
+| `.cast-list`, `.cast-member`, `.cast-member-name`, `.cast-unpin`, `.cast-add` | The cast in channel settings. Each `.cast-member` has `data-played-by` (`user`, `kinwriter` or `both`) and `data-kind`, and `.hidden-entry` for "??? (hidden)". |
 | `.inbox-button`, `.inbox-count` | The inbox button at the top of the channel list, and its count |
 | `.activity`, `.activity-summary`, `.activity-details` | A turn's actions under its messages. `.activity` gets `.has-errors` if a call failed. |
 | `.tool-call`, `.tool-call-head`, `.tool-call-name`, `.tool-call-summary`, `.tool-call-raw` | One tool call, in the activity details and the tool log. Has `data-status` (`ok` or `error`) and `data-source` (`native` or `text`). |
@@ -182,6 +184,8 @@ body { position: relative; isolation: isolate; overflow: hidden; }
 ```
 
 `isolation` keeps the layers behind the app's content but in front of the page's background. As a channel theme, `body` becomes the channel view, so the same CSS works there. Rainy Window uses all four: the city, rain falling outside, drops on the glass (each showing the city upside down, cut out with a `mask`), and drops sliding down (an animated SVG).
+
+**Your own background picture.** When you choose a picture in Appearance (src/backgrounds.ts), the page gets the class `has-user-background` on `<html>`, the app-level `.theme-layers` are hidden, and `#user-background` (a fixed element after them) shows the picture instead, faded by the "Fade the picture" slider toward white in light themes and black in dark ones (from the theme's `color-scheme`). The theme's glass and colours stay.
 
 ## Free layers for glass effects
 

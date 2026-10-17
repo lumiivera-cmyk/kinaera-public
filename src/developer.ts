@@ -29,7 +29,6 @@ export interface DeveloperView {
   profileNotes: { profile: string; note: string; updatedAt: string }[];
   hiddenEntries: { name: string; kind: string; fields: { label: string; value: string }[]; notes: string }[];
   hiddenDms: { channel: string; messages: { from: string; content: string; createdAt: string }[] }[];
-  invitationNote: string | null;
   /** Their private scratchpads, one per story channel that has one (src/scratchpads.ts). */
   privateScratchpads: { channel: string; updatedAt: string | null; text: string }[];
   /** Their self-notes (self.md), shared or not, and the seed they began as: side by side (Seed vs. self). */
@@ -50,7 +49,7 @@ export function developerView(store: Store, groups?: GroupDirectory | null, kinw
     .map((c) => ({
       channel: c.name,
       messages: store.getMessages(c.id).filter((m) => m.kind === "post").map((m) => ({
-        from: m.author === "friend" ? "them" : (m.speaker?.name ?? m.author),
+        from: m.author === "kinwriter" ? "them" : (m.speaker?.name ?? m.author),
         content: m.content,
         createdAt: m.createdAt,
       })),
@@ -65,7 +64,6 @@ export function developerView(store: Store, groups?: GroupDirectory | null, kinw
       .filter((p) => p.hiddenFromUser)
       .map(({ entry }) => ({ name: entry.name, kind: entry.kind, fields: entry.fields, notes: entry.systemPrompt })),
     hiddenDms,
-    invitationNote: store.appState.get("orientation.invite-note"),
     privateScratchpads: store
       .listChannels()
       .filter(hasScratchpads)

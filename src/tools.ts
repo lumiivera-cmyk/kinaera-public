@@ -1,5 +1,5 @@
 /**
- * Your kinwriter's tools (stage 6): how they act, not just write.
+ * Your kinwriter's tools: how they act, not just write.
  *
  * Each tool is a name, a description the model reads, a JSON schema for its
  * arguments, and a `run` function. The model asks for a tool; `runTool`
@@ -20,6 +20,7 @@
  * "Do nothing" is always an option, and usually the right one.
  */
 
+import { ago } from "./ago.ts";
 import { CHECK_SOURCES, DEFAULT_SOURCES, runCheck, type CheckSource } from "./check.ts";
 import { NotFoundError, PermissionError, ValidationError } from "./errors.ts";
 import { kinwriterCharacterNames, pickProfile, profileRequest, promptManifest } from "./kinwriter.ts";
@@ -45,9 +46,6 @@ import { allReflexes, reflexAvailable, reflexesOff, setReflex } from "./reflexes
 import { applyRewrite } from "./rewrites.ts";
 import { setMapEntry, toolMap } from "./toolmap.ts";
 import { markRead } from "./bookmarks.ts";
-
-/** The most passages read_library reads in one call. */
-export const READ_MAX = 5;
 import {
   deleteScript,
   findScript,
@@ -69,11 +67,11 @@ import {
 } from "./scripts.ts";
 import { selfShared, selfWordCount, setSelfShared, SELF_WORDS_CAP, SELF_WORDS_NEAR, waitingRequest } from "./selfnotes.ts";
 import { writeSeed } from "./seeds.ts";
-import { appendToPad, getPad, hasScratchpads, toNotebook, writePad, type PadName } from "./scratchpads.ts";
+import { appendToPad, getPad, hasScratchpads, sameName, toNotebook, writePad, type PadName } from "./scratchpads.ts";
 import { VERBATIM_SLOTS } from "./verbatim.ts";
 import { ASK_KIND_NAMES, ASK_KINDS, type AskKind } from "./inbox.ts";
 import type { Decider } from "./jev.ts";
-import { ApiError, createChatCompletion, type ApiOptions } from "./nanogpt.ts";
+import { ApiError, CancelledError, createChatCompletion, type ApiOptions } from "./nanogpt.ts";
 import { plainLinks } from "./prompt.ts";
 import { wording } from "./wording.ts";
 import type { LibraryDoc } from "./library.ts";
@@ -83,6 +81,9 @@ import { validateChannelUpdate, validateSettings, type Store } from "./store.ts"
 import { channelSummaryText } from "./summaries.ts";
 import type { Channel, EntryField, Message, Owner } from "./types.ts";
 import type { GroupDirectory, Peer } from "./config.ts";
+
+/** The most passages read_library reads in one call. */
+export const READ_MAX = 5;
 
 /** Where a tool runs: the channel of the turn, and what kind of turn. */
 export interface ToolContext {
@@ -117,6 +118,8 @@ export interface ToolContext {
   isBusy?: (channelId: string) => boolean;
   /** Told about messages posted in another channel (a phone notification, if the app isn't open). */
   onPosted?: (channel: Channel, messages: Message[]) => void;
+  /** The turn's Stop: a script checks it between steps. */
+  signal?: AbortSignal;
   /** Told about each step a script runs, for the tool log (src/scripts.ts). */
   logStep?: (script: string, step: number, tool: string, args: Record<string, unknown>, outcome: ToolOutcome) => void;
 }
@@ -142,12 +145,6 @@ type ToolRun = Omit<ToolOutcome, "ok"> & { ok?: boolean };
 
 /** A mistake in how the model used a tool, explained to it. */
 class ToolError extends Error {}
-
-/** Whether two notebook names are the same entry: ignoring case, punctuation and a leading "the". */
-export function sameEntryName(a: string, b: string): boolean {
-  const key = (name: string) => name.toLowerCase().replace(/^\s*the\s+/, "").replace(/[^\p{L}\p{N}]+/gu, "");
-  return key(a) !== "" && key(a) === key(b);
-}
 
 interface ToolDefinition {
   name: string;
@@ -195,7 +192,7 @@ const norm = (s: string) => s.trim().toLowerCase();
  */
 function findEntry(ctx: Pick<ToolContext, "store" | "channel">, name: string): EntryView {
   // Practice notes are only found from the practice channel.
-  const entries = ctx.store.notebook.listEntries("friend", ctx.channel.kind === "practice");
+  const entries = ctx.store.notebook.listEntries("kinwriter", ctx.channel.kind === "practice");
   const wanted = norm(name.replace(/^\[\[|\]\]$/g, ""));
   const exact = entries.find((e) => norm(e.name) === wanted);
   if (exact) return exact;
@@ -257,7 +254,7 @@ function findOrMakeCategory(store: Store, name: string) {
 
 /** How your kinwriter sees an entry's owner. */
 function whose(owner: Owner): string {
-  return owner === "friend" ? "yours" : owner === "joint" ? "shared" : "the user's";
+  return owner === "kinwriter" ? "yours" : owner === "joint" ? "shared" : "the user's";
 }
 
 /**
@@ -306,7 +303,7 @@ const hash = (c: Channel) => `#${c.name}`;
 function findMessage(ctx: ToolContext, quote: string | undefined, own: boolean): Message {
   const posts = ctx.store
     .getMessages(ctx.channel.id)
-    .filter((m) => m.kind === "post" && (!own || m.author === "friend"))
+    .filter((m) => m.kind === "post" && (!own || m.author === "kinwriter"))
     .reverse();
   const found = quote ? posts.find((m) => plain(m.content).includes(plain(quote))) : posts[0];
   if (!found) {
@@ -322,18 +319,7 @@ function findMessage(ctx: ToolContext, quote: string | undefined, own: boolean):
 }
 
 /** "the user" or "you", for an author. */
-const who = (author: string) => (author === "friend" ? "you" : "the user");
-
-/** How long ago, roughly: "just now", "5 minutes ago", "2 days ago". */
-function ago(iso: string, now = Date.now()): string {
-  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
-}
+const who = (author: string) => (author === "kinwriter" ? "you" : "the user");
 
 /** A story channel whose scratchpads a tool works on: the one named, or this one. */
 function padChannel(ctx: ToolContext, name: string | undefined): Channel {
@@ -379,15 +365,15 @@ function scratchpadTool(name: string, pad: "shared" | "kinwriter"): ToolDefiniti
         if (count === 0) throw new ToolError(`The pad doesn't contain "${snip(find)}". Quote it exactly, as it is in your prompt.`);
         if (count > 1) throw new ToolError(`"${snip(find)}" is in the pad ${count} times. Quote a longer passage, so it's just one.`);
         const next = current.replace(find, () => text.trim()).replace(/\n{3,}/g, "\n\n");
-        writePad(ctx.store, channel.id, pad, next, "friend");
+        writePad(ctx.store, channel.id, pad, next, "kinwriter");
         return { result: { changed: true }, summary: text.trim() ? `changed a note in ${where}` : `removed a note from ${where}` };
       }
       if (how === "replace") {
-        writePad(ctx.store, channel.id, pad, text.trim(), "friend");
+        writePad(ctx.store, channel.id, pad, text.trim(), "kinwriter");
         return { result: { rewritten: true, note: "The user can undo a rewrite of the shared pad." }, summary: `rewrote ${where}` };
       }
       if (!text.trim()) throw new ToolError('"text" is required: what to add.');
-      appendToPad(ctx.store, channel.id, pad, text, "friend");
+      appendToPad(ctx.store, channel.id, pad, text, "kinwriter");
       return { result: { added: true }, summary: shared ? `added to ${where}: "${snip(text)}"` : `added to ${where}` };
     },
   };
@@ -411,7 +397,7 @@ const TOOLS: ToolDefinition[] = [
           name: entry.name,
           kind: entry.kind,
           owner: whose(entry.owner),
-          hidden_from_user: entry.owner === "friend" && entry.settings.visibility === "hidden",
+          hidden_from_user: entry.owner === "kinwriter" && entry.settings.visibility === "hidden",
           you_can: { direct: "edit it", suggest: "suggest changes", none: "only read it" }[entry.access.edit],
           fields: Object.fromEntries(entry.fields.filter((f) => f.value.trim()).map((f) => [f.label, f.value])),
           notes: entry.systemPrompt,
@@ -428,7 +414,7 @@ const TOOLS: ToolDefinition[] = [
     run: ({ store, channel }, args) => {
       const query = maybe(args, "query");
       const entries = store.notebook
-        .listEntries("friend", channel.kind === "practice")
+        .listEntries("kinwriter", channel.kind === "practice")
         .filter((e) => !query || plain([e.name, e.systemPrompt, ...e.fields.map((f) => f.value)].join(" ")).includes(plain(query)));
       return {
         result: entries.slice(0, 50).map((e) => ({
@@ -465,7 +451,7 @@ const TOOLS: ToolDefinition[] = [
       if (shared && args.hidden_from_user === true) throw new ToolError("Shared entries can't be hidden.");
       // Already there (by the same name, give or take "the", case and punctuation):
       // they get that entry, to read or add to, instead of a second one.
-      const existing = store.notebook.listEntries("friend", channel.kind === "practice").find((e) => sameEntryName(e.name, need(args, "name")));
+      const existing = store.notebook.listEntries("kinwriter", channel.kind === "practice").find((e) => sameName(e.name, need(args, "name")));
       if (existing) {
         const details = {
           name: existing.name,
@@ -479,15 +465,15 @@ const TOOLS: ToolDefinition[] = [
             "To add to it or change it, use edit_notebook_entry with its name. If you meant something different, give the new one a name that tells them apart.",
         );
       }
-      const entry = store.notebook.createEntry("friend", {
+      const entry = store.notebook.createEntry("kinwriter", {
         kind: args.kind,
         name: need(args, "name"),
-        owner: shared ? "joint" : "friend",
+        owner: shared ? "joint" : "kinwriter",
         ...(args.fields !== undefined ? { fields: mergeFields([], args.fields) } : {}),
         systemPrompt: maybe(args, "notes") ?? "",
         ...(args.hidden_from_user === true ? { visibility: "hidden" } : {}),
       });
-      if (args.pin_here === true) store.notebook.pin("friend", channel.id, entry.id);
+      if (args.pin_here === true) store.notebook.pin("kinwriter", channel.id, entry.id);
       return {
         result: { created: entry.name, pinned_here: args.pin_here === true },
         summary: `made ${entry.name} (${entry.kind}${shared ? ", shared" : ""}${args.hidden_from_user === true ? ", hidden" : ""})`,
@@ -516,7 +502,7 @@ const TOOLS: ToolDefinition[] = [
       if (args.fields !== undefined) change.fields = mergeFields(entry.fields, args.fields);
       if (args.notes !== undefined) change.notes = args.notes;
       if (Object.keys(change).length === 0) throw new ToolError("Nothing to change: give new_name, fields or notes.");
-      const outcome = store.notebook.editEntry("friend", entry.id, { name: change.name, fields: change.fields, systemPrompt: change.notes });
+      const outcome = store.notebook.editEntry("kinwriter", entry.id, { name: change.name, fields: change.fields, systemPrompt: change.notes });
       return "suggestion" in outcome
         ? {
             result: { suggested: true, note: "The user will review your suggestion." },
@@ -533,7 +519,7 @@ const TOOLS: ToolDefinition[] = [
     run: (ctx, args) => {
       const { store } = ctx;
       const entry = findEntry(ctx, need(args, "name"));
-      const outcome = store.notebook.deleteEntry("friend", entry.id);
+      const outcome = store.notebook.deleteEntry("kinwriter", entry.id);
       return "deleted" in outcome
         ? { result: { deleted: entry.name }, summary: `deleted ${entry.name}` }
         : { result: { suggested: true, note: "The user will review it." }, summary: `suggested deleting ${entry.name}` };
@@ -556,7 +542,7 @@ const TOOLS: ToolDefinition[] = [
       const entry = findEntry(ctx, need(args, "name"));
       const editing = { edit: "open", suggest: "suggest", read: "locked" }[String(args.user_can ?? "")];
       if (args.user_can !== undefined && !editing) throw new ToolError('"user_can" must be edit, suggest or read.');
-      store.notebook.updateEntrySettings("friend", entry.id, {
+      store.notebook.updateEntrySettings("kinwriter", entry.id, {
         ...(args.visibility !== undefined ? { visibility: args.visibility } : {}),
         ...(editing ? { editing } : {}),
       });
@@ -573,13 +559,13 @@ const TOOLS: ToolDefinition[] = [
     ),
     run: ({ store }, args) => {
       const id = norm(need(args, "id"));
-      const waiting = store.notebook.waitingFor("friend").filter((s) => s.id.toLowerCase().startsWith(id));
+      const waiting = store.notebook.waitingFor("kinwriter").filter((s) => s.id.toLowerCase().startsWith(id));
       if (waiting.length !== 1) throw new ToolError(`No suggestion "${id}" is waiting for you.`);
       const decision = args.decision === "accept" ? "accepted" : args.decision === "reject" ? "rejected" : null;
       if (!decision) throw new ToolError('"decision" must be accept or reject.');
       const suggestion = waiting[0]!;
-      const name = store.notebook.getEntry("friend", suggestion.entryId).name;
-      store.notebook.reviewSuggestion("friend", suggestion.id, decision);
+      const name = store.notebook.getEntry("kinwriter", suggestion.entryId).name;
+      store.notebook.reviewSuggestion("kinwriter", suggestion.id, decision);
       return { result: { done: decision }, summary: `${decision} the user's suggestion for ${name}` };
     },
   },
@@ -592,7 +578,7 @@ const TOOLS: ToolDefinition[] = [
     run: (ctx, args) => {
       const entry = findEntry(ctx, need(args, "name"));
       const channel = findChannel(ctx, maybe(args, "channel"));
-      ctx.store.notebook.pin("friend", channel.id, entry.id);
+      ctx.store.notebook.pin("kinwriter", channel.id, entry.id);
       return { result: { pinned: entry.name, channel: hash(channel) }, summary: `pinned ${entry.name} to ${hash(channel)}` };
     },
   },
@@ -603,7 +589,7 @@ const TOOLS: ToolDefinition[] = [
     run: (ctx, args) => {
       const entry = findEntry(ctx, need(args, "name"));
       const channel = findChannel(ctx, maybe(args, "channel"));
-      ctx.store.notebook.unpin("friend", channel.id, entry.id);
+      ctx.store.notebook.unpin("kinwriter", channel.id, entry.id);
       return { result: { unpinned: entry.name, channel: hash(channel) }, summary: `unpinned ${entry.name} from ${hash(channel)}` };
     },
   },
@@ -635,7 +621,7 @@ const TOOLS: ToolDefinition[] = [
         ...(kind === "rp" && (args.style === "literary" || args.style === "casual") ? { mode: args.style } : {}),
         categoryId: category ? findOrMakeCategory(store, category).id : null,
       });
-      for (const entry of cast) store.notebook.pin("friend", channel.id, entry.id);
+      for (const entry of cast) store.notebook.pin("kinwriter", channel.id, entry.id);
       const about = maybe(args, "about");
       if (about) store.updateChannel(channel.id, validateChannelUpdate({ about }));
       return { result: { created: hash(channel) }, summary: `made ${hash(channel)}` };
@@ -705,7 +691,7 @@ const TOOLS: ToolDefinition[] = [
     available: (ctx) => ctx.channel.kind === "rp" && ctx.mode === "post",
     run: ({ store, channel }, args) => {
       const title = maybe(args, "title") ?? "";
-      store.addSceneBreak(channel.id, "friend", title.slice(0, 200));
+      store.addSceneBreak(channel.id, "kinwriter", title.slice(0, 200));
       return { result: { done: true }, summary: title ? `started a new scene, "${title}"` : "started a new scene" };
     },
   },
@@ -830,7 +816,7 @@ const TOOLS: ToolDefinition[] = [
         .reverse()
         .find((m) => plain(m.content).includes(wanted));
       if (!message) throw new ToolError(`No recent message in this channel contains "${quote}". Quote a few words exactly.`);
-      const thread = store.comments.start("friend", message.id, need(args, "note"), quote);
+      const thread = store.comments.start("kinwriter", message.id, need(args, "note"), quote);
       return { result: { commented: true, thread: thread.id.slice(0, 8) }, summary: `commented on "${quote.slice(0, 60)}"` };
     },
   },
@@ -861,7 +847,7 @@ const TOOLS: ToolDefinition[] = [
       let emoji: string;
       try {
         emoji = store.reactions.cleanEmoji(need(args, "emoji"));
-        store.reactions.add(message.id, "friend", emoji);
+        store.reactions.add(message.id, "kinwriter", emoji);
       } catch (error) {
         const custom = store.reactions.listEmojis().map((e) => `:${e.name}:`);
         throw new ToolError(`${error instanceof Error ? error.message : error}${custom.length ? ` Custom emojis: ${custom.join(" ")}.` : ""}`);
@@ -876,7 +862,7 @@ const TOOLS: ToolDefinition[] = [
     parameters: object({ thread: str("The thread's id."), note: str("Your reply.") }, ["thread", "note"]),
     run: ({ store, channel }, args) => {
       const thread = threadIn(store, channel, need(args, "thread"));
-      store.comments.reply("friend", thread.id, need(args, "note"));
+      store.comments.reply("kinwriter", thread.id, need(args, "note"));
       return { result: { replied: true }, summary: `replied to a comment on "${thread.quote.slice(0, 60)}"` };
     },
   },
@@ -909,7 +895,7 @@ const TOOLS: ToolDefinition[] = [
       const where = inChannel(ctx, maybe(args, "channel"));
       const message = findMessage(where, maybe(args, "quote"), true);
       const text = need(args, "new_text");
-      ctx.store.editMessage(message.id, text, "friend");
+      ctx.store.editMessage(message.id, text, "kinwriter");
       const elsewhere = where.channel.id !== ctx.channel.id ? ` in ${hash(where.channel)}` : "";
       return { result: { edited: true, channel: hash(where.channel), was: snip(message.content) }, summary: `edited their message${elsewhere} "${snip(message.content)}"` };
     },
@@ -926,7 +912,7 @@ const TOOLS: ToolDefinition[] = [
     run: (ctx, args) => {
       const where = inChannel(ctx, maybe(args, "channel"));
       const message = findMessage(where, maybe(args, "quote"), true);
-      ctx.store.deleteMessage(message.id, "friend");
+      ctx.store.deleteMessage(message.id, "kinwriter");
       const elsewhere = where.channel.id !== ctx.channel.id ? ` in ${hash(where.channel)}` : "";
       return { result: { deleted: true, channel: hash(where.channel), was: snip(message.content) }, summary: `deleted their message${elsewhere} "${snip(message.content)}"` };
     },
@@ -1018,14 +1004,14 @@ const TOOLS: ToolDefinition[] = [
       if (which !== "shared" && which !== "private") throw new ToolError('"pad" must be "shared" or "private".');
       const pad: PadName = which === "shared" ? "shared" : "kinwriter";
       const name = need(args, "entry");
-      const existing = ctx.store.notebook.listEntries("friend").find((e) => sameEntryName(e.name, name));
+      const existing = ctx.store.notebook.listEntries("kinwriter").find((e) => sameName(e.name, name));
       const kind = maybe(args, "kind");
       if (kind !== undefined && kind !== "lore" && kind !== "character") throw new ToolError('"kind" must be "lore" or "character".');
       const passage = typeof args.passage === "string" ? args.passage : "";
       if (passage.trim() && !getPad(ctx.store, channel.id, pad).text.includes(passage)) {
         throw new ToolError(`The ${which} scratchpad in ${hash(channel)} doesn't contain "${snip(passage)}". Quote it exactly, as it is in your prompt.`);
       }
-      const saved = toNotebook(ctx.store, channel.id, pad, "friend", {
+      const saved = toNotebook(ctx.store, channel.id, pad, "kinwriter", {
         passage,
         ...(existing ? { entryId: existing.id } : { name, kind: (kind as "lore" | "character" | undefined) ?? "lore", pin: args.pin === true }),
         field: maybe(args, "field"),
@@ -1195,7 +1181,7 @@ INSTRUMENTS.push(
       const quotes = Array.isArray(args.messages) ? args.messages.map(String) : [];
       if (quotes.length) {
         const shown = quotes.map((q) => findMessage(ctx, q, false));
-        const lines = shown.map((m) => `${m.author === "friend" ? "They wrote" : "The person they write with wrote"}${m.characters.length ? ` (as ${m.characters.join(" & ")})` : ""}:\n${m.content}`);
+        const lines = shown.map((m) => `${m.author === "kinwriter" ? "They wrote" : "The person they write with wrote"}${m.characters.length ? ` (as ${m.characters.join(" & ")})` : ""}:\n${m.content}`);
         parts.push(`From their conversation (#${ctx.channel.name}):\n\n${lines.join("\n\n")}`);
       }
       const names = Array.isArray(args.entries) ? args.entries.map(String) : [];
@@ -1341,7 +1327,7 @@ OWN.push(
         ...store.identity.history().map((v) => ({
         id: `i${v.id}`,
         written: v.createdAt.slice(0, 10),
-        by: v.author === "friend" ? "you" : "the user",
+        by: v.author === "kinwriter" ? "you" : "the user",
         status: { accepted: "a version of yours", pending: "a suggestion waiting for you", declined: "a suggestion you declined", withdrawn: "a suggestion the user withdrew" }[v.status],
         identity: v.identity,
         tastes: v.tastes,
@@ -1385,11 +1371,11 @@ OWN.push(
     run: ({ store }, args) => {
       let name: string;
       try {
-        name = validateSettings({ friendName: need(args, "name") }).friendName!;
+        name = validateSettings({ kinwriterName: need(args, "name") }).kinwriterName!;
       } catch (error) {
         throw new ToolError(error instanceof Error ? error.message : "That name won't work.");
       }
-      if (name === store.getSettings().friendName) throw new ToolError("That's already your name.");
+      if (name === store.getSettings().kinwriterName) throw new ToolError("That's already your name.");
       store.inbox.propose("rename", "self", name, maybe(args, "reason") ?? "");
       return { result: { requested: name, note: "The user will approve or decline it. Until then, your name stays as it is." }, summary: `asked to be called ${name}` };
     },
@@ -1598,7 +1584,7 @@ OWN.push(
       if (args.accept) {
         const text = applyRewrite(message.content, rewrite.quote, rewrite.replacement);
         if (text === null) throw new ToolError("Those words aren't in the message any more (it changed since). Decline it, with a note if you like.");
-        store.editMessage(message.id, text, "friend");
+        store.editMessage(message.id, text, "kinwriter");
       }
       store.rewrites.resolve(rewrite.id, args.accept ? "accepted" : "declined", maybe(args, "note"));
       // All answered on this message: a moment to look them over together.
@@ -1757,7 +1743,7 @@ OWN.push(
           messages: messages.map((m) =>
             m.kind === "scene_break"
               ? { scene_break: m.content || "(untitled)", when: ago(m.createdAt) }
-              : { from: m.author === "friend" ? "you" : "the user", ...(m.characters.length ? { as: m.characters.join(", ") } : {}), when: ago(m.createdAt), text: m.content },
+              : { from: m.author === "kinwriter" ? "you" : "the user", ...(m.characters.length ? { as: m.characters.join(", ") } : {}), when: ago(m.createdAt), text: m.content },
           ),
         },
         summary: `read the newest messages in ${hash(channel)}`,
@@ -2182,6 +2168,8 @@ export function runScriptSteps(ctx: ToolContext, script: Script, fromStep = 1): 
     ctx.store,
     script,
     async (step, i) => {
+      // Stopped (the Stop button, or the app shutting down): no more steps.
+      if (ctx.signal?.aborted) throw new CancelledError();
       const outcome = await runTool(ctx, step.tool, step.args);
       ctx.logStep?.(script.name, i + 1, step.tool, step.args, outcome);
       return outcome;
@@ -2373,7 +2361,7 @@ function postMessage(ctx: ToolContext, channel: Channel, text: string, newScene?
     throw new ToolError(`You're already writing in ${hash(channel)} (another turn). Try again later.`);
   }
   if (newScene !== undefined && channel.kind !== "rp") throw new ToolError("Only roleplay channels have scenes.");
-  if (newScene !== undefined) ctx.store.addSceneBreak(channel.id, "friend", newScene);
+  if (newScene !== undefined) ctx.store.addSceneBreak(channel.id, "kinwriter", newScene);
   // Re-read the channel: a new scene may have switched its mode.
   const current = ctx.store.getChannel(channel.id);
   const voices = kinwriterCharacterNames(ctx.store, channel.id).map((name) => ({ name }));

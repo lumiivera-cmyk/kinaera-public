@@ -13,7 +13,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { NotFoundError, ValidationError } from "./errors.ts";
+import { cleanShortId, NotFoundError, ValidationError } from "./errors.ts";
 
 export type RewriteStatus = "pending" | "accepted" | "declined" | "withdrawn";
 
@@ -55,7 +55,8 @@ export class Rewrites {
 
   /** You suggest new words for part of a message. */
   suggest(messageId: string, quote: string, replacement: string): Rewrite {
-    if (!quote.trim()) throw new ValidationError("Highlight the words you'd change.");
+    // Only formatting marks (* or _) would match nowhere, once they're skipped (see `applyRewrite`).
+    if (!quote.replace(/[*_]/g, "").trim()) throw new ValidationError("Highlight the words you'd change.");
     if (quote.length > 2000 || replacement.length > 4000) throw new ValidationError("That's too long for one rewrite.");
     const id = crypto.randomUUID();
     this.db
@@ -72,7 +73,11 @@ export class Rewrites {
 
   /** By the short id your kinwriter uses (the first 8 characters). */
   find(short: string): Rewrite {
-    const rows = this.db.query("SELECT * FROM message_rewrites WHERE id LIKE $prefix").all({ prefix: `${short.trim()}%` }) as Row[];
+    // Compared as text, not with LIKE: a % or _ in what they wrote is just a character.
+    const wanted = cleanShortId(short, "rewrite");
+    const rows = this.db
+      .query("SELECT * FROM message_rewrites WHERE lower(substr(id, 1, $length)) = $wanted")
+      .all({ length: wanted.length, wanted }) as Row[];
     if (rows.length !== 1) throw new NotFoundError("rewrite");
     return toRewrite(rows[0]!);
   }

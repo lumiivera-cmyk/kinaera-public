@@ -2,52 +2,46 @@
  * Prompt assembly: turning a channel into what the model actually reads.
  *
  * A model has no memory between requests. Every time your kinwriter takes a
- * turn, we rebuild the whole context from scratch and send it along. The
- * design doc calls this the *prompt stack*, and it always has the same five
- * layers in the same order:
+ * turn, we rebuild the whole context from scratch and send it along: one
+ * `system` message, then the recent conversation as alternating
+ * `user`/`assistant` messages.
  *
- *   1. Kinwriter identity and writing style   (who is writing)
- *   2. How to write in this channel         (literary, casual or OOC)
- *   3. The cast and pinned notebook entries (who's in the story)
- *   4. Connection profile's model-quirk     (taming this particular model)
- *   5. Scene summaries and recent messages  (what has happened)
+ * The system message is a list of titled sections (`## Who you are`, ...),
+ * always in the same order; a section with nothing to say is left out.
+ * Roughly, in order (`buildPromptStack` has the full list):
  *
- * Layers 1–4 are instructions, so they are joined into one `system` message.
- * Layer 5 is the conversation itself, sent as alternating `user`/`assistant`
- * messages after it.
+ *   1. Who is writing: their framing and self-notes, your hard limits, and
+ *      (with tools) what they keep: self-page, journal, time, drafts. Also
+ *      their voice, their notes on you and other kinwriters, and on the
+ *      profile writing.
+ *   2. This channel and how to write in it: what it's for, then the scene
+ *      mode's instructions (RP) and your kinwriter prompt for this kind of
+ *      channel. Only the one that applies is sent, so they can't be mixed up.
+ *   3. What's in it: in RP, the cast, lore, linked notes, the rest of the
+ *      notebook by name, the scratchpads and who plays whom; elsewhere, the
+ *      channels on the server (with who they play and each one's digest),
+ *      channels that came up, and the notebook.
+ *   4. What's around the conversation: attached notes, comment threads,
+ *      reactions, reviews waiting, recent actions, the inbox, notices.
+ *   5. How things work: tool guidance, standing notes, permissions, the
+ *      library; then an orientation or a wake-up's "Why you're up".
+ *   6. The connection profile's model notes: taming this particular model,
+ *      never who your kinwriter is.
+ *   7. What has happened (see src/summaries.ts): the story so far, recent
+ *      scenes' summaries, what came earlier in this scene, and moments kept
+ *      in full. What's summarized isn't sent again, and what isn't
+ *      summarized yet is always sent, so nothing falls in between.
+ *   8. One line on what's in front of them (read_prompt_manifest has more).
  *
- * The stack depends on the kind of channel:
- *
- *   - **RP channels**: layer 1 frames the kinwriter as the author of a story.
- *     Layer 3 is the channel's cast and lore (the notebook entries pinned to
- *     it), any entries those link to with `[[Name]]`, and who plays whom.
- *     Entries hidden from you are included with a note to keep the secret;
- *     entries you hide from your kinwriter never appear.
- *   - **OOC channels**: layer 1 frames the kinwriter as themselves, talking to
- *     you as a kinwriter, and layer 3 lists the channels on the server (with
- *     who they play in each, and each one's digest: a line or two on where
- *     it stands) and the notebook's entries, so they know what storylines
- *     exist. A channel that comes up in the conversation gets its fuller
- *     summary too.
- *
- * Layer 2 holds the fixed instructions for the current scene's mode
- * (literary or casual; none in OOC), then your kinwriter prompt for this kind
- * of channel: one each for literary scenes, casual scenes and OOC. Only the
- * one that applies is sent, so your kinwriter can't mix them up. In RP
- * channels, layer 5 shows scene breaks where they fall.
- *
- * Layer 4 is the connection profile's "model notes": instructions that tame
- * the model running this turn ("don't restate the scene"), never who your
- * kinwriter is. It changes with the profile, so a roulette can pair each
- * model with its own notes.
- *
- * Layer 5 is what has happened (stage 7, see src/summaries.ts): the story
- * so far, the last scenes' summaries and what happened earlier in the
- * current scene, at the end of the system message, then the recent
- * messages in full. What's summarized isn't sent again, and what isn't
- * summarized yet is always sent, so nothing falls in between.
+ * In RP channels the kinwriter is framed as the author of a story; entries
+ * hidden from you are included with a note to keep the secret, and entries
+ * you hide from your kinwriter never appear. In OOC (and group channels,
+ * DMs and the practice channel) they're themselves. The conversation shows
+ * scene breaks where they fall, and ends on a nudge when it doesn't end on
+ * your message.
  */
 
+import { ago } from "./ago.ts";
 import { BUBBLE_MARKER, textingStyle } from "./texting.ts";
 import type { PromptEntry } from "./notebook.ts";
 import { playedBy } from "./permissions.ts";
@@ -59,10 +53,12 @@ import type { Channel, ChannelKind, ChannelMode, ChatMessage, Message, NotebookE
 /**
  * Your kinwriter prompt for this kind of channel and scene: how they write in
  * literary scenes, casual scenes, or out of character. Only the one that
- * applies is sent, so the others can't be confused with it.
+ * applies is sent, so the others can't be confused with it. Group channels
+ * and DMs are conversations, so they're written like OOC; the practice
+ * channel has scenes in it, so it follows its mode like a story.
  */
 export function channelPrompt(settings: Settings, channel: Channel): string {
-  if (channel.kind === "ooc") return settings.oocPrompt;
+  if (channel.kind === "ooc" || channel.kind === "group" || channel.kind === "dm") return settings.oocPrompt;
   return channel.mode === "casual" ? settings.casualPrompt : settings.literaryPrompt;
 }
 
@@ -103,9 +99,9 @@ export function nudges(kind: ChannelKind): { continue: string; opening: string }
 // ------------------------------------------------------------ wake-ups
 
 /**
- * Why your kinwriter is taking a turn on their own (stage 8), without a new
- * message from you: you opened the app, a scene ended, something is
- * waiting for them, or (endgame) the heartbeat.
+ * Why your kinwriter is taking a turn on their own, without a new message
+ * from you: you opened the app, a scene ended, something is waiting for
+ * them, the heartbeat, and so on (src/wakeups.ts).
  */
 export type WakeReason = "opened" | "away" | "scene-ended" | "review" | "heartbeat" | "answer" | "orientation" | "lookback" | "scheduled" | "farewell" | "aside";
 
@@ -131,12 +127,20 @@ export interface WakeContext {
 }
 
 /**
- * What your kinwriter replies to take no turn, when their model can't call
- * `do_nothing` (no tools). Such a reply is never posted.
+ * Who wrote a message, as your kinwriter is told: "you", "the user", or
+ * the other kinwriter's name. `capital` for the start of a line.
  */
-export const NOTHING = "[nothing]";
+export function whoWrote(message: Pick<Message, "author" | "speaker">, capital = false): string {
+  if (message.author === "peer") return message.speaker?.name ?? (capital ? "Another kinwriter" : "another kinwriter");
+  if (message.author === "user") return capital ? "The user" : "the user";
+  return capital ? "You" : "you";
+}
 
-/** Whether a reply means "nothing to say" (see `NOTHING`). */
+/**
+ * Whether a reply means "nothing to say": what your kinwriter replies
+ * (`[nothing]`) to take no turn when their model can't call `do_nothing`
+ * (no tools). Such a reply is never posted.
+ */
 export function isNothing(text: string): boolean {
   return /^\s*\[?\s*nothing\s*\]?\s*\.?\s*$/i.test(text);
 }
@@ -154,8 +158,9 @@ export function describeReactions(messages: Message[], customEmojis: string[]): 
   for (const message of messages.filter((m) => m.kind === "post" && m.reactions.length > 0).slice(-8)) {
     const snippet = message.content.replace(/\s+/g, " ").trim();
     const quoted = `"${snippet.slice(0, 80)}${snippet.length > 80 ? "…" : ""}"`;
-    const whose = message.author === "friend" ? "your message" : "the user's message";
-    for (const author of ["user", "friend"] as const) {
+    const whose =
+      message.author === "kinwriter" ? "your message" : message.author === "peer" ? `${message.speaker?.name ?? "another kinwriter"}'s message` : "the user's message";
+    for (const author of ["user", "kinwriter"] as const) {
       const emojis = message.reactions.filter((r) => r.author === author).map((r) => r.emoji);
       if (emojis.length === 0) continue;
       lines.push(`${author === "user" ? "The user" : "You"} reacted ${emojis.join(" ")} to ${whose}: ${quoted}`);
@@ -172,7 +177,7 @@ export function describeReactions(messages: Message[], customEmojis: string[]): 
  * What's in the reference library: titles and descriptions only. The texts
  * themselves are read with tools, when a detail is worth looking up.
  */
-export function describeLibrary(docs: { title: string; description: string; passages: number; readTo?: number }[]): string | null {
+function describeLibrary(docs: { title: string; description: string; passages: number; readTo?: number }[]): string | null {
   if (docs.length === 0) return null;
   const words = turns();
   const lines = docs.map((d) => {
@@ -240,7 +245,7 @@ export function wakeNudge(tools: boolean): string {
 }
 
 /**
- * Layer 2: how to write in each channel mode. `characterName` is the
+ * How to write in each channel mode. `characterName` is the
  * character your kinwriter plays, used to show the casual bubble format.
  */
 export function modeInstructions(mode: ChannelMode, characterName: string, paced = false): string {
@@ -323,7 +328,7 @@ export interface PromptInput {
    * it is covered by `memory`. Default: the newest `historyLimit`.
    */
   windowStart?: number;
-  /** Layer 5: summaries of what isn't sent in full. */
+  /** Summaries of what isn't sent in full. */
   memory?: PromptMemory;
   /** OOC channels: each other channel's digest, by channel id. */
   digests?: Record<string, string>;
@@ -341,7 +346,7 @@ export interface PromptInput {
   overview?: { castNames: Record<string, string[]>; entries: PromptEntry[] };
   /** In a story channel: the notebook entries not pinned or linked here, by name only. */
   notebookIndex?: PromptEntry[];
-  /** Layer 4: the connection profile's notes on this model's habits. */
+  /** The connection profile's notes on this model's habits. */
   modelNotes?: string;
   /** Notebook entries you attached to messages in the conversation, as your kinwriter may see them. */
   attached?: PromptEntry[];
@@ -360,15 +365,17 @@ export interface PromptInput {
    * thread instead of a post.
    */
   replyingTo?: { threadId: string; quote: string; note: string; onYourMessage: boolean };
-  /** A wake-up turn (stage 8): why your kinwriter is taking a turn on their own. */
+  /** A wake-up turn: why your kinwriter is taking a turn on their own. */
   wake?: WakeContext;
+  /** For the heartbeat's check: the tools the turn would have, by name, with their own note on each (src/toolmap.ts). */
+  checkTools?: { name: string; note: string | null }[];
   /** The reference library documents usable here (only mentioned with tools, which read them). */
   library?: { title: string; description: string; passages: number; readTo?: number }[];
   /** Custom emoji names (without colons), for reactions (only mentioned with tools). */
   customEmojis?: string[];
   /** Channel category names by id, for the OOC channel list. */
   categoryNames?: Record<string, string>;
-  /** Your kinwriter's identity and tastes (src/identity.ts). Default: the friendPrompt setting, no tastes. */
+  /** Your kinwriter's identity and tastes (src/identity.ts). Default: the kinwriterPrompt setting, no tastes. */
   identity?: { identity: string; tastes: string };
   /** The short version of their self-page they chose to keep in front of them. */
   selfPage?: string;
@@ -407,12 +414,12 @@ export interface PromptInput {
 /** A scratchpad as the prompt carries it. */
 export interface PromptPad {
   text: string;
-  /** Who last changed it ("user" or "friend"), and when; null if never written. */
+  /** Who last changed it ("user" or "kinwriter"), and when; null if never written. */
   by: string | null;
   at: string | null;
 }
 
-/** Layer 5: the summaries of what came before the recent messages. */
+/** The summaries of what came before the recent messages. */
 export interface PromptMemory {
   /** The story so far (RP). */
   story?: string;
@@ -428,7 +435,7 @@ export interface PromptThread {
   quote: string;
   /** Whether the message is your kinwriter's own. */
   onYourMessage: boolean;
-  comments: { author: "user" | "friend"; note: string }[];
+  comments: { author: "user" | "kinwriter"; note: string }[];
 }
 
 /** A suggestion waiting for your kinwriter, described for them. */
@@ -443,7 +450,7 @@ export interface PromptReview {
 }
 
 /**
- * Build the five-layer prompt stack for one kinwriter turn.
+ * Build the prompt stack for one kinwriter turn (see the top of this file).
  *
  * @returns The messages to send to the chat completions API.
  */
@@ -493,16 +500,16 @@ export function buildPromptStack({
   const isPractice = channel.kind === "practice";
   // Matching the user's pace: literary RP scenes only (casual and OOC are short already).
   const paced = isRp && channel.mode === "literary" && settings.matchPace;
-  const who = identity ?? { identity: settings.friendPrompt, tastes: "" };
+  const who = identity ?? { identity: settings.kinwriterPrompt, tastes: "" };
   const pinned = notebook?.pinned ?? [];
   const characterNames = (player: Player) =>
     pinned.filter((p) => p.entry.kind === "character" && playedBy(p.entry) === player).map((p) => p.entry.name);
-  const yourCharacters = characterNames("friend");
+  const yourCharacters = characterNames("kinwriter");
   const sharedCharacters = characterNames("both");
   const userCharacters = characterNames("user");
 
   const layers: Layer[] = [
-    // Layer 1: who is writing. The fixed framing for this kind of channel,
+    // Who is writing. The fixed framing for this kind of channel,
     // then your kinwriter prompt.
     {
       title: "Who you are",
@@ -549,7 +556,7 @@ export function buildPromptStack({
               : "",
       ]) || null,
     },
-    // Layer 2: how to write here. The fixed instructions for this scene's
+    // How to write here. The fixed instructions for this scene's
     // mode (RP only), then your kinwriter prompt for this kind of channel.
     {
       title: isRp ? "Style" : "How you talk here",
@@ -559,7 +566,7 @@ export function buildPromptStack({
         !isRp && !isPractice && settings.oocBubbles ? textingStyle() : "",
       ]),
     },
-    // Layer 3, in RP: the notebook entries pinned to the channel (the cast
+    // What's here, in RP: the notebook entries pinned to the channel (the cast
     // and any lore), then the entries they link to.
     { title: "Practice notes", content: isPractice ? describeEntries(pinned) : null },
     { title: "The cast", content: isRp ? describeEntries(pinned.filter((p) => p.entry.kind === "character")) : null },
@@ -572,14 +579,14 @@ export function buildPromptStack({
       title: "Whose characters are whose",
       content: isRp ? castRules(yourCharacters, sharedCharacters, userCharacters) : null,
     },
-    // Layer 3, in OOC: an overview of the server and the notebook instead.
+    // What's here, elsewhere: an overview of the server and the notebook instead.
     {
       title: "Channels on your server",
       content: isRp ? null : describeChannels(channels.filter((c) => c.kind !== "practice" || c.id === channel.id), channel, overview?.castNames ?? {}, digests ?? {}, categoryNames ?? {}, shared ?? {}),
     },
     ...(mentioned ?? []).map((m) => ({ title: `About #${m.name}`, content: m.summary })),
     { title: "Your shared notebook", content: isRp || isPractice ? null : describeNotebook(overview?.entries ?? []) },
-    // Still layer 3, in both: notes attached to messages, comment threads,
+    // In both: notes attached to messages, comment threads,
     // what's waiting for your kinwriter, and what they've done lately.
     { title: "Attached notes", content: describeEntries(attached ?? []) },
     { title: "Comment threads", content: describeThreads(threads ?? []) },
@@ -594,11 +601,11 @@ export function buildPromptStack({
     { title: "Reference library", content: tools ? describeLibrary(library ?? []) : null },
     // An orientation running here (src/orientation.ts).
     { title: "Your orientation", content: orientation ?? null },
-    // A wake-up (stage 8): why your kinwriter is taking a turn on their own.
+    // A wake-up: why your kinwriter is taking a turn on their own.
     { title: "Why you're up", content: wake ? describeWake(wake, tools ?? false) : null },
-    // Layer 4: the connection profile's notes on this model's habits.
+    // The connection profile's notes on this model's habits.
     { title: "Model notes", content: modelNotes ?? null },
-    // Layer 5, first part: summaries of what came before the recent messages.
+    // What has happened, first part: summaries of what came before the recent messages.
     { title: "The story so far", content: memory?.story ?? null },
     {
       title: "Recent scenes",
@@ -608,7 +615,7 @@ export function buildPromptStack({
     { title: "Moments you kept in full", content: describeVerbatim(verbatim ?? []) },
   ];
 
-  // Layer 5, second part: the recent conversation, in full.
+  // What has happened, second part: the recent conversation, in full.
   const start = windowStart ?? Math.max(0, messages.length - settings.historyLimit);
 
   // Reactions on the recent messages: quiet feedback, in both directions.
@@ -658,6 +665,88 @@ export function buildPromptStack({
   return [system, ...history];
 }
 
+/** How many recent messages the heartbeat's check reads. */
+export const CHECK_HISTORY = 8;
+
+/**
+ * The heartbeat's check (Settings → Heartbeat check): a short prompt for a
+ * cheaper model that only decides whether your kinwriter would use a free
+ * moment, before the model that writes OOC is asked.
+ *
+ * It keeps what that decision rests on: who they are, their note on you and
+ * how proactive they'd like to be, the time and their wake-ups, what's
+ * waiting for them, their tools by name (using them is using the moment
+ * too), why they're up, and the last few messages. Everything a
+ * turn needs only to write well (the server and notebook overviews, channel
+ * summaries, the journal, style, tool guidance) is left out. No wake nudge:
+ * the check's question is added at the end instead.
+ */
+export function buildCheckPrompt({
+  settings,
+  channel,
+  messages,
+  windowStart,
+  modelNotes,
+  reviews,
+  recentActions,
+  inbox,
+  wake,
+  identity,
+  selfPage,
+  editMarkers,
+  notices,
+  schedule,
+  drafts,
+  you,
+  checkTools,
+}: PromptInput): ChatMessage[] {
+  const who = identity ?? { identity: settings.kinwriterPrompt, tastes: "" };
+  const layers: Layer[] = [
+    {
+      title: "Who you are",
+      content: joinNonEmpty([
+        oocFraming(),
+        who.identity.replace(/^#{1,2}(?=\s)/gm, "###"),
+        who.tastes.trim() ? `Your tastes:\n${who.tastes.trim()}` : "",
+      ]),
+    },
+    { title: "Your self-page (short version)", content: selfPage?.trim() || null },
+    { title: "You and the user", content: describeYou(you) },
+    { title: "Your time", content: describeSchedule(schedule) },
+    { title: "Your drafts", content: describeDrafts(drafts) },
+    { title: "Waiting for your review", content: describeReviews(reviews ?? []) },
+    { title: "What you did recently", content: (recentActions ?? []).map((line) => `- ${line}`).join("\n") },
+    { title: "What you've asked of the user", content: (inbox ?? []).map((line) => `- ${line}`).join("\n") },
+    { title: "Notices", content: (notices ?? []).map((line) => `- ${line}`).join("\n") },
+    { title: "Your tools", content: describeCheckTools(checkTools ?? []) },
+    { title: "Why you're up", content: wake ? describeWake(wake, false) : null },
+    { title: "Model notes", content: modelNotes ?? null },
+  ];
+  const start = windowStart ?? Math.max(0, messages.length - settings.historyLimit);
+  const recent = messages.slice(Math.max(start, messages.length - CHECK_HISTORY));
+  const history = toChatHistory(recent, {
+    texting: channel.kind !== "rp" && channel.kind !== "practice" && settings.oocBubbles,
+    editMarkers,
+    replies: new Map(messages.map((m) => [m.id, m])),
+    speakers: channel.kind === "group" || channel.kind === "dm",
+  });
+  return [{ role: "system", content: renderLayers(layers) }, ...history];
+}
+
+/**
+ * "Your tools" in the heartbeat's check: names only (the turn gets the full
+ * descriptions), then their own note on any they've noted in their tool map.
+ */
+function describeCheckTools(tools: NonNullable<PromptInput["checkTools"]>): string | null {
+  if (tools.length === 0) return null;
+  const noted = tools.filter((t) => t.note);
+  return joinNonEmpty([
+    wording("time")["check-tools"] ?? "",
+    tools.map((t) => t.name).join(", "),
+    noted.length ? ["Your own notes on some of them:", ...noted.map((t) => `- ${t.name}: ${t.note}`)].join("\n") : "",
+  ]);
+}
+
 /**
  * Open comment threads, with the short ids your kinwriter uses to reply:
  *
@@ -665,7 +754,7 @@ export function buildPromptStack({
  *     The user: Love this image.
  *     You: Thank you!
  */
-export function describeThreads(threads: PromptThread[]): string | null {
+function describeThreads(threads: PromptThread[]): string | null {
   if (threads.length === 0) return null;
   const blocks = threads.map((t) => {
     const where = t.onYourMessage ? "your message" : "the user's message";
@@ -716,7 +805,7 @@ export function standingNotes(tools: boolean, roleplay = false, reflexes = false
 }
 
 /** The short version of the self-page, with what the page is. */
-export function describeSelfPage(standing: string): string {
+function describeSelfPage(standing: string): string {
   const note = wording("standing")["self-page"] ?? "";
   return joinNonEmpty([note, standing.trim() || "(You haven't written a short version yet: write_self_page, section \"standing\".)"]);
 }
@@ -725,7 +814,7 @@ export function describeSelfPage(standing: string): string {
  * The journal as a prompt carries it: kept entries and the newest few,
  * each with its short id, and a line on the ones that have faded.
  */
-export function describeJournal(journal: PromptInput["journal"]): string | null {
+function describeJournal(journal: PromptInput["journal"]): string | null {
   if (!journal) return null;
   const lines = journal.entries.map((e) => `[${e.id.slice(0, 6)}] ${e.createdAt.slice(0, 10)}${e.kept ? " (kept)" : ""}${e.fromOrientation ? " (from an orientation)" : ""}\n${e.content}`);
   if (journal.faded > 0) {
@@ -736,7 +825,7 @@ export function describeJournal(journal: PromptInput["journal"]): string | null 
 }
 
 /** "This channel" in a group channel or DM: who's here, and how turns work. */
-export function describeGroup(group: GroupInfo): string {
+function describeGroup(group: GroupInfo): string {
   const words = wording("kinwriters");
   const names = group.members.map((m) => m.name);
   if (group.kind === "dm") {
@@ -748,9 +837,8 @@ export function describeGroup(group: GroupInfo): string {
   return (words.group ?? "").replace("{names}", list);
 }
 
-/** "Kinwriters here": the other kinwriters on the server, with their private note on each. */
 /** Their note on the user and their proactivity preference (wording in defaults/orientation.md). */
-export function describeYou(you: PromptInput["you"]): string | null {
+function describeYou(you: PromptInput["you"]): string | null {
   if (!you) return null;
   const words = wording("orientation");
   const parts = [
@@ -760,12 +848,13 @@ export function describeYou(you: PromptInput["you"]): string | null {
   return parts.filter((p) => p.trim()).join("\n\n") || null;
 }
 
-export function describeKinwritersHere(friends: PromptInput["kinwritersHere"], tools: boolean): string | null {
-  if (!friends || friends.length === 0) return null;
+/** "Kinwriters here": the other kinwriters on the server, with their private note on each. */
+function describeKinwritersHere(kinwriters: PromptInput["kinwritersHere"], tools: boolean): string | null {
+  if (!kinwriters || kinwriters.length === 0) return null;
   const words = wording("kinwriters");
   return [
     words.here ?? "",
-    ...friends.map((f) => `- ${f.name}${f.note ? `: ${f.note}` : tools ? " (no note yet)" : ""}`),
+    ...kinwriters.map((f) => `- ${f.name}${f.note ? `: ${f.note}` : tools ? " (no note yet)" : ""}`),
     tools ? `${words["here-tools"] ?? ""} ${words.standing ?? ""}`.trim() : "",
   ]
     .filter((p) => p.trim())
@@ -773,7 +862,7 @@ export function describeKinwritersHere(friends: PromptInput["kinwritersHere"], t
 }
 
 /** "Your voice": a few excerpts of their own earlier writing, to keep their voice in mind. */
-export function describeAnchors(anchors: PromptInput["anchors"], tools: boolean): string | null {
+function describeAnchors(anchors: PromptInput["anchors"], tools: boolean): string | null {
   if (!anchors || anchors.length === 0) return null;
   const words = wording("continuity");
   return [
@@ -786,7 +875,7 @@ export function describeAnchors(anchors: PromptInput["anchors"], tools: boolean)
 }
 
 /** "Your time": the time now, and the wake-ups they've set (their notes are theirs to see). */
-export function describeSchedule(schedule: PromptInput["schedule"]): string | null {
+function describeSchedule(schedule: PromptInput["schedule"]): string | null {
   if (!schedule) return null;
   const time = wording("time");
   const status = schedule.status ? `\nYour status (shown under your name): "${schedule.status}". set_status changes it.` : "";
@@ -800,7 +889,7 @@ export function describeSchedule(schedule: PromptInput["schedule"]): string | nu
 }
 
 /** "Your drafts": their titles, so they know what's waiting (the text is read with list_drafts). */
-export function describeDrafts(drafts: PromptInput["drafts"]): string | null {
+function describeDrafts(drafts: PromptInput["drafts"]): string | null {
   if (!drafts || drafts.length === 0) return null;
   return [
     wording("time").drafts ?? "",
@@ -812,12 +901,12 @@ export function describeDrafts(drafts: PromptInput["drafts"]): string | null {
  * "Scratchpad": the shared pad and their private one, in full. Without
  * tools, only when there's something in them (they can't write them).
  */
-export function describeScratchpad(pads: PromptInput["scratchpad"], tools: boolean, now = Date.now()): string | null {
+function describeScratchpad(pads: PromptInput["scratchpad"], tools: boolean, now = Date.now()): string | null {
   if (!pads || (!tools && !pads.shared.text && !pads.private.text)) return null;
   const words = wording("scratchpad");
   const changed = (pad: PromptPad) =>
     pad.at
-      ? fill(words.changed ?? "", { who: pad.by === "friend" ? "you" : "the user", when: roughlyAgo(pad.at, now) })
+      ? fill(words.changed ?? "", { who: pad.by === "kinwriter" ? "you" : "the user", when: ago(pad.at, now) })
       : (words.never ?? "");
   const show = (heading: string, pad: PromptPad) => `${fill(heading, { changed: changed(pad) })}\n${pad.text || (words.empty ?? "")}`;
   return joinNonEmpty([
@@ -828,22 +917,11 @@ export function describeScratchpad(pads: PromptInput["scratchpad"], tools: boole
   ]);
 }
 
-/** "just now", "5 minutes ago", "2 days ago". */
-function roughlyAgo(iso: string, now: number): string {
-  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
-}
-
 /** Messages kept in full (keep_verbatim) that are older than the recent ones. */
-export function describeVerbatim(messages: Message[]): string | null {
+function describeVerbatim(messages: Message[]): string | null {
   if (messages.length === 0) return null;
   return messages
-    .map((m) => `${m.author === "user" ? "The user" : "You"}${m.characters.length ? ` (as ${m.characters.join(" & ")})` : ""}, ${m.createdAt.slice(0, 10)}:\n${m.content}`)
+    .map((m) => `${whoWrote(m, true)}${m.characters.length ? ` (as ${m.characters.join(" & ")})` : ""}, ${m.createdAt.slice(0, 10)}:\n${m.content}`)
     .join("\n\n");
 }
 
@@ -902,7 +980,7 @@ export function commentNudge(comment: NonNullable<PromptInput["replyingTo"]>, to
  *   - #ooc: this conversation
  *
  * @param castNames  The characters your kinwriter plays in each channel, by id.
- * @param digests    Each channel's digest (stage 7), by id.
+ * @param digests    Each channel's digest (src/summaries.ts), by id.
  */
 export function describeChannels(
   channels: Channel[],
@@ -946,7 +1024,7 @@ export const secretNote = (): string => turns().secret ?? "";
  * Entries hidden from the user are marked, so the model keeps their secrets.
  * `[[Links]]` are written as plain names.
  */
-export function describeEntries(entries: PromptEntry[]): string {
+function describeEntries(entries: PromptEntry[]): string {
   return entries
     .map(({ entry, hiddenFromUser }) => {
       const lines = [`### ${entry.name}${entryRole(entry)}`];
@@ -994,7 +1072,7 @@ const NOTEBOOK_INDEX_LIMIT = 80;
  * so your kinwriter knows what already exists and looks it up instead of
  * making it again.
  */
-export function describeNotebookIndex(entries: PromptEntry[]): string | null {
+function describeNotebookIndex(entries: PromptEntry[]): string | null {
   if (entries.length === 0) return null;
   const shown = entries.slice(0, NOTEBOOK_INDEX_LIMIT).map(({ entry }) => `${entry.name} (${entry.kind})`);
   const more = entries.length - shown.length;
@@ -1005,10 +1083,10 @@ export function describeNotebookIndex(entries: PromptEntry[]): string | null {
  * The OOC overview of the notebook: every entry your kinwriter can see, by
  * name, with whose it is and whether it's a secret from the user.
  */
-export function describeNotebook(entries: PromptEntry[]): string | null {
+function describeNotebook(entries: PromptEntry[]): string | null {
   if (entries.length === 0) return null;
   const whose = (entry: NotebookEntry) =>
-    entry.owner === "joint" ? "shared" : entry.owner === "friend" ? "yours" : "the user's";
+    entry.owner === "joint" ? "shared" : entry.owner === "kinwriter" ? "yours" : "the user's";
   const lines = entries.map(
     ({ entry, hiddenFromUser }) =>
       `- ${entry.name} (${entry.kind}, ${whose(entry)}${hiddenFromUser ? ", hidden from the user" : ""})`,
@@ -1072,13 +1150,13 @@ export function toChatHistory(
       if (options.editMarkers && message.editedBy) content = `(edited by ${message.editedBy === "user" ? "the user" : "you"}) ${content}`;
       // Only this kinwriter's own messages are theirs ("assistant"): yours and
       // other kinwriters' are said to them.
-      role = message.author === "friend" ? "assistant" : "user";
+      role = message.author === "kinwriter" ? "assistant" : "user";
       if (message.author === "peer") content = `${message.speaker?.name ?? "Another kinwriter"}: ${content}`;
       else if (message.author === "user" && options.speakers) content = `The user: ${content}`;
       // A reply says what it answers, briefly.
       const target = message.replyTo ? options.replies?.get(message.replyTo) : undefined;
       if (target) {
-        const who = target.author === "user" ? "the user" : target.author === "peer" ? (target.speaker?.name ?? "another kinwriter") : "you";
+        const who = whoWrote(target);
         const preview = target.content.replace(/\s+/g, " ").trim();
         content = `(replying to ${who}: "${preview.length > 80 ? `${preview.slice(0, 80)}…` : preview}") ${content}`;
       }

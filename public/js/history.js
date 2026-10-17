@@ -18,7 +18,7 @@ import { formatText, formatTime } from "./format.js";
 
 /** "You", or your kinwriter's name. */
 function whoWrote(author) {
-  return author === "user" ? "You" : state.settings.friendName;
+  return author === "user" ? "You" : state.settings.kinwriterName;
 }
 
 /** One version, as a card: who and when, then the text (and a button, if given). */
@@ -82,7 +82,7 @@ export async function openHistory(messageId) {
       cards.push(versionCard(`Written by ${whoWrote(message.author)}, ${formatTime(message.createdAt)}${by} (now)`, message.content, true));
     }
     $("history-list").replaceChildren(...cards);
-    const kinwriter = state.settings.friendName;
+    const kinwriter = state.settings.kinwriterName;
     $("history-note").textContent =
       `Oldest first. ${kinwriter} sees only the current text in the chat, and can read this history with a tool. Nothing here is ever deleted.`;
   } catch (error) {
@@ -94,7 +94,7 @@ export async function openHistory(messageId) {
 export async function openInterventions() {
   const dialog = $("interventions-dialog");
   const list = $("interventions-list");
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   hideFormError(dialog);
   $("interventions-note").textContent =
     `Everything you've done that affects ${kinwriter}: editing, deleting or regenerating their messages, and changing who they are or how they write. It's written down automatically, and ${kinwriter} can read this same log. Newest first.`;
@@ -135,7 +135,7 @@ let checks = [];
 export async function openCheckLog() {
   const dialog = $("check-log-dialog");
   const list = $("check-log-list");
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   hideFormError(dialog);
   $("check-log-copy").textContent = "Copy as text";
   $("check-log-note").textContent =

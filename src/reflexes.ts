@@ -26,6 +26,7 @@ import type { Decider } from "./jev.ts";
 import type { ToolSpec } from "./nanogpt.ts";
 import type { Store } from "./store.ts";
 import { scriptsOn } from "./scripts.ts";
+import { parseArguments } from "./toolcalls.ts";
 import type { ChannelKind, ToolCallRecord } from "./types.ts";
 import { fill, wording } from "./wording.ts";
 
@@ -99,7 +100,7 @@ export function reflexAvailable(store: Store, reflex: Reflex): boolean {
 }
 
 /** How far back "what they did recently" goes: a check is skipped if they used its tool in this time. */
-export const RECENT_MINUTES = 30;
+const RECENT_MINUTES = 30;
 
 /** They turn a check off or on. */
 export function setReflex(store: Store, id: string, on: boolean): void {
@@ -167,7 +168,7 @@ const KNOWN_LIMIT = 150;
 
 /** The names already in the notebook (that they can see), for Jev. */
 function knownNames(store: Store): string {
-  const names = store.notebook.listEntries("friend").map((e) => e.name);
+  const names = store.notebook.listEntries("kinwriter").map((e) => e.name);
   if (names.length === 0) return "(nothing yet)";
   return names.slice(0, KNOWN_LIMIT).join(", ") + (names.length > KNOWN_LIMIT ? `, and ${names.length - KNOWN_LIMIT} more` : "");
 }
@@ -214,7 +215,8 @@ export function settleReflexes(store: Store, calls: ToolCallRecord[], posted: bo
     unacted.length ? (posted ? `and posted without acting on ${unacted.join(", ")}` : `and didn't act on ${unacted.join(", ")}`) : "",
   ].filter(Boolean).join(", ");
   const previous = JSON.parse(record.result) as Record<string, unknown>;
-  const keptWhy = kept ? ((JSON.parse(kept.arguments || "{}") as { reason?: string }).reason ?? true) : false;
+  const keptArgs = kept ? parseArguments(kept.arguments) : undefined;
+  const keptWhy = kept ? ((keptArgs?.ok && typeof keptArgs.value.reason === "string" ? keptArgs.value.reason : undefined) ?? true) : false;
   record.result = JSON.stringify({ ...previous, acted, unacted, kept: keptWhy, flagged: flagged.map((id) => byId.get(id)!.claim) });
   record.summary = `${record.summary} ${outcome}`;
   store.toolLog.settle(record.id, record.result, record.summary);

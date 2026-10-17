@@ -10,7 +10,8 @@
  * a line under the message says how they answered.
  */
 
-import { $, api, channelPath, hideFormError, showFormError, state } from "./core.js";
+import { $, api, hideFormError, showError, showFormError, state } from "./core.js";
+import { markQuote } from "./format.js";
 
 /** The rewrites on one message. */
 export function rewritesOn(messageId) {
@@ -20,30 +21,14 @@ export function rewritesOn(messageId) {
 /** Underline each waiting rewrite's words in a rendered message. */
 export function highlightRewrites(content, rewrites) {
   for (const rewrite of rewrites.filter((r) => r.status === "pending")) {
-    const quote = rewrite.quote.replace(/[*_]/g, "").trim();
-    if (!quote) continue;
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    let text = "";
-    while (walker.nextNode()) {
-      nodes.push({ node: walker.currentNode, start: text.length });
-      text += walker.currentNode.nodeValue;
-    }
-    const start = text.indexOf(quote);
-    if (start < 0) continue;
-    const end = start + quote.length;
-    for (const { node, start: nodeStart } of nodes) {
-      const nodeEnd = nodeStart + node.nodeValue.length;
-      if (nodeEnd <= start || nodeStart >= end) continue;
-      const range = document.createRange();
-      range.setStart(node, Math.max(0, start - nodeStart));
-      range.setEnd(node, Math.min(node.nodeValue.length, end - nodeStart));
-      const mark = document.createElement("mark");
-      mark.className = "rewrite-mark";
-      mark.dataset.rewrite = rewrite.id;
-      mark.title = `Your suggestion: “${rewrite.replacement}” (waiting for ${state.settings.friendName}; tap to withdraw)`;
-      range.surroundContents(mark);
-    }
+    const mark = () => {
+      const element = document.createElement("mark");
+      element.className = "rewrite-mark";
+      element.dataset.rewrite = rewrite.id;
+      element.title = `Your suggestion: “${rewrite.replacement}” (waiting for ${state.settings.kinwriterName}; tap to withdraw)`;
+      return element;
+    };
+    markQuote(content, rewrite.quote, mark);
   }
 }
 
@@ -69,7 +54,7 @@ export function updateRewriteButton(comment) {
   const button = $("rewrite-float");
   const id = comment.dataset.messageId;
   const message = id ? document.querySelector(`.message[data-message-id="${CSS.escape(id)}"]`) : null;
-  if (!message || message.dataset.author !== "friend") {
+  if (!message || message.dataset.author !== "kinwriter") {
     button.hidden = true;
     return;
   }
@@ -127,14 +112,6 @@ export async function withdrawRewrite(id) {
     const { renderMessages } = await import("./messages.js");
     renderMessages();
   } catch (error) {
-    alert(error.message);
+    showError(`Couldn't withdraw it: ${error.message}`, null);
   }
-}
-
-/** Reload the open channel's rewrites (after their turn, say). */
-export async function refreshRewrites() {
-  const channelId = state.channelId;
-  if (!channelId) return;
-  const { rewrites } = await api("GET", channelPath("messages", channelId));
-  if (state.channelId === channelId) state.rewrites = rewrites ?? [];
 }

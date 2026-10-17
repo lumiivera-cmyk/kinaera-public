@@ -88,7 +88,8 @@ const edited = () => box().value.trimEnd() !== pads.baseText;
 /** Their changes, while it's open: shown straight away if you aren't mid-change (otherwise the next save merges them in). */
 async function poll() {
   if (!dialog().open) return clearInterval(pads.pollTimer);
-  if (pads.saving || commitDialog().open) return;
+  // Not while the app is in the background, or something else is going on.
+  if (pads.saving || commitDialog().open || document.visibilityState !== "visible") return;
   try {
     const data = await api("GET", channelPath("scratchpads", pads.channelId));
     if (pads.saving || !dialog().open) return;
@@ -111,7 +112,7 @@ function ago(iso) {
 }
 
 function render() {
-  const name = state.settings?.friendName ?? "Your kinwriter";
+  const name = state.settings?.kinwriterName ?? "Your kinwriter";
   for (const tab of document.querySelectorAll(".scratchpad-tab")) tab.setAttribute("aria-selected", String(tab.dataset.pad === pads.open));
   $("scratchpad-hint").textContent =
     pads.open === "shared"
@@ -127,7 +128,7 @@ function render() {
       : edited()
         ? "Not saved yet…"
         : pad.at
-          ? `Saved. Last changed by ${pad.by === "friend" ? name : "you"}, ${ago(pad.at)}.`
+          ? `Saved. Last changed by ${pad.by === "kinwriter" ? name : "you"}, ${ago(pad.at)}.`
           : "Nothing written yet.";
   $("scratchpad-undo").disabled = !pad?.previous;
 }

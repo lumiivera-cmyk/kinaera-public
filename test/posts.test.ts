@@ -47,7 +47,7 @@ describe("splitBubbles", () => {
   });
 });
 
-describe("friendAliases", () => {
+describe("kinwriterAliases", () => {
   test.each([
     ["Ilse Marrow", ["Ilse"]],
     ["Vee", []],
@@ -101,6 +101,11 @@ describe("mentionedCharacters", () => {
     expect(mentionedCharacters("Ilsebeth waved.", cast)).toEqual([]);
   });
 
+  test("finds names that start or end with an accented letter", () => {
+    expect(mentionedCharacters("Zoë smiled at Ælfric.", [{ name: "Zoë" }, { name: "Ælfric" }, { name: "Tamsin" }])).toEqual(["Zoë", "Ælfric"]);
+    expect(mentionedCharacters("Zoëy waved.", [{ name: "Zoë" }, { name: "Tamsin" }])).toEqual([]);
+  });
+
   test("falls back to the only character, or to nobody (narration)", () => {
     expect(mentionedCharacters("The sea rose.", [cast[0]!])).toEqual(["Ilse Marrow"]);
     expect(mentionedCharacters("The sea rose.", cast)).toEqual([]);
@@ -130,7 +135,7 @@ describe("postToMessages", () => {
 describe("replyToMessages", () => {
   test("a literary reply with one character in the cast voices them", () => {
     expect(replyToMessages(channel({}), "Ilse: prose", "m", ilse)).toEqual([
-      { channelId: "c", author: "friend", model: "m", content: "Ilse: prose", characters: ["Ilse Marrow"], mode: "literary" },
+      { channelId: "c", author: "kinwriter", model: "m", content: "Ilse: prose", characters: ["Ilse Marrow"], mode: "literary" },
     ]);
   });
 

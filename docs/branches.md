@@ -19,7 +19,8 @@ Branches follow the message they started from. When that message leaves the
 chat (it's regenerated, or it's in a branch you left), its branches go with it
 and come back with it, so swapping a reply back also brings back what you
 wrote after it. Deleting the message moves its branches to the message
-before it.
+before it, or, for the channel's first message, to the start of the chat
+("⑂ … from the start" above the first message).
 
 Not in group channels or DMs (the others have already seen it all), not
 while your kinwriter is writing, and not during an orientation.

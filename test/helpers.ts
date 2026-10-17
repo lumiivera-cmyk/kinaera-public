@@ -65,7 +65,12 @@ export function startFakeNanoGpt(): FakeNanoGpt {
       const path = new URL(request.url).pathname;
 
       if (path === "/v1/models") {
-        return Response.json({ data: [{ id: "zeta/model" }, { id: "alpha/model" }] });
+        return Response.json({
+          data: [
+            { id: "zeta/model", capabilities: { reasoning: false, tool_calling: true }, max_output_tokens: 8192 },
+            { id: "alpha/model" },
+          ],
+        });
       }
 
       if (path === "/v1/chat/completions") {

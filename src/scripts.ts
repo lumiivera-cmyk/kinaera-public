@@ -20,8 +20,8 @@
  * and the result doesn't contain that text. An `optional` step's failure
  * is reported but doesn't stop the run.
  *
- * Scripts are opt-in, per kinwriter (Settings → the kinwriter page,
- * "Scripts"); off, none of these tools are offered and nothing scheduled
+ * Scripts are opt-in, per kinwriter (their menu: the kinwriter card →
+ * Settings…, "Scripts"); off, none of these tools are offered and nothing scheduled
  * runs. They're kept in `app_state`, like the tool map.
  */
 
@@ -30,9 +30,9 @@ import type { Store } from "./store.ts";
 
 const KEY = "scripts";
 
-export const SCRIPT_LIMIT = 20;
+const SCRIPT_LIMIT = 20;
 export const STEP_LIMIT = 12;
-export const NAME_LIMIT = 40;
+const NAME_LIMIT = 40;
 const ABOUT_LIMIT = 300;
 const EXPECT_LIMIT = 200;
 const ARGS_LIMIT = 4000;
@@ -292,7 +292,7 @@ export function scriptQueue(store: Store): ScriptQueue | null {
   return queue && queue.items.length > 0 ? queue : null;
 }
 
-export function setScriptQueue(store: Store, queue: ScriptQueue | null): void {
+function setScriptQueue(store: Store, queue: ScriptQueue | null): void {
   store.appState.set(QUEUE, queue && queue.items.length > 0 ? JSON.stringify(queue) : null);
 }
 

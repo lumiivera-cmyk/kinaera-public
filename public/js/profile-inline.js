@@ -5,7 +5,8 @@
  * summaries, Jev's fallback, a channel, "Regenerate with…", a roulette's
  * entries, the dry run), the chosen profile's settings show below the
  * dropdown and can be changed there: model, temperature, max tokens, top P,
- * min P, reasoning and tools. Each change saves straight away and applies
+ * min P, reasoning and tools (only those the model supports: see
+ * model-info.js). Each change saves straight away and applies
  * everywhere the profile is used. Its name, model notes and extra request
  * fields are in "All settings…" (the full profile editor).
  *
@@ -18,6 +19,7 @@
  */
 
 import { api, state } from "./core.js";
+import { loadModelInfo, maxTokensFor, modelInfo, onModelInfo, toolNote } from "./model-info.js";
 import { openProfile, openRoulette } from "./settings.js";
 
 /** Every editor on the page, so a saved change shows in all of them. */
@@ -66,6 +68,9 @@ export function profileEditor(select, resolve, options = {}) {
   editor.render();
   return editor;
 }
+
+// Once nanoGPT says what each model supports, the editors show only that.
+onModelInfo(() => refreshProfileEditors());
 
 /** Redraw every editor (after profiles were reloaded, say). */
 export function refreshProfileEditors() {
@@ -120,16 +125,24 @@ function render(editor) {
     }
   };
 
+  loadModelInfo();
+  const info = modelInfo(profile.model);
+  // Switching to a model that can't reason drops a reasoning setting it
+  // would never use (it's hidden for that model).
+  const saveModel = (model) => save(modelInfo(model)?.reasoning === false ? { model, reasoningEffort: null } : { model });
+
   const grid = document.createElement("div");
   grid.className = "grid profile-inline-grid";
   grid.append(
-    field("Model", input("text", profile.model, (v) => (v.trim() ? save({ model: v.trim() }) : null), { list: "model-list" }), "profile-inline-model"),
+    field("Model", input("text", profile.model, (v) => (v.trim() ? saveModel(v.trim()) : null), { list: "model-list" }), "profile-inline-model"),
     field("Temperature", input("number", profile.temperature, (v) => save({ temperature: Number(v) }), { min: 0, max: 2, step: 0.05 })),
-    field("Max tokens", input("number", profile.maxTokens, (v) => save({ maxTokens: Number(v) }), { min: 16, max: 32000, step: 1 })),
+    field("Max tokens", input("number", profile.maxTokens, (v) => save({ maxTokens: Number(v) }), { min: 16, max: maxTokensFor(profile.model), step: 1 })),
     field("Top P", input("number", profile.topP ?? "", (v) => save({ topP: v === "" ? null : Number(v) }), { min: 0, max: 1, step: 0.01, placeholder: "auto" })),
     field("Min P", input("number", profile.minP ?? "", (v) => save({ minP: v === "" ? null : Number(v) }), { min: 0, max: 1, step: 0.005, placeholder: "auto" })),
-    field("Reasoning", reasoningSelect(profile.reasoningEffort, (v) => save({ reasoningEffort: v || null }))),
   );
+  if (info?.reasoning !== false) {
+    grid.append(field("Reasoning", reasoningSelect(profile.reasoningEffort, (v) => save({ reasoningEffort: v || null }))));
+  }
 
   const tools = document.createElement("label");
   tools.className = "check-inline";
@@ -143,6 +156,13 @@ function render(editor) {
   row.className = "profile-inline-row";
   row.append(tools, button("All settings…", () => openProfile(profile)), status);
   box.replaceChildren(summary, grid, row);
+  const note = toolNote(profile.model);
+  if (note) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = note;
+    box.append(hint);
+  }
 }
 
 function field(label, control, className = "") {
@@ -182,6 +202,7 @@ function reasoningSelect(value, onChange) {
   const select = document.createElement("select");
   select.append(
     new Option("Model's default", ""),
+    new Option("Off", "none"),
     new Option("Low", "low"),
     new Option("Medium", "medium"),
     new Option("High", "high"),

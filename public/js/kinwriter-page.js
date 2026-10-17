@@ -20,7 +20,9 @@ import { openSeedPicker } from "./seeds.js";
  * or another server, switches to them.
  */
 
-export const KINWRITER_KEY = "kinaera.friend";
+export const KINWRITER_KEY = "kinaera.kinwriter";
+/** What these were called before the second rename ("kinaera.friend"), still read once. */
+const OLD_KEY = "kinaera.friend";
 
 /** The servers and their kinwriters (with each kinwriter's channels and news), from the hub. */
 export async function loadHub() {
@@ -34,15 +36,15 @@ export async function loadHub() {
   }
 }
 
-const allKinwriters = () => (state.hub ?? []).flatMap((s) => s.friends.map((p) => ({ ...p, serverId: s.id })));
-const currentServer = () => (state.hub ?? []).find((s) => s.friends.some((p) => p.id === state.kinwriterId)) ?? null;
-const serverName = (server) => server.name || server.friends[0]?.name || "Server";
+const allKinwriters = () => (state.hub ?? []).flatMap((s) => s.kinwriters.map((p) => ({ ...p, serverId: s.id })));
+const currentServer = () => (state.hub ?? []).find((s) => s.kinwriters.some((p) => p.id === state.kinwriterId)) ?? null;
+const serverName = (server) => server.name || server.kinwriters[0]?.name || "Server";
 
 /** Which kinwriter to open: the address, then the last one you had open, then the first. */
 export function pickKinwriter() {
-  const friends = allKinwriters();
-  const wanted = [parseAddress().kinwriterId, readLocal(KINWRITER_KEY)];
-  return wanted.find((id) => id && friends.some((p) => p.id === id)) ?? friends[0]?.id ?? null;
+  const kinwriters = allKinwriters();
+  const wanted = [parseAddress().kinwriterId, readLocal(KINWRITER_KEY) ?? readLocal(OLD_KEY)];
+  return wanted.find((id) => id && kinwriters.some((p) => p.id === id)) ?? kinwriters[0]?.id ?? null;
 }
 
 /** Open another kinwriter (and one of their channels): the page starts over as theirs. */
@@ -57,8 +59,8 @@ export function switchKinwriter(kinwriterId, channelId = null) {
 export function paintAvatar(element, { name, avatar, color }) {
   element.textContent = avatar || initial(name ?? "?");
   element.classList.toggle("emoji-avatar", Boolean(avatar));
-  if (color >= 0) element.style.setProperty("--friend-hue", String(color));
-  else element.style.removeProperty("--friend-hue");
+  if (color >= 0) element.style.setProperty("--kinwriter-hue", String(color));
+  else element.style.removeProperty("--kinwriter-hue");
   element.classList.toggle("colored-avatar", color >= 0);
 }
 
@@ -67,7 +69,7 @@ function kinwriterHasNews(kinwriter) {
   const seen = seenMessages();
   return kinwriter.channels.some((c) => {
     const a = kinwriter.activity[c.id];
-    return a && a.author === "friend" && c.id !== state.channelId && seen[c.id] !== a.lastId;
+    return a && a.author === "kinwriter" && c.id !== state.channelId && seen[c.id] !== a.lastId;
   });
 }
 
@@ -83,21 +85,21 @@ export function renderRail() {
     if (server === current) button.setAttribute("aria-current", "true");
     button.title = serverName(server);
     button.setAttribute("aria-label", serverName(server));
-    const first = server.friends[0];
+    const first = server.kinwriters[0];
     const face = document.createElement("span");
     face.className = "avatar server-face";
-    if (server.friends.length === 1 || !server.name) paintAvatar(face, first);
+    if (server.kinwriters.length === 1 || !server.name) paintAvatar(face, first);
     else paintAvatar(face, { name: server.name, avatar: "", color: first?.color ?? -1 });
     button.append(face);
-    if (server.friends.some((p) => p.id !== state.kinwriterId && kinwriterHasNews(p))) {
+    if (server.kinwriters.some((p) => p.id !== state.kinwriterId && kinwriterHasNews(p))) {
       const dot = document.createElement("span");
       dot.className = "server-unread";
       button.append(dot);
     }
     button.addEventListener("click", () => {
       if (server === current) return openServerSettings();
-      const last = readLocal(`kinaera.friend.${server.id}`);
-      switchKinwriter(server.friends.find((p) => p.id === last)?.id ?? first.id);
+      const last = readLocal(`kinaera.kinwriter.${server.id}`) ?? readLocal(`${OLD_KEY}.${server.id}`);
+      switchKinwriter(server.kinwriters.find((p) => p.id === last)?.id ?? first.id);
     });
     return button;
   });
@@ -110,7 +112,7 @@ export function renderRail() {
   add.addEventListener("click", () => openNewKinwriter(null));
   rail.replaceChildren(...buttons, add);
   $("server-name").textContent = current ? serverName(current) : "Kinaera";
-  if (current) writeLocal(`kinaera.friend.${current.id}`, state.kinwriterId);
+  if (current) writeLocal(`kinaera.kinwriter.${current.id}`, state.kinwriterId);
 }
 
 /**
@@ -120,11 +122,11 @@ export function renderRail() {
  */
 export function otherKinwriterItems() {
   const server = currentServer();
-  if (!server || server.friends.length < 2) return { before: [], after: [], header: null };
-  const index = server.friends.findIndex((p) => p.id === state.kinwriterId);
+  if (!server || server.kinwriters.length < 2) return { before: [], after: [], header: null };
+  const index = server.kinwriters.findIndex((p) => p.id === state.kinwriterId);
   const section = (kinwriter) => {
     const header = document.createElement("li");
-    header.className = "friend-section";
+    header.className = "kinwriter-section";
     const face = document.createElement("span");
     face.className = "avatar";
     paintAvatar(face, kinwriter);
@@ -152,7 +154,7 @@ export function otherKinwriterItems() {
         label.textContent = channel.name;
         link.append(channelIcon(channel.kind), label);
         const a = kinwriter.activity[channel.id];
-        if (a && a.author === "friend" && seenMessages()[channel.id] !== a.lastId) {
+        if (a && a.author === "kinwriter" && seenMessages()[channel.id] !== a.lastId) {
           const dot = document.createElement("span");
           dot.className = "channel-unread";
           link.append(dot);
@@ -161,49 +163,49 @@ export function otherKinwriterItems() {
         return item;
       });
   };
-  const before = server.friends.slice(0, index).flatMap((p) => [section(p), ...items(p)]);
-  const after = server.friends.slice(index + 1).flatMap((p) => [section(p), ...items(p)]);
-  return { before, after, header: section({ ...server.friends[index], ...currentKinwriterLook(), orienting: state.orientation?.status === "running" }) };
+  const before = server.kinwriters.slice(0, index).flatMap((p) => [section(p), ...items(p)]);
+  const after = server.kinwriters.slice(index + 1).flatMap((p) => [section(p), ...items(p)]);
+  return { before, after, header: section({ ...server.kinwriters[index], ...currentKinwriterLook(), orienting: state.orientation?.status === "running" }) };
 }
 
-const currentKinwriterLook = () => ({ name: state.settings.friendName, avatar: state.settings.friendAvatar, color: state.settings.friendColor });
+const currentKinwriterLook = () => ({ name: state.settings.kinwriterName, avatar: state.settings.kinwriterAvatar, color: state.settings.kinwriterColor });
 
 // ------------------------------------------------------------ the kinwriter menu
 
 export function openKinwriter() {
   const s = state.settings;
-  const form = $("friend-form").elements;
-  paintAvatar($("friend-dialog-avatar"), currentKinwriterLook());
-  $("friend-dialog-title").textContent = s.friendName;
-  form.friendName.value = s.friendName;
-  form.friendAvatar.value = s.friendAvatar;
-  form.themeColor.checked = s.friendColor < 0;
-  form.friendColor.value = s.friendColor < 0 ? 260 : s.friendColor;
-  form.friendColor.disabled = s.friendColor < 0;
-  form.friendPronouns.value = s.friendPronouns ?? "";
-  for (const key of ["friendPrompt", "literaryPrompt", "casualPrompt", "oocPrompt"]) form[key].value = s[key];
+  const form = $("kinwriter-form").elements;
+  paintAvatar($("kinwriter-dialog-avatar"), currentKinwriterLook());
+  $("kinwriter-dialog-title").textContent = s.kinwriterName;
+  form.kinwriterName.value = s.kinwriterName;
+  form.kinwriterAvatar.value = s.kinwriterAvatar;
+  form.themeColor.checked = s.kinwriterColor < 0;
+  form.kinwriterColor.value = s.kinwriterColor < 0 ? 260 : s.kinwriterColor;
+  form.kinwriterColor.disabled = s.kinwriterColor < 0;
+  form.kinwriterPronouns.value = s.kinwriterPronouns ?? "";
+  for (const key of ["kinwriterPrompt", "literaryPrompt", "casualPrompt", "oocPrompt"]) form[key].value = s[key];
   // Their self-notes: shown to read only if they share them (src/selfnotes.ts).
-  $("friend-self-notes").hidden = !state.selfNotes?.shared;
+  $("kinwriter-self-notes").hidden = !state.selfNotes?.shared;
   form.oocBubbles.checked = s.oocBubbles;
   form.matchPace.checked = s.matchPace;
   form.replyDelaySeconds.value = s.replyDelayMs / 1000;
   form.typingPerCharMs.value = s.typingPerCharMs;
   updateTextingOnly();
   form.scripts.checked = s.scripts === true;
-  $("friend-move").hidden = (currentServer()?.friends.length ?? 1) < 2;
-  hideFormError($("friend-form"));
-  $("friend-dialog").showModal();
+  $("kinwriter-move").hidden = (currentServer()?.kinwriters.length ?? 1) < 2;
+  hideFormError($("kinwriter-form"));
+  $("kinwriter-dialog").showModal();
 }
 
 async function saveKinwriter(event) {
   event.preventDefault();
-  const form = $("friend-form").elements;
+  const form = $("kinwriter-form").elements;
   try {
     const { settings } = await api("PUT", "/api/settings", {
-      friendName: form.friendName.value,
-      friendPronouns: form.friendPronouns.value,
-      friendAvatar: form.friendAvatar.value,
-      friendColor: form.themeColor.checked ? -1 : Number(form.friendColor.value),
+      kinwriterName: form.kinwriterName.value,
+      kinwriterPronouns: form.kinwriterPronouns.value,
+      kinwriterAvatar: form.kinwriterAvatar.value,
+      kinwriterColor: form.themeColor.checked ? -1 : Number(form.kinwriterColor.value),
       literaryPrompt: form.literaryPrompt.value,
       casualPrompt: form.casualPrompt.value,
       oocPrompt: form.oocPrompt.value,
@@ -214,28 +216,28 @@ async function saveKinwriter(event) {
       scripts: form.scripts.checked,
     });
     state.settings = settings;
-    $("friend-dialog").close();
+    $("kinwriter-dialog").close();
     await loadHub();
     renderAll();
   } catch (error) {
-    showFormError($("friend-form"), error.message);
+    showFormError($("kinwriter-form"), error.message);
   }
 }
 
 /** Show the texting numbers only when texting is on. */
 function updateTextingOnly() {
-  const form = $("friend-form");
+  const form = $("kinwriter-form");
   for (const element of form.querySelectorAll(".texting-only")) element.hidden = !form.elements.oocBubbles.checked;
 }
 
 /** The kinwriter menu's avatar follows what you type and pick. */
 function previewKinwriterLook() {
-  const form = $("friend-form").elements;
-  form.friendColor.disabled = form.themeColor.checked;
-  paintAvatar($("friend-dialog-avatar"), {
-    name: form.friendName.value,
-    avatar: form.friendAvatar.value.trim(),
-    color: form.themeColor.checked ? -1 : Number(form.friendColor.value),
+  const form = $("kinwriter-form").elements;
+  form.kinwriterColor.disabled = form.themeColor.checked;
+  paintAvatar($("kinwriter-dialog-avatar"), {
+    name: form.kinwriterName.value,
+    avatar: form.kinwriterAvatar.value.trim(),
+    color: form.themeColor.checked ? -1 : Number(form.kinwriterColor.value),
   });
 }
 
@@ -244,47 +246,47 @@ function previewKinwriterLook() {
  * note, then they're set aside, whole, until you restore them.
  */
 async function archiveKinwriter() {
-  const name = state.settings.friendName;
+  const name = state.settings.kinwriterName;
   if (!confirm(`Archive ${name}? They get one last turn to write a note, then they're set aside with everything they remember. You can restore them from server settings.`)) return;
-  const button = $("friend-archive");
+  const button = $("kinwriter-archive");
   button.disabled = true;
   button.textContent = `Saying goodbye…`;
   try {
-    const { note } = await api("POST", `/api/hub/friends/${encodeURIComponent(state.kinwriterId)}/archive`, {});
+    const { note } = await api("POST", `/api/hub/kinwriters/${encodeURIComponent(state.kinwriterId)}/archive`, {});
     alert(note ? `${name} left a note:\n\n${note}` : `${name} didn't leave a note.`);
     writeLocal(KINWRITER_KEY, "");
     history.replaceState(null, "", location.pathname);
     location.reload();
   } catch (error) {
-    showFormError($("friend-form"), error.message);
+    showFormError($("kinwriter-form"), error.message);
     button.disabled = false;
     button.textContent = "Archive…";
   }
 }
 
 async function deleteKinwriter() {
-  const name = state.settings.friendName;
+  const name = state.settings.kinwriterName;
   if (!confirm(`Delete ${name} for good? Their notebook, channels and everything they remember go too. (Archiving keeps them instead.) Their files are kept in the data folder's trash, just in case.`)) return;
   if (prompt(`Type ${name} to confirm.`)?.trim() !== name) return;
   try {
-    await api("DELETE", `/api/hub/friends/${encodeURIComponent(state.kinwriterId)}`, {});
+    await api("DELETE", `/api/hub/kinwriters/${encodeURIComponent(state.kinwriterId)}`, {});
     writeLocal(KINWRITER_KEY, "");
     history.replaceState(null, "", location.pathname);
     location.reload();
   } catch (error) {
-    showFormError($("friend-form"), error.message);
+    showFormError($("kinwriter-form"), error.message);
   }
 }
 
 /** Give the open kinwriter a server of their own. */
 async function moveKinwriterOut() {
   try {
-    await api("POST", `/api/hub/friends/${encodeURIComponent(state.kinwriterId)}/move`, {});
+    await api("POST", `/api/hub/kinwriters/${encodeURIComponent(state.kinwriterId)}/move`, {});
     await loadHub();
-    $("friend-dialog").close();
+    $("kinwriter-dialog").close();
     renderAll();
   } catch (error) {
-    showFormError($("friend-form"), error.message);
+    showFormError($("kinwriter-form"), error.message);
   }
 }
 
@@ -293,29 +295,29 @@ async function moveKinwriterOut() {
 /** A new kinwriter: in a new server (`serverId` null), or in that server. */
 function openNewKinwriter(serverId) {
   state.newKinwriterServer = serverId;
-  const form = $("new-friend-form");
+  const form = $("new-kinwriter-form");
   form.reset();
   const server = serverId && state.hub.find((s) => s.id === serverId);
-  $("new-friend-title").textContent = server ? `A new kinwriter in ${serverName(server)}` : "New server";
-  $("new-friend-note").textContent = server
+  $("new-kinwriter-title").textContent = server ? `A new kinwriter in ${serverName(server)}` : "New server";
+  $("new-kinwriter-note").textContent = server
     ? "Another kinwriter here, with their own notebook, channels and memory. Their channels show under their name."
     : "A new kinwriter, with a server of their own. They start fresh: their own notebook, channels and memory, with your connection profiles and preferences.";
   $("new-server-name-row").hidden = Boolean(server);
   hideFormError(form);
-  $("new-friend-dialog").showModal();
+  $("new-kinwriter-dialog").showModal();
 }
 
 /** "Choose or make someone…": the seed picker (js/seeds.js). Accept makes them at once. */
 function chooseNewKinwriter() {
   openSeedPicker({
     accept: async (seedText) => {
-      const form = $("new-friend-form").elements;
+      const form = $("new-kinwriter-form").elements;
       const body = { seed: seedText, avatar: form.avatar.value, copyFrom: state.kinwriterId };
       const serverId = state.newKinwriterServer;
       const data = serverId
-        ? await api("POST", `/api/hub/servers/${encodeURIComponent(serverId)}/friends`, body)
+        ? await api("POST", `/api/hub/servers/${encodeURIComponent(serverId)}/kinwriters`, body)
         : await api("POST", "/api/hub/servers", { ...body, serverName: form.serverName.value });
-      $("new-friend-dialog").close();
+      $("new-kinwriter-dialog").close();
       switchKinwriter(data.kinwriterId);
     },
   });
@@ -323,19 +325,19 @@ function chooseNewKinwriter() {
 
 async function createKinwriter(event) {
   event.preventDefault();
-  const form = $("new-friend-form").elements;
+  const form = $("new-kinwriter-form").elements;
   const body = { name: form.name.value, avatar: form.avatar.value, copyFrom: state.kinwriterId };
   if (form.prompt.value.trim()) body.prompt = form.prompt.value;
-  const button = $("new-friend-create");
+  const button = $("new-kinwriter-create");
   button.disabled = true;
   try {
     const serverId = state.newKinwriterServer;
     const data = serverId
-      ? await api("POST", `/api/hub/servers/${encodeURIComponent(serverId)}/friends`, body)
+      ? await api("POST", `/api/hub/servers/${encodeURIComponent(serverId)}/kinwriters`, body)
       : await api("POST", "/api/hub/servers", { ...body, serverName: form.serverName.value });
     switchKinwriter(data.kinwriterId);
   } catch (error) {
-    showFormError($("new-friend-form"), error.message);
+    showFormError($("new-kinwriter-form"), error.message);
     button.disabled = false;
   }
 }
@@ -346,8 +348,8 @@ function openServerSettings() {
   const server = currentServer();
   if (!server) return;
   $("server-name-input").value = server.name;
-  $("server-friend-list").replaceChildren(
-    ...server.friends.map((kinwriter) => {
+  $("server-kinwriter-list").replaceChildren(
+    ...server.kinwriters.map((kinwriter) => {
       const item = document.createElement("li");
       const face = document.createElement("span");
       face.className = "avatar";
@@ -388,7 +390,7 @@ function renderArchived(server) {
       restore.textContent = "Restore";
       restore.addEventListener("click", async () => {
         try {
-          await api("POST", `/api/hub/friends/${encodeURIComponent(kinwriter.id)}/restore`, { serverId: server.id });
+          await api("POST", `/api/hub/kinwriters/${encodeURIComponent(kinwriter.id)}/restore`, { serverId: server.id });
           switchKinwriter(kinwriter.id);
         } catch (error) {
           showFormError($("server-form"), error.message);
@@ -402,7 +404,7 @@ function renderArchived(server) {
         if (!confirm(`Delete ${kinwriter.name} for good? Everything they remember goes. (Their files go to the data folder's trash.)`)) return;
         if (prompt(`Type ${kinwriter.name} to confirm.`)?.trim() !== kinwriter.name) return;
         try {
-          const data = await api("DELETE", `/api/hub/friends/${encodeURIComponent(kinwriter.id)}`, {});
+          const data = await api("DELETE", `/api/hub/kinwriters/${encodeURIComponent(kinwriter.id)}`, {});
           state.archived = data.archived;
           renderArchived(server);
         } catch (error) {
@@ -429,7 +431,7 @@ async function saveServer(event) {
 
 async function deleteServer() {
   const server = currentServer();
-  const names = server.friends.map((p) => p.name).join(", ");
+  const names = server.kinwriters.map((p) => p.name).join(", ");
   if (!confirm(`Delete the server "${serverName(server)}", and ${names} with it? Everything they remember goes too. (Their files are kept in the data folder's trash.)`)) return;
   if (prompt(`Type ${serverName(server)} to confirm.`)?.trim() !== serverName(server)) return;
   try {
@@ -442,23 +444,23 @@ async function deleteServer() {
   }
 }
 
-$("open-friend-from-settings").addEventListener("click", () => {
+$("open-kinwriter-from-settings").addEventListener("click", () => {
   els.settingsDialog.close();
   openKinwriter();
 });
-$("friend-form").addEventListener("submit", saveKinwriter);
-$("friend-form").addEventListener("input", previewKinwriterLook);
-$("friend-form").elements.oocBubbles.addEventListener("change", updateTextingOnly);
-$("friend-delete").addEventListener("click", deleteKinwriter);
-$("friend-archive").addEventListener("click", archiveKinwriter);
-$("friend-move").addEventListener("click", moveKinwriterOut);
-$("new-friend-form").addEventListener("submit", createKinwriter);
-$("new-friend-seed").addEventListener("click", chooseNewKinwriter);
+$("kinwriter-form").addEventListener("submit", saveKinwriter);
+$("kinwriter-form").addEventListener("input", previewKinwriterLook);
+$("kinwriter-form").elements.oocBubbles.addEventListener("change", updateTextingOnly);
+$("kinwriter-delete").addEventListener("click", deleteKinwriter);
+$("kinwriter-archive").addEventListener("click", archiveKinwriter);
+$("kinwriter-move").addEventListener("click", moveKinwriterOut);
+$("new-kinwriter-form").addEventListener("submit", createKinwriter);
+$("new-kinwriter-seed").addEventListener("click", chooseNewKinwriter);
 $("server-name").addEventListener("click", openServerSettings);
 $("server-form").addEventListener("submit", saveServer);
 $("server-delete").addEventListener("click", deleteServer);
 $("create-group").addEventListener("click", () => createGroup(currentServer().id));
-$("server-add-friend").addEventListener("click", () => {
+$("server-add-kinwriter").addEventListener("click", () => {
   $("server-dialog").close();
   openNewKinwriter(currentServer().id);
 });

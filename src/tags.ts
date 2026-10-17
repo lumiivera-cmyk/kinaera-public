@@ -23,14 +23,17 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { headerList, headerText, splitFrontmatter } from "./frontmatter.ts";
+import { headerList, headerText, markdownSections, splitFrontmatter } from "./frontmatter.ts";
 
 /** Where the tag files are. */
 export const TAGS_DIR = resolve(import.meta.dir, "..", "kinwriter-tags");
 
-/** The five categories, in the picker's order. */
+/**
+ * The five categories, in the picker's order. `multiple`: you can pick
+ * several of its tags at once, and the generator blends them all.
+ */
 export const CATEGORIES = [
-  { id: "personality", label: "Personality", section: "Personality" },
+  { id: "personality", label: "Personality", section: "Personality", multiple: true },
   { id: "temperament", label: "Temperament", section: "Temperament" },
   { id: "prose", label: "Prose style", section: "Prose style" },
   { id: "inspiration", label: "Biggest influence", section: "Biggest influence" },
@@ -39,8 +42,13 @@ export const CATEGORIES = [
 
 export type CategoryId = (typeof CATEGORIES)[number]["id"];
 
-/** The fragment's sections, in order. Era is only for social platforms. */
-export const TAG_SECTIONS = ["Era", "Texture", "On the page", "In OOC", "Tics", "Avoid", "Tension hooks"];
+/**
+ * The fragment's sections, in order. Era is only for social platforms.
+ * Texture says what this part of their life was like; Ways it can go lists
+ * the different people the same history can leave, for the generator to
+ * choose between.
+ */
+export const TAG_SECTIONS = ["Era", "Texture", "Ways it can go", "On the page", "In OOC", "Tics", "Avoid", "Tension hooks"];
 
 export interface Pocket {
   slug: string;
@@ -75,15 +83,7 @@ export interface FileProblem {
 }
 
 /** Split a body into its `##` sections (in order), each with its text. */
-function sections(body: string): { heading: string; text: string }[] {
-  const out: { heading: string; text: string }[] = [];
-  for (const line of body.split("\n")) {
-    const heading = line.match(/^##\s+(.+?)\s*$/);
-    if (heading) out.push({ heading: heading[1]!, text: "" });
-    else if (out.length) out.at(-1)!.text += `${line}\n`;
-  }
-  return out.map((s) => ({ heading: s.heading, text: s.text.trim() }));
-}
+const sections = markdownSections;
 
 /** The pockets in a Pockets section. */
 function parsePockets(text: string): { pockets: Pocket[]; problems: string[] } {
@@ -219,12 +219,19 @@ export function allAvoidTerms(tags: Tag[]): string[] {
   return [...new Set(tags.flatMap((t) => t.avoidTerms))];
 }
 
+/** Whether a category takes several tags at once (personality does). */
+export function allowsMultiple(category: CategoryId): boolean {
+  const c = CATEGORIES.find((c) => c.id === category);
+  return Boolean(c && "multiple" in c && c.multiple);
+}
+
 /** The picker's view: categories in order, each with its options, labels, blurbs and pockets (never the fragments). */
 export function pickerView(tags: Tag[]) {
   return CATEGORIES.map((c) => ({
     id: c.id,
     label: c.label,
     subtitle: "subtitle" in c ? c.subtitle : null,
+    multiple: allowsMultiple(c.id),
     options: tags
       .filter((t) => t.category === c.id)
       .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))

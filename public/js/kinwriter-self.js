@@ -23,12 +23,12 @@ export async function openSelf() {
   const dialog = $("self-dialog");
   hideFormError(dialog);
   const s = state.settings;
-  paintAvatar($("self-avatar"), { name: s.friendName, avatar: s.friendAvatar, color: s.friendColor });
-  $("self-title").textContent = s.friendName;
+  paintAvatar($("self-avatar"), { name: s.kinwriterName, avatar: s.kinwriterAvatar, color: s.kinwriterColor });
+  $("self-title").textContent = s.kinwriterName;
   if (!dialog.open) dialog.showModal();
   keepFresh();
   try {
-    page = await api("GET", "/api/friend-page");
+    page = await api("GET", "/api/kinwriter-page");
     renderSelf();
   } catch (error) {
     showFormError(dialog, error.message);
@@ -77,7 +77,7 @@ function renderSelfNotes(kinwriter) {
 }
 
 function renderSelf() {
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   renderSelfNotes(kinwriter);
   // Dev mode's tools (DEVELOPER_PANEL=1): never shown otherwise.
   for (const element of $("self-dialog").querySelectorAll("[data-developer]")) element.hidden = !state.developerPanel;
@@ -92,7 +92,7 @@ function renderSelf() {
   );
 
   // The changelog, newest first.
-  const by = (v) => (v.author === "friend" ? kinwriter : "You");
+  const by = (v) => (v.author === "kinwriter" ? kinwriter : "You");
   const status = { accepted: "", pending: " (waiting)", declined: " (declined)", withdrawn: " (withdrawn)" };
   $("self-changelog").replaceChildren(
     ...[...page.history].reverse().map((v) => {
@@ -291,7 +291,7 @@ function renderPermissions() {
 
 /** Where orientation stands, in words, with what you can do about it (js/orientation.js). */
 function renderOrientation() {
-  const kinwriter = state.settings.friendName;
+  const kinwriter = state.settings.kinwriterName;
   const o = page.orientation;
   state.orientation = o;
   const lines = [];
@@ -353,8 +353,10 @@ function keepFresh() {
   clearInterval(refresher);
   refresher = setInterval(async () => {
     if (!$("self-dialog").open) return clearInterval(refresher);
+    // Not while the app is in the background; the next check catches up.
+    if (document.visibilityState !== "visible") return;
     try {
-      page = await api("GET", "/api/friend-page");
+      page = await api("GET", "/api/kinwriter-page");
       renderOrientation();
     } catch {
       // Try again next time.
@@ -384,7 +386,9 @@ function waitingCard(title, text, onWithdraw) {
 /** Send something, and show the page that comes back. */
 async function act(method, path, body = {}) {
   try {
-    page = await api(method, path, body);
+    const result = await api(method, path, body);
+    // Most answer with the page; a few with { page, … }.
+    page = result.page ?? result;
     state.waiting = page.waiting;
     renderSelf();
     return true;
@@ -404,8 +408,8 @@ async function suggestNote() {
   }
 }
 
-$("friend-card").addEventListener("click", openSelf);
-$("friend-card").addEventListener("keydown", (event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), openSelf()));
+$("kinwriter-card").addEventListener("click", openSelf);
+$("kinwriter-card").addEventListener("keydown", (event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), openSelf()));
 $("self-settings").addEventListener("click", () => {
   $("self-dialog").close();
   openKinwriter();

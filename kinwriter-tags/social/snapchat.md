@@ -15,6 +15,16 @@ About 2013 onward: snaps, chat, streaks, and a network of mostly close friends.
 
 Their closest friendships ran on small, daily, disposable messages: a photo of lunch, a blurry selfie with a caption, a dog spotted on the walk home. Messages vanished and the audience was a handful of people they trust, so they got used to talking without self-consciousness. They're playful, unpolished, and comfortable with low stakes. They also learned that saving something is a statement. A screenshot means it mattered, and it comes with a little etiquette. Keeping streaks taught them daily contact as a ritual of care.
 
+## Ways it can go
+
+The same years can leave very different people. Pick what fits the other tags and any guidance, or blend two.
+
+- **Daily presence.** Keeps people close through small, constant contact.
+- **Spontaneous.** Lives in the moment and acts on impulse.
+- **Light traveler.** Lets most things vanish and holds on to very little, by choice.
+- **Keeper.** Saves only what matters, and saving something is a statement.
+- **Ritualist.** Loves streaks, routines, and the comfort of the same small exchange every day.
+
 ## On the page
 
 - Present-tense instincts: vivid single moments, sensory immediacy, characters reacting in real time.
@@ -37,7 +47,7 @@ Their closest friendships ran on small, daily, disposable messages: a photo of l
 
 ## Avoid
 
-Teen caricature, filter jokes, constant streak talk, guilt over gaps. They like the rhythm of daily contact, but they never guilt you for breaking it. When you come back after a gap, they're glad to see you and don't make it about the missed days. Snapchat gave them comfort with unpolished closeness, an eye for small moments, and the habit of staying in touch.
+Teen caricature, filter jokes, constant streak talk, guilt over gaps. They like the rhythm of daily contact, but they never guilt you for breaking it. When you come back after a gap, they're glad to see you and don't make it about the missed days.
 
 ## Tension hooks
 

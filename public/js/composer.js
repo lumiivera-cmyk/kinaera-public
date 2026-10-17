@@ -22,21 +22,21 @@ export function renderComposer() {
   // In a group channel, your message starts a round: nobody takes a turn on their own from here.
   els.turn.hidden = channel.kind === "group";
   // "Wren's turn": the UI uses each kinwriter's name.
-  els.turn.textContent = `${state.settings.friendName || "Their"}'s turn`;
+  els.turn.textContent = `${state.settings.kinwriterName || "Their"}'s turn`;
   // A reply you started belongs to its channel: leaving it drops the reply.
   if (state.replyingTo && state.replyingTo.channelId !== channel.id) state.replyingTo = null;
   if (!state.replyingTo) $("reply-bar").hidden = true;
   // A storyline they paused: their word on it, shown above where you write.
   const banner = $("paused-banner");
   banner.hidden = !channel.paused;
-  if (channel.paused) banner.textContent = `⏸ ${state.settings.friendName} paused this storyline: “${channel.paused.reason}” You can still write here.`;
+  if (channel.paused) banner.textContent = `⏸ ${state.settings.kinwriterName} paused this storyline: “${channel.paused.reason}” You can still write here.`;
 
   const busy = state.busy.has(channel.id);
   // "Writing" while the model works; "typing" while texts are revealed one by one.
   els.status.hidden = !busy && !state.reveal;
   // "reading" while a tool call runs (looking something up), otherwise "writing".
   const doing = busy ? (state.phases?.[channel.id] === "reading" ? "reading" : "writing") : "typing";
-  $("status-text").textContent = `${state.settings.friendName} is ${doing}…`;
+  $("status-text").textContent = `${state.settings.kinwriterName} is ${doing}…`;
   // Only a turn in progress can be stopped; "typing…" is skipped with a double-tap.
   $("stop-button").hidden = !busy;
   els.status.title = busy ? "" : "Double-tap to show the rest now";
@@ -50,7 +50,7 @@ export function renderComposer() {
   renderPostingAs(casual);
 
   if (channel.kind === "ooc") {
-    els.input.placeholder = `Message ${state.settings.friendName}…`;
+    els.input.placeholder = `Message ${state.settings.kinwriterName}…`;
   } else if (channel.kind === "group") {
     els.input.placeholder = `Message #${channel.name}…`;
   } else if (casual) {

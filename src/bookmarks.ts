@@ -9,6 +9,8 @@
  * section says "you've read up to passage 7 of 67" beside the document.
  */
 
+import type { Database } from "bun:sqlite";
+import { AppState } from "./appstate.ts";
 import type { Store } from "./store.ts";
 
 const KEY = "library.read";
@@ -31,4 +33,15 @@ export function markRead(store: Store, docId: string, passage: number): Bookmark
   all[docId] = mark;
   store.appState.set(KEY, JSON.stringify(all));
   return mark;
+}
+
+/** Forget the bookmark in a document that's being deleted (src/library.ts). */
+export function forgetBookmark(db: Database, docId: string): void {
+  const state = new AppState(db);
+  const value = state.get(KEY);
+  if (!value) return;
+  const all = JSON.parse(value) as Record<string, Bookmark>;
+  if (!(docId in all)) return;
+  delete all[docId];
+  state.set(KEY, Object.keys(all).length ? JSON.stringify(all) : null);
 }

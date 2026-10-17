@@ -24,9 +24,9 @@ import type { PromptEntry } from "../src/notebook.ts";
 import type { Author, Channel, Message, NotebookEntry, Settings } from "../src/types.ts";
 
 const settings: Settings = {
-  friendName: "Arlo",
-  friendPronouns: "",
-  friendPrompt: "You are Arlo, a writer of grounded prose.",
+  kinwriterName: "Arlo",
+  kinwriterPronouns: "",
+  kinwriterPrompt: "You are Arlo, a writer of grounded prose.",
   literaryPrompt: "LITERARY: take your time.",
   casualPrompt: "CASUAL: keep it snappy.",
   oocPrompt: "OOC: one or two sentences.",
@@ -46,8 +46,9 @@ const settings: Settings = {
   scripts: false,
   hardLimits: "",
   heartbeatHours: 0,
-  friendAvatar: "",
-  friendColor: -1,
+  heartbeatAssignment: "",
+  kinwriterAvatar: "",
+  kinwriterColor: -1,
   oocBubbles: false,
   matchPace: false,
   typingBaseMs: 600,
@@ -57,6 +58,8 @@ const settings: Settings = {
   quietEnd: 8,
   appTheme: "classic",
   themeOptions: {},
+  appBackground: "",
+  backgroundDim: 0,
 };
 
 function channel(overrides: Partial<Channel>): Channel {
@@ -91,7 +94,7 @@ function entry(name: string, extra: Partial<NotebookEntry> = {}, hiddenFromUser 
       systemPrompt: "",
       proxyPrefix: null,
       folderId: null,
-      owner: "friend",
+      owner: "kinwriter",
       visibility: null,
       editing: null,
       createdAt: "",
@@ -167,7 +170,7 @@ describe("buildPromptStack in an RP channel", () => {
 
     const text = system!.content;
     const framing = text.indexOf(rpFraming());
-    const kinwriter = text.indexOf(settings.friendPrompt);
+    const kinwriter = text.indexOf(settings.kinwriterPrompt);
     const character = text.indexOf("### Ilse Marrow (you play this character)");
 
     // Layer 1 (framing, then kinwriter prompt) comes before layer 3 (the cast).
@@ -247,7 +250,7 @@ describe("buildPromptStack in an RP channel", () => {
   });
 
   test("follows the system message with the conversation", () => {
-    const stack = build({ messages: [msg("user", "Knock knock"), msg("friend", "Who's there?"), msg("user", "Lettuce")] });
+    const stack = build({ messages: [msg("user", "Knock knock"), msg("kinwriter", "Who's there?"), msg("user", "Lettuce")] });
     expect(stack.slice(1)).toEqual([
       { role: "user", content: "Knock knock" },
       { role: "assistant", content: "Who's there?" },
@@ -256,7 +259,7 @@ describe("buildPromptStack in an RP channel", () => {
   });
 
   test("adds a continue nudge when the channel ends on the kinwriter (a turn without a user message)", () => {
-    const stack = build({ messages: [msg("user", "Hi"), msg("friend", "Hello there.")] });
+    const stack = build({ messages: [msg("user", "Hi"), msg("kinwriter", "Hello there.")] });
     expect(stack.at(-1)).toEqual({ role: "user", content: nudges("rp").continue });
   });
 
@@ -267,7 +270,7 @@ describe("buildPromptStack in an RP channel", () => {
   });
 
   test("only sends the most recent historyLimit messages", () => {
-    const messages = [msg("user", "one"), msg("friend", "two"), msg("user", "three")];
+    const messages = [msg("user", "one"), msg("kinwriter", "two"), msg("user", "three")];
     const stack = build({ settings: { ...settings, historyLimit: 1 }, messages });
     expect(stack.slice(1)).toEqual([{ role: "user", content: "three" }]);
   });
@@ -275,7 +278,7 @@ describe("buildPromptStack in an RP channel", () => {
 
 describe("scene breaks and casual bubbles in the history", () => {
   test("a scene break becomes an OOC line from the user", () => {
-    const stack = build({ messages: [msg("user", "Hi"), msg("friend", "Hello."), sceneBreak("The Storm"), msg("user", "*Thunder.*")] });
+    const stack = build({ messages: [msg("user", "Hi"), msg("kinwriter", "Hello."), sceneBreak("The Storm"), msg("user", "*Thunder.*")] });
     expect(stack.slice(1)).toEqual([
       { role: "user", content: "Hi" },
       { role: "assistant", content: "Hello." },
@@ -285,7 +288,7 @@ describe("scene breaks and casual bubbles in the history", () => {
   });
 
   test("ending on a scene break asks for the new scene's opening", () => {
-    const stack = build({ messages: [msg("user", "Hi"), msg("friend", "Hello."), sceneBreak("")] });
+    const stack = build({ messages: [msg("user", "Hi"), msg("kinwriter", "Hello."), sceneBreak("")] });
     expect(stack.at(-1)).toEqual({ role: "user", content: `(OOC: Scene break.)\n\n${newSceneNudge()}` });
   });
 
@@ -296,8 +299,8 @@ describe("scene breaks and casual bubbles in the history", () => {
       messages: [
         msg("user", "*waves*", { ...casual, characters: ["Kestrel"] }),
         msg("user", "hi", { ...casual, characters: ["Kestrel"] }),
-        msg("friend", "Door's open.", { ...casual, characters: ["Ilse Marrow"] }),
-        msg("friend", "*nods*", { ...casual, characters: ["Ilse Marrow"] }),
+        msg("kinwriter", "Door's open.", { ...casual, characters: ["Ilse Marrow"] }),
+        msg("kinwriter", "*nods*", { ...casual, characters: ["Ilse Marrow"] }),
       ],
     });
     expect(stack.slice(1, 3)).toEqual([
@@ -314,16 +317,27 @@ describe("buildPromptStack in an OOC channel", () => {
     expect(system!.content).not.toContain(rpFraming());
     expect(system!.content).not.toContain("lighthouse keeper");
     // Your kinwriter prompt still applies: it's who they are.
-    expect(system!.content).toContain(settings.friendPrompt);
+    expect(system!.content).toContain(settings.kinwriterPrompt);
   });
 
   test("sends only the OOC prompt, after who your kinwriter is", () => {
     const [system] = build({ channel: ooc });
     const text = system!.content;
     expect(text).toContain(`## How you talk here\n\n${settings.oocPrompt}`);
-    expect(text.indexOf(settings.oocPrompt)).toBeGreaterThan(text.indexOf(settings.friendPrompt));
+    expect(text.indexOf(settings.oocPrompt)).toBeGreaterThan(text.indexOf(settings.kinwriterPrompt));
     expect(text).not.toContain(settings.literaryPrompt);
     expect(text).not.toContain(settings.casualPrompt);
+  });
+
+  test("group channels and DMs are conversations: the OOC prompt, not the roleplay one", () => {
+    for (const kind of ["group", "dm"] as const) {
+      const [system] = build({ channel: channel({ id: kind, name: kind, kind }) });
+      expect(system!.content).toContain(settings.oocPrompt);
+      expect(system!.content).not.toContain(settings.literaryPrompt);
+    }
+    // The practice channel has scenes in it: it keeps its mode's prompt.
+    const [practice] = build({ channel: channel({ id: "practice", name: "practice", kind: "practice" }) });
+    expect(practice!.content).toContain(settings.literaryPrompt);
   });
 
   test("lists the channels on the server", () => {
@@ -367,7 +381,7 @@ describe("describeChannels", () => {
 
 describe("toChatHistory", () => {
   test("merges consecutive messages from the same author", () => {
-    const history = toChatHistory([msg("user", "First."), msg("user", "Second."), msg("friend", "Reply.")]);
+    const history = toChatHistory([msg("user", "First."), msg("user", "Second."), msg("kinwriter", "Reply.")]);
     expect(history).toEqual([
       { role: "user", content: "First.\n\nSecond." },
       { role: "assistant", content: "Reply." },
@@ -375,7 +389,7 @@ describe("toChatHistory", () => {
   });
 
   test("skips messages that are only whitespace", () => {
-    expect(toChatHistory([msg("user", "  \n "), msg("friend", "Hi")])).toEqual([{ role: "assistant", content: "Hi" }]);
+    expect(toChatHistory([msg("user", "  \n "), msg("kinwriter", "Hi")])).toEqual([{ role: "assistant", content: "Hi" }]);
   });
 });
 
@@ -403,14 +417,14 @@ describe("matching the user's pace", () => {
   });
 
   test("in a literary scene, the note follows the user's latest post, and the style drops 'room to breathe'", () => {
-    const messages = build({ settings: paced, messages: [msg("user", "Old."), msg("friend", "Reply."), msg("user", post)] });
+    const messages = build({ settings: paced, messages: [msg("user", "Old."), msg("kinwriter", "Reply."), msg("user", post)] });
     expect(messages.at(-1)!.content).toBe(`${post}\n\n${paceNote(post)}`);
     expect(messages[0]!.content).toContain(modeInstructions("literary", "Ilse Marrow", true));
     expect(messages[0]!.content).not.toContain("room to breathe");
   });
 
   test("continuing after the kinwriter's own post, it follows the nudge", () => {
-    const messages = build({ settings: paced, messages: [msg("user", post), msg("friend", "Reply.")] });
+    const messages = build({ settings: paced, messages: [msg("user", post), msg("kinwriter", "Reply.")] });
     expect(messages.at(-1)!.content).toBe(`${nudges("rp").continue}\n\n${paceNote(post)}`);
   });
 

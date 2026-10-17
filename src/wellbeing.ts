@@ -92,7 +92,7 @@ export async function takeReading(store: Store, decider: Decider | null, since: 
     .listChannels()
     .filter((c) => c.kind === "ooc")
     .flatMap((c) => store.getMessages(c.id))
-    .filter((m) => m.author === "friend" && m.kind === "post" && m.createdAt >= since.toISOString() && m.createdAt <= now.toISOString())
+    .filter((m) => m.author === "kinwriter" && m.kind === "post" && m.createdAt >= since.toISOString() && m.createdAt <= now.toISOString())
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const base = { since: since.toISOString(), until: now.toISOString(), messages: messages.length };
   if (messages.length === 0) return store.wellbeing.add({ ...base, verdict: null, yes: [], error: "No messages of their own this week." }, now);
@@ -106,6 +106,8 @@ export async function takeReading(store: Store, decider: Decider | null, since: 
     lines.unshift(`- ${m.content}`);
     length += m.content.length;
   }
+  // How many were actually read: the newest, up to the limit.
+  const read = { ...base, messages: lines.length };
   try {
     const verdicts = await decider.askSeries(
       [words.state ?? "", ...lines].join("\n"),
@@ -114,9 +116,9 @@ export async function takeReading(store: Store, decider: Decider | null, since: 
       { purpose: "Wellbeing" },
     );
     const verdict = verdicts.get("w")!;
-    return store.wellbeing.add({ ...base, verdict: verdict.verdict, yes: verdict.yes, error: null }, now);
+    return store.wellbeing.add({ ...read, verdict: verdict.verdict, yes: verdict.yes, error: null }, now);
   } catch (error) {
-    return store.wellbeing.add({ ...base, verdict: null, yes: [], error: `Jev couldn't give a reading (${error instanceof Error ? error.message : error}).` }, now);
+    return store.wellbeing.add({ ...read, verdict: null, yes: [], error: `Jev couldn't give a reading (${error instanceof Error ? error.message : error}).` }, now);
   }
 }
 

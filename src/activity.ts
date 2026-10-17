@@ -16,7 +16,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { NotFoundError, PermissionError, ValidationError } from "./errors.ts";
+import { findByShortId, NotFoundError, PermissionError, ValidationError } from "./errors.ts";
 import type { Author, Comment, CommentThread, ReasoningRecord, ToolCallRecord } from "./types.ts";
 
 // ---------------------------------------------------------------- tool log
@@ -288,10 +288,7 @@ export class Comments {
    * characters), within a channel.
    */
   findInChannel(channelId: string, shortId: string): CommentThread {
-    const wanted = shortId.trim().replace(/^#/, "").toLowerCase();
-    const match = this.forChannel(channelId).filter((t) => t.id.toLowerCase().startsWith(wanted));
-    if (wanted === "" || match.length !== 1) throw new NotFoundError("comment thread");
-    return match[0]!;
+    return findByShortId(this.forChannel(channelId), shortId, "comment thread");
   }
 
   private insert(c: Omit<Comment, "createdAt">): void {

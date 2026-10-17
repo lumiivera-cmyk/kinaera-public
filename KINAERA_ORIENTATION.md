@@ -4,7 +4,7 @@ Kinaera's orientation is a live mode you and your kinwriter go through together 
 
 Decisions made along the way:
 
-- **Stage 1 (the rename):** everything you see says "kinwriter": the app, the prompts, the docs, file and function names. Values already saved in your data stay as they were, as internal labels. These are the `"friend"` author and owner values, the settings keys (`friendName`, `friendPrompt`, `friendAvatar`, `friendColor`), the fields in `hub.json`, the `friends/` folder, and the API routes. So nothing in an existing data folder needs migrating.
+- **Stage 1 (the rename):** everything you see says "kinwriter": the app, the prompts, the docs, file and function names. Values already saved in your data stay as they were, as internal labels. These are the `"friend"` author and owner values, the settings keys (`friendName`, `friendPrompt`, `friendAvatar`, `friendColor`), the fields in `hub.json`, the `friends/` folder, and the API routes. So nothing in an existing data folder needs migrating. **Changed later:** the second rename converted these too ([docs/orientation-1.md](docs/orientation-1.md#the-second-rename)).
 - **Stage 2 (kept apart):** the switch is hub-wide, for every kinwriter on every server, rather than per server. Group channels and DMs made before it are kept, hidden, while it's off.
 - **Reflexes (between stages 4 and 5, at your request):** kinwriters use Jev to remember to call their tools ([docs/reflexes.md](docs/reflexes.md)). Jev reads each draft and reminds them, and they decide. This changes the plan in three places:
   - The catalog of everything they can do lists `set_my_reflexes`.

@@ -66,7 +66,7 @@ async function acceptMargo(text = MARGO) {
 describe("the seed format", () => {
   test("Margo, the spec's example, reads and passes every check", () => {
     const seed = parseSeed(MARGO);
-    expect(seed.header).toMatchObject({ id: "kw_7f3a", name: "Margo", pronouns: "she/her", source: "generated", seed_version: 1 });
+    expect(seed.header).toMatchObject({ id: "kw_7f3a", name: "Margo", pronouns: "she/her", source: "generated", seed_version: 2 });
     expect(seed.header.tags).toHaveLength(5);
     expect(seed.header.pockets).toEqual(["inspiration.contemporary-fiction#literary", "social.twitter-2010s#writers"]);
     expect(validateSeed(seed)).toEqual([]);
@@ -86,12 +86,12 @@ describe("the seed format", () => {
       validateSeed({ header: { ...seed.header, ...change }, body }, options).map((p) => p.check);
     expect(check({ name: "" })).toEqual(["name"]);
     expect(check({ pronouns: " " })).toEqual(["pronouns"]);
-    expect(check({}, seed.body.replace("## Tension", "## Tensions"))).toContain("headings");
+    expect(check({}, seed.body.replace("## Contradictions", "## Tensions"))).toContain("headings");
     expect(check({}, seed.body.replace("## Voice", "## Vibe"))).toContain("headings");
     expect(check({}, seed.body, { words: { min: 10, max: 100 } })).toEqual(["length"]);
     expect(check({}, seed.body, { wordCount: false, words: { min: 10, max: 100 } })).toEqual([]);
     expect(check({}, seed.body.replace("- Whether she has", "- One more.\n- Whether she has").replace("- What she's like", "- And another.\n- What she's like"))).toEqual(["left-open"]);
-    expect(check({}, seed.body.replace("Literary references, occasionally, and only", "Literary references, and only"))).toEqual(["voice"]);
+    expect(check({}, seed.body.replace("References to books she's read, occasionally, and only", "References to books she's read, and only"))).toEqual(["voice"]);
   });
 
   test("avoid terms: whole words or phrases, any case", () => {
@@ -100,13 +100,30 @@ describe("the seed format", () => {
     expect(containsTerm("a quote-tweet", "quote-tweet")).toBe(true);
     expect(containsTerm("Discord servers", "Discord server")).toBe(false);
     expect(containsTerm("the discord server", "Discord server")).toBe(true);
-    const seed = parseSeed(MARGO.replace("Literary references", "Tweet-sized references"));
+    const seed = parseSeed(MARGO.replace("References to books", "Tweet-sized references to books"));
     expect(validateSeed(seed, { avoidTerms: ["tweet", "Reddit"] })).toEqual([{ check: "avoid", message: 'It names something it shouldn\'t: "tweet".' }]);
   });
 
   test("the heading check reads like a person wrote it", () => {
     expect(checkHeadings("## Who they are\nx")).toContain("missing");
     expect(checkHeadings(parseSeed(MARGO).body)).toBeNull();
+  });
+
+  test("a version 1 seed still checks against its own seven headings and length", () => {
+    const v1 = [
+      "## Who they are\nA quiet writer.",
+      "## On the page\n- Lean prose.",
+      "## In OOC\n- Brief.",
+      "## Voice\n- Lowercase, often.",
+      "## Tension\nWants to argue, hates conflict.",
+      "## Leanings\n- Noir.",
+      "## Left open\n- One.\n- Two.",
+    ].join("\n\n");
+    expect(checkHeadings(v1, 1)).toBeNull();
+    expect(checkHeadings(v1)).toContain("missing");
+    const seed = { header: { name: "Old", pronouns: "he/him", seed_version: 1 }, body: v1 };
+    expect(validateSeed(seed, { wordCount: false })).toEqual([]);
+    expect(validateSeed(seed).map((p) => p.check)).toEqual(["length"]);
   });
 });
 
@@ -117,7 +134,7 @@ describe("Accept", () => {
     const { status } = await acceptMargo();
     expect(status).toBe(200);
     const settings = app.store.getSettings();
-    expect(settings).toMatchObject({ friendName: "Margo", friendPronouns: "she/her", friendAvatar: "🦉" });
+    expect(settings).toMatchObject({ kinwriterName: "Margo", kinwriterPronouns: "she/her", kinwriterAvatar: "🦉" });
     const kept = app.store.seeds.get()!;
     // Their own id, not the template's.
     expect(kept.seed.header.id).toBe("home");
@@ -128,10 +145,10 @@ describe("Accept", () => {
   });
 
   test("defaults and generated seeds go through the same check; a broken one is refused", async () => {
-    const broken = MARGO.replace("## Tension", "## Conflict");
+    const broken = MARGO.replace("## Contradictions", "## Conflict");
     const { status, data } = await acceptMargo(broken);
     expect(status).toBe(400);
-    expect(data.error).toContain("Tension");
+    expect(data.error).toContain("Contradictions");
   });
 
   test("self.md goes into their context; seed.md never does, but they can read it", async () => {
@@ -171,11 +188,11 @@ describe("Accept", () => {
 describe("self-notes", () => {
   test("private by default: not on their page, not in the app's settings, not in the preview", async () => {
     await acceptMargo();
-    const page = (await call("GET", "/api/friend-page")).data;
+    const page = (await call("GET", "/api/kinwriter-page")).data;
     expect(page.identity).toBeNull();
     expect(page.history).toEqual([]);
     expect(page.selfNotes).toMatchObject({ shared: false, fromSeed: true, draft: true, file: null, pronouns: "she/her" });
-    expect((await call("GET", "/api/state")).data.settings.friendPrompt).toBe("");
+    expect((await call("GET", "/api/state")).data.settings.kinwriterPrompt).toBe("");
     const preview = (await call("GET", `/api/channels/${ooc.id}/prompt`)).data.messages[0].content;
     expect(preview).not.toContain("Her humor");
     expect(preview).toContain("(private");
@@ -194,21 +211,21 @@ describe("self-notes", () => {
     expect(systemPrompt()).toContain("asks to read your self-notes");
     // Declined first.
     await run("share_self_notes", { share: false, reply: "Not yet." });
-    let page = (await call("GET", "/api/friend-page")).data;
+    let page = (await call("GET", "/api/kinwriter-page")).data;
     expect(page.selfNotes).toMatchObject({ shared: false, request: { status: "declined", reply: "Not yet." } });
     expect(systemPrompt()).not.toContain("asks to read your self-notes");
     // Asked again, and shared.
     await call("POST", "/api/self-notes/request", {});
     await run("share_self_notes", { share: true });
-    page = (await call("GET", "/api/friend-page")).data;
+    page = (await call("GET", "/api/kinwriter-page")).data;
     expect(page.selfNotes.shared).toBe(true);
     expect(page.selfNotes.file).toContain("shared_with_user: true");
     expect(page.selfNotes.file).toContain("Her humor");
     expect(page.identity.identity).toContain("Her humor");
-    expect((await call("GET", "/api/state")).data.settings.friendPrompt).toContain("Her humor");
+    expect((await call("GET", "/api/state")).data.settings.kinwriterPrompt).toContain("Her humor");
     // Then they stop sharing.
     await run("share_self_notes", { share: false });
-    page = (await call("GET", "/api/friend-page")).data;
+    page = (await call("GET", "/api/kinwriter-page")).data;
     expect(page.selfNotes).toMatchObject({ shared: false, file: null });
     expect(page.identity).toBeNull();
   });
@@ -229,6 +246,7 @@ describe("self-notes", () => {
     db.exec("PRAGMA user_version = 12");
     db.exec("ALTER TABLE schedule DROP COLUMN script"); // migration 14, run again on the way back up
     db.exec("DROP TABLE reasoning"); // and 15
+    db.exec("ALTER TABLE relationships RENAME COLUMN kinwriter_id TO friend_id"); // and 17's renamed column
     db.exec("DELETE FROM app_state WHERE key LIKE 'self.%'");
     db.close();
     const store = new Store(path);
@@ -301,7 +319,7 @@ describe("a new name", () => {
     expect(item).toMatchObject({ targetName: "Margot", text: "With a t, finally." });
     expect(systemPrompt()).toContain("You asked to be called Margot");
     await call("POST", `/api/inbox/${item.id}/approve`, {});
-    expect(app.store.getSettings().friendName).toBe("Margot");
+    expect(app.store.getSettings().kinwriterName).toBe("Margot");
     expect((await call("GET", "/api/developer")).data.selfNotes).toContain("name: Margot");
     expect(systemPrompt()).toContain("approved your new name");
   });
@@ -312,7 +330,7 @@ describe("a new name", () => {
     const open = (await call("GET", "/api/inbox")).data.inbox.filter((i: any) => i.kind === "rename");
     expect(open.map((i: any) => i.targetName)).toEqual(["Bee"]);
     await call("POST", `/api/inbox/${open[0].id}/deny`, {});
-    expect(app.store.getSettings().friendName).toBe("Arlo");
+    expect(app.store.getSettings().kinwriterName).toBe("Arlo");
     expect(systemPrompt()).toContain("declined your request to be called Bee");
     expect((await run("request_name_change", { name: "Arlo" })).ok).toBe(false);
   });

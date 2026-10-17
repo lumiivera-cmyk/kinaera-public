@@ -9,56 +9,115 @@ import { $, api, channelPath, els, hideFormError, showFormError, state } from ".
 import { badge, formatTime } from "./format.js";
 import { checkLive, loadState } from "./live.js";
 import { renderToolCall } from "./messages.js";
+import { loadModelInfo, maxTokensFor, modelInfo, onModelInfo, toolNote } from "./model-info.js";
 import { profileEditor, refreshProfileEditors, resolveAssignment } from "./profile-inline.js";
 
 // ---------------------------------------------------------------- dialogs
 
-/** Server-wide settings: fill the form from `state.settings` and open it. */
+/**
+ * Filling each section of the Settings form from a settings object. The
+ * sections are shared by every kinwriter (src/universal.ts); models, memory
+ * and reaching out can be set just for one ("Just for …").
+ */
+const FILL = {
+  models(s) {
+    const form = els.settingsForm.elements;
+    fillAssignmentSelect(form.rpAssignment, s.rpAssignment);
+    fillAssignmentSelect(form.oocAssignment, s.oocAssignment);
+  },
+  memory(s) {
+    const form = els.settingsForm.elements;
+    form.historyLimit.value = s.historyLimit;
+    form.summaries.checked = s.summaries;
+    form.summaryEvery.value = s.summaryEvery;
+    fillAssignmentSelect(form.summaryAssignment, s.summaryAssignment, "Same as roleplay", () => form.rpAssignment.value);
+    // "Same as roleplay" follows the roleplay choice as it changes.
+    if (!form.rpAssignment.dataset.followed) {
+      form.rpAssignment.dataset.followed = "1";
+      form.rpAssignment.addEventListener("change", () => form.summaryAssignment._profileEditor?.render());
+    }
+    updateSummariesOnly();
+  },
+  reaching(s) {
+    const form = els.settingsForm.elements;
+    form.wakeups.value = s.wakeups;
+    form.awayHours.value = s.awayHours;
+    form.wakeCooldownMinutes.value = s.wakeCooldownMinutes;
+    // A value set elsewhere (the API) that isn't one of the choices gets one of its own.
+    if (![...form.asideMinutes.options].some((o) => Number(o.value) === s.asideMinutes)) {
+      form.asideMinutes.append(new Option(`At most every ${s.asideMinutes} minutes`, String(s.asideMinutes)));
+    }
+    form.asideMinutes.value = String(s.asideMinutes);
+    form.quietStart.value = String(s.quietStart);
+    form.quietEnd.value = String(s.quietEnd);
+    form.heartbeatHours.value = String(s.heartbeatHours);
+    // A custom value (set some other way) still shows.
+    if (form.heartbeatHours.value !== String(s.heartbeatHours)) {
+      const every = s.heartbeatHours < 1 ? `${Math.round(s.heartbeatHours * 60)} minutes` : `${s.heartbeatHours} hours`;
+      form.heartbeatHours.append(new Option(`About every ${every}`, String(s.heartbeatHours)));
+      form.heartbeatHours.value = String(s.heartbeatHours);
+    }
+    fillAssignmentSelect(form.heartbeatAssignment, s.heartbeatAssignment, "No check", () => null);
+    updateWakeupsOnly();
+  },
+  jev(s) {
+    const form = els.settingsForm.elements;
+    form.decisionModel.value = s.decisionModel;
+    form.decisionConfidence.value = s.decisionConfidence;
+    fillFallbackSelect(form.decisionFallback, s.decisionFallback);
+  },
+  limits(s) {
+    els.settingsForm.elements.hardLimits.value = s.hardLimits ?? "";
+  },
+};
+
+/** The "Just for …" boxes: ticked for this kinwriter's own sections. */
+function renderOwnBoxes() {
+  const own = state.ownSettings ?? [];
+  for (const box of els.settingsForm.querySelectorAll("input[data-own]")) {
+    box.checked = own.includes(box.dataset.own);
+    box.closest("label").querySelector(".own-name").textContent = state.settings.kinwriterName;
+  }
+  $("own-status").textContent = "";
+}
+
+/** Settings, shared by every kinwriter: fill the form from `state.settings` and open it. */
 export function openSettings() {
   const s = state.settings;
   $("setting-together").checked = state.together === true;
   $("setting-together-status").textContent = "";
-  const form = els.settingsForm.elements;
-  fillAssignmentSelect(form.rpAssignment, s.rpAssignment);
-  fillAssignmentSelect(form.oocAssignment, s.oocAssignment);
-  form.historyLimit.value = s.historyLimit;
-  form.hardLimits.value = s.hardLimits ?? "";
-  form.summaries.checked = s.summaries;
-  form.summaryEvery.value = s.summaryEvery;
-  fillAssignmentSelect(form.summaryAssignment, s.summaryAssignment, "Same as roleplay", () => form.rpAssignment.value);
-  // "Same as roleplay" follows the roleplay choice as it changes.
-  if (!form.rpAssignment.dataset.followed) {
-    form.rpAssignment.dataset.followed = "1";
-    form.rpAssignment.addEventListener("change", () => form.summaryAssignment._profileEditor?.render());
-  }
-  updateSummariesOnly();
-  form.wakeups.value = s.wakeups;
-  form.awayHours.value = s.awayHours;
-  form.wakeCooldownMinutes.value = s.wakeCooldownMinutes;
-  // A value set elsewhere (the API) that isn't one of the choices gets one of its own.
-  if (![...form.asideMinutes.options].some((o) => Number(o.value) === s.asideMinutes)) {
-    form.asideMinutes.append(new Option(`At most every ${s.asideMinutes} minutes`, String(s.asideMinutes)));
-  }
-  form.asideMinutes.value = String(s.asideMinutes);
-  form.quietStart.value = String(s.quietStart);
-  form.quietEnd.value = String(s.quietEnd);
-  form.decisionModel.value = s.decisionModel;
-  form.decisionConfidence.value = s.decisionConfidence;
-  fillFallbackSelect(form.decisionFallback, s.decisionFallback);
-  form.heartbeatHours.value = String(s.heartbeatHours);
-  // A custom value (set some other way) still shows.
-  if (form.heartbeatHours.value !== String(s.heartbeatHours)) {
-    const every = s.heartbeatHours < 1 ? `${Math.round(s.heartbeatHours * 60)} minutes` : `${s.heartbeatHours} hours`;
-    form.heartbeatHours.append(new Option(`About every ${every}`, String(s.heartbeatHours)));
-    form.heartbeatHours.value = String(s.heartbeatHours);
-  }
+  for (const fill of Object.values(FILL)) fill(s);
+  renderOwnBoxes();
   renderHeartbeatStatus();
   $("beat-result").textContent = "";
   $("test-jev-result").textContent = "";
-  updateWakeupsOnly();
   loadWakeLog();
   hideFormError(els.settingsForm);
   els.settingsDialog.showModal();
+}
+
+/**
+ * "Just for …": a section of Settings just for this kinwriter, or shared
+ * again. Saved straight away. Shared again, the section shows everyone's
+ * values (the hub sends them back).
+ */
+for (const box of els.settingsForm.querySelectorAll("input[data-own]")) {
+  box.addEventListener("change", async () => {
+    const group = box.dataset.own;
+    const status = $("own-status");
+    try {
+      const data = await api("PUT", `/api/hub/kinwriters/${encodeURIComponent(state.kinwriterId ?? "home")}/own`, { group, own: box.checked });
+      state.ownSettings = data.own;
+      state.settings = { ...state.settings, ...data.settings };
+      if (!box.checked) FILL[group](state.settings);
+      status.textContent = box.checked
+        ? `Changes to this section now stay with ${state.settings.kinwriterName}.`
+        : `This section is shared again: ${state.settings.kinwriterName} has everyone's.`;
+    } catch (error) {
+      box.checked = !box.checked;
+      status.textContent = error.message;
+    }
+  });
 }
 
 export async function saveSettings(event) {
@@ -86,6 +145,7 @@ export async function saveSettings(event) {
       decisionConfidence: Number(form.decisionConfidence.value),
       decisionFallback: form.decisionFallback.value,
       heartbeatHours: Number(form.heartbeatHours.value),
+      heartbeatAssignment: form.heartbeatAssignment.value,
     });
     state.settings = data.settings;
     els.settingsDialog.close();
@@ -124,7 +184,6 @@ const WAKE_REASONS = {
 };
 const WAKE_OUTCOMES = { posted: "wrote to you", quiet: "didn't write", failed: "failed" };
 
-/** Settings → Your kinwriter reaching out → Recent wake-ups. */
 /** Whether phone notifications work here, and when the next heartbeat is. */
 function renderHeartbeatStatus() {
   const parts = [
@@ -156,6 +215,7 @@ async function beatNow() {
 
 $("beat-now").addEventListener("click", beatNow);
 
+/** Settings → Your kinwriter reaching out → Recent wake-ups. */
 async function loadWakeLog() {
   const list = $("wake-log-list");
   try {
@@ -192,6 +252,9 @@ async function loadWakeLog() {
 /** Settings → Test Jev: one tiny question, and what came back. */
 export async function testJevNow() {
   const result = $("test-jev-result");
+  const button = $("test-jev");
+  if (button.disabled) return;
+  button.disabled = true;
   result.textContent = "Asking Jev…";
   try {
     const data = await api("POST", "/api/jev/test", {});
@@ -199,6 +262,8 @@ export async function testJevNow() {
     result.textContent = `${data.ok ? "✓" : "✗"} ${data.detail}${data.ok ? "" : raw}`;
   } catch (error) {
     result.textContent = `✗ ${error.message}`;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -211,7 +276,7 @@ export function updateSummariesOnly() {
 // ------------------------------------------------- profiles and roulettes
 
 /*
- * Stage 5: connection profiles (a model and its settings) and roulettes (a
+ * Connection profiles (a model and its settings) and roulettes (a
  * weighted set of profiles). The server keeps them; the app lists, edits
  * and assigns them. An assignment is written "profile:<id>" or
  * "roulette:<id>"; "" means the first profile.
@@ -229,6 +294,7 @@ async function refreshProfiles() {
     fillAssignmentSelect(form.rpAssignment, form.rpAssignment.value);
     fillAssignmentSelect(form.oocAssignment, form.oocAssignment.value);
     fillAssignmentSelect(form.summaryAssignment, form.summaryAssignment.value, "Same as roleplay", () => form.rpAssignment.value);
+    fillAssignmentSelect(form.heartbeatAssignment, form.heartbeatAssignment.value, "No check", () => null);
   }
   refreshProfileEditors();
 }
@@ -237,9 +303,10 @@ async function refreshProfiles() {
  * Fill a select with every profile and roulette.
  *
  * @param emptyLabel  If given, a first option with value "" and this label
- *                    (e.g. "Same as the server").
+ *                    (e.g. "Same as Settings").
  * @param emptyMeans  For that option: the assignment it stands for, for the
- *                    settings shown under the select (src/profile-inline.js).
+ *                    settings shown under the select (src/profile-inline.js),
+ *                    or `null` for none (it means no model at all).
  */
 export function fillAssignmentSelect(select, value, emptyLabel, emptyMeans) {
   const profiles = document.createElement("optgroup");
@@ -256,8 +323,11 @@ export function fillAssignmentSelect(select, value, emptyLabel, emptyMeans) {
   // "" (no assignment) means the first profile, where there's no "" option.
   select.value = value || (emptyLabel ? "" : `profile:${state.profiles[0]?.id}`);
   if (select.selectedIndex < 0) select.selectedIndex = 0;
-  // The chosen profile's settings, editable right here.
-  profileEditor(select, (v) => resolveAssignment(v || (emptyMeans ? emptyMeans() : "")));
+  // The chosen profile's settings, editable right here (none when the empty choice means nothing).
+  profileEditor(select, (v) => {
+    const value = v || (emptyMeans ? emptyMeans() : "");
+    return value === null ? null : resolveAssignment(value);
+  });
 }
 
 /** A readable name for an assignment, e.g. "DeepSeek" or "🎲 Variety". */
@@ -279,6 +349,7 @@ function renderModels() {
     const jobs = [];
     if (state.settings.rpAssignment === value) jobs.push("roleplay");
     if (state.settings.oocAssignment === value) jobs.push("OOC");
+    if (state.settings.heartbeatAssignment === value) jobs.push("the heartbeat check");
     const channels = state.channels.filter((c) => c.assignment === value).map((c) => `#${c.name}`);
     return [...jobs, ...channels];
   };
@@ -355,8 +426,33 @@ export function openProfile(profile) {
   form.querySelector(".advanced").open = Boolean(profile?.extraParams);
   $("profile-delete").hidden = !profile;
   renderToolTest(profile);
+  showModelSettings();
+  loadModelInfo();
   $("profile-dialog").showModal();
 }
+
+/**
+ * Show only the settings the chosen model supports (src/nanogpt.ts
+ * `listModels`): no Reasoning for a model that can't reason, Max tokens
+ * capped at the model's own limit, and a note when it can't call tools.
+ */
+function showModelSettings() {
+  const f = $("profile-form").elements;
+  const model = f.model.value;
+  const reasons = modelInfo(model)?.reasoning !== false;
+  $("profile-reasoning-field").hidden = !reasons;
+  f.maxTokens.max = String(maxTokensFor(model));
+  const note = $("profile-tools-note");
+  note.textContent = toolNote(model);
+  note.hidden = !note.textContent;
+}
+
+const profileModel = $("profile-form").elements.model;
+profileModel.addEventListener("input", showModelSettings);
+profileModel.addEventListener("change", showModelSettings);
+onModelInfo(() => {
+  if ($("profile-dialog").open) showModelSettings();
+});
 
 export async function saveProfile(event) {
   event.preventDefault();
@@ -370,7 +466,8 @@ export async function saveProfile(event) {
     maxTokens: Number(f.maxTokens.value),
     topP: f.topP.value === "" ? null : Number(f.topP.value),
     minP: f.minP.value === "" ? null : Number(f.minP.value),
-    reasoningEffort: f.reasoningEffort.value || null,
+    // A model that can't reason has no Reasoning setting to send.
+    reasoningEffort: modelInfo(f.model.value)?.reasoning === false ? null : f.reasoningEffort.value || null,
     supportsTools: f.supportsTools.checked,
     consultant: f.consultant.checked,
     kinwriterMaker: f.kinwriterMaker.checked,
@@ -407,9 +504,8 @@ export async function loadModels() {
   els.loadModels.disabled = true;
   els.loadModels.textContent = "Loading…";
   try {
-    const { models } = await api("GET", "/api/models");
-    els.modelList.replaceChildren(...models.map((id) => new Option(id, id)));
-    els.loadModels.textContent = `${models.length} models`;
+    const models = await loadModelInfo({ quiet: false, force: true });
+    els.loadModels.textContent = `${models.size} models`;
     // Focus the model box so the suggestions are one tap away.
     $("profile-form").elements.model.focus();
   } catch (error) {
@@ -535,7 +631,7 @@ export function renderToolLog() {
   if (calls.length === 0) {
     const empty = document.createElement("li");
     empty.className = "hint";
-    empty.textContent = errorsOnly ? "No errors." : `${state.settings.friendName} hasn't used any tools here yet.`;
+    empty.textContent = errorsOnly ? "No errors." : `${state.settings.kinwriterName} hasn't used any tools here yet.`;
     list.replaceChildren(empty);
     return;
   }

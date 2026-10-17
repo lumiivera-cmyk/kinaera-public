@@ -24,7 +24,9 @@
  *
  * These are plain code, with no model calls. They protect your sleep and
  * your balance; everything else is your kinwriter's call, made in their own
- * turn (no model is asked "is it the moment?" first).
+ * turn. (The one exception is the heartbeat's optional check: a cheaper
+ * model asked first whether they'd use the moment, after the rules pass;
+ * the rules are checked again after it answers yes.)
  *
  * - **Chattiness** (`Settings.wakeups`) decides which events count at all:
  *   off; quiet (coming back after being away, and reviews); normal (also a
@@ -45,7 +47,7 @@
 import type { Database } from "bun:sqlite";
 import { BusyError, pickProfile, reviewsFor, type Kinwriter } from "./kinwriter.ts";
 import { waitingRequest } from "./selfnotes.ts";
-import type { WakeContext, WakeReason } from "./prompt.ts";
+import { whoWrote, type WakeContext, type WakeReason } from "./prompt.ts";
 import type { Store } from "./store.ts";
 import { splitScenes } from "./summaries.ts";
 import type { Channel, Message } from "./types.ts";
@@ -53,6 +55,8 @@ import { orientationRunning, orientationState } from "./orientation.ts";
 import { describeReading, describeTrend } from "./wellbeing.ts";
 import { wording } from "./wording.ts";
 import { toolSpecs } from "./tools.ts";
+import { CancelledError } from "./nanogpt.ts";
+import { humanDuration } from "./ago.ts";
 import { failureNote, findScript, scriptsOn, type ScriptReport } from "./scripts.ts";
 import type { ScheduledWakeup } from "./schedule.ts";
 
@@ -81,6 +85,12 @@ const OWN_TIME: WakeReason[] = ["orientation", "lookback"];
 /** What came of a wake-up. */
 export type WakeOutcome = "posted" | "quiet" | "failed";
 
+/**
+ * How the log's line starts when the heartbeat's check said not now: no
+ * turn was taken, so it starts no cooldown (see `WakeLog.lastTurnAt`).
+ */
+const CHECK_SAID_NO = "The heartbeat check said not now";
+
 /** One wake-up in the log. */
 export interface WakeRecord {
   id: string;
@@ -91,18 +101,18 @@ export interface WakeRecord {
   detail: string;
 }
 
-/** What `Wakeups.event` did. */
 /**
  * A script wake-up (`Wakeups.script`): `ran` (every step worked, done),
- * `wake` (it's an ordinary wake-up now, saying what went wrong), or `held`
- * (a rule held it: it stays waiting).
+ * `wake` (it's an ordinary wake-up now, saying what went wrong), `held`
+ * (a rule held it: it stays waiting), or `stopped` (Stop ended it: done).
  */
 export interface ScriptWakeResult {
-  outcome: "ran" | "wake" | "held";
+  outcome: "ran" | "wake" | "held" | "stopped";
   detail: string;
   report?: ScriptReport;
 }
 
+/** What `Wakeups.event` did. */
 export interface WakeResult {
   /** `null` when a hard rule stopped it (off, quiet hours, cooldown...): nothing was logged. */
   outcome: WakeOutcome | null;
@@ -120,15 +130,15 @@ const REVIEW_RETRIES = 60;
 export const FRESH_SCENE_MINUTES = 60;
 
 /** Within this long (minutes) of the last message, you're mid-conversation. */
-export const CONVERSATION_MINUTES = 30;
+const CONVERSATION_MINUTES = 30;
 
 /** An aside (a moment in OOC after a story post) shows this many of the story's newest posts... */
-export const ASIDE_POSTS = 3;
+const ASIDE_POSTS = 3;
 /** ...each cut to this many characters. */
-export const ASIDE_CHARS = 1200;
+const ASIDE_CHARS = 1200;
 
 /** How many times your kinwriter can reach out without hearing back (one double text, no more). */
-export const MAX_UNANSWERED = 2;
+const MAX_UNANSWERED = 2;
 
 // --------------------------------------------------------------- the log
 
@@ -164,10 +174,16 @@ export class WakeLog {
     return rows.map((r) => ({ id: r.id, at: r.at, reason: r.reason, outcome: r.outcome, channelId: r.channel_id, detail: r.detail }));
   }
 
-  /** When your kinwriter last actually took a wake-up turn (posted or chose quiet), for these reasons. */
+  /**
+   * When your kinwriter last actually took a wake-up turn (posted or chose
+   * quiet), for these reasons. A heartbeat check's no wasn't a turn.
+   */
   lastTurnAt(reasons?: WakeReason[]): Date | null {
     const rows = this.recent(300).filter(
-      (r) => (r.outcome === "posted" || r.outcome === "quiet") && (!reasons || reasons.includes(r.reason)),
+      (r) =>
+        (r.outcome === "posted" || r.outcome === "quiet") &&
+        !(r.reason === "heartbeat" && r.detail.startsWith(CHECK_SAID_NO)) &&
+        (!reasons || reasons.includes(r.reason)),
     );
     return rows[0] ? new Date(rows[0].at) : null;
   }
@@ -185,16 +201,6 @@ export class WakeLog {
 }
 
 // -------------------------------------------------------------- helpers
-
-/** "3 minutes", "5 hours", "2 days". */
-export function humanDuration(ms: number): string {
-  const minutes = Math.max(1, Math.round(ms / 60_000));
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"}`;
-}
 
 /** Whether `now` is within quiet hours (`start` to `end`, wrapping past midnight). -1 means none. */
 export function inQuietHours(now: Date, start: number, end: number): boolean {
@@ -279,13 +285,9 @@ export class Wakeups {
     this.reviewRetry = null;
   }
 
-  /**
-   * Whether an event would be stopped by the hard rules: the reason why,
-   * or `null` if it would go ahead.
-   */
-  blocked(event: WakeEvent, detail: WakeDetail = {}): string | null {
-    const checked = this.rules(event, detail);
-    return "skip" in checked ? checked.skip : null;
+  /** Whether a wake-up is running now. */
+  isRunning(): boolean {
+    return this.running;
   }
 
   /** The hard rules, and where your kinwriter would write. */
@@ -299,9 +301,14 @@ export class Wakeups {
     if (orientationRunning(store)) return skip("They're in an orientation.");
     if (OWN_TIME.includes(event)) return this.ownTimeRules(event);
 
-    // Where your kinwriter is, and how long since you wrote.
+    // Where your kinwriter is, and how long since you wrote. Only talk with
+    // you counts: your posts, and theirs where you are (not DMs between
+    // kinwriters, other kinwriters' posts, or their practice channel).
     const channels = store.listChannels();
-    const all = channels.flatMap((c) => store.getMessages(c.id).filter((m) => m.kind === "post"));
+    const withYou = (c: Channel) => c.kind !== "dm" && c.kind !== "practice";
+    const all = channels.flatMap((c) =>
+      store.getMessages(c.id).filter((m) => m.kind === "post" && (m.author === "user" || (m.author === "kinwriter" && withYou(c)))),
+    );
     all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const yourLast = all.filter((m) => m.author === "user").at(-1) ?? null;
     const sinceMs = yourLast ? now.getTime() - new Date(yourLast.createdAt).getTime() : null;
@@ -371,18 +378,30 @@ export class Wakeups {
   }
 
   private async wake(event: WakeEvent, detail: WakeDetail, skip: (why: string) => WakeResult): Promise<WakeResult> {
-    const checked = this.rules(event, detail);
-    if ("skip" in checked) return skip(checked.skip);
-    const { reason, channel, sinceMs } = checked;
+    const ruled = this.rules(event, detail);
+    if ("skip" in ruled) return skip(ruled.skip);
+    const { reason, channel, sinceMs } = ruled;
     const context = wakeContext(this.store, reason, sinceMs, detail);
 
     try {
+      // The heartbeat's check: a cheaper model asks first, so most beats
+      // never reach the model that writes (Settings → Heartbeat check).
+      let checked = "";
+      if (reason === "heartbeat" && this.store.getSettings().heartbeatAssignment) {
+        const check = await this.kinwriter.heartbeatCheck(channel.id, context);
+        // A no isn't a turn: logged, but it starts no cooldown.
+        if (!check.yes) return this.log(reason, "quiet", channel, `${CHECK_SAID_NO} (${check.profile.name}), so nothing else was asked.`);
+        checked = ` The heartbeat check (${check.profile.name}) said yes first.`;
+        // Things may have changed while it was asked (you wrote, a turn started).
+        const again = this.rules(event, detail);
+        if ("skip" in again) return skip(again.skip);
+      }
       const result = await this.kinwriter.takeTurn(channel.id, "wake", { wake: context });
       // Posting in another channel (post_in_channel) is writing to you too.
       const wrote = result.messages.length > 0 || result.toolCalls.some((c) => c.name === "post_in_channel" && c.status === "ok");
       const acted = result.toolCalls.filter((c) => c.status === "ok").map((c) => c.summary);
       const why = wrote ? (OWN_TIME.includes(reason) ? "They wrote in their practice channel." : "They wrote to you.") : acted.length ? `They acted (${acted.join("; ")}) and didn't write.` : "They chose not to write.";
-      const logged = { ...this.log(reason, wrote ? "posted" : "quiet", channel, why), messages: result.messages };
+      const logged = { ...this.log(reason, wrote ? "posted" : "quiet", channel, why + checked), messages: result.messages };
       // Writing in the practice channel messages no one: no notification.
       // (A post in another channel was notified as it was made.)
       if (result.messages.length > 0 && !OWN_TIME.includes(reason)) {
@@ -442,6 +461,12 @@ export class Wakeups {
       return { outcome: "wake", detail: `Step ${report.failedStep} of "${name}" failed: ${report.error}`, report };
     } catch (error) {
       if (error instanceof BusyError) return held("Your kinwriter is writing there already.");
+      // Stopped on purpose (Stop, or the app shutting down): done, no wake-up.
+      if (error instanceof CancelledError) {
+        store.schedule.markDone(wakeup.id);
+        console.log(`[wake] script "${name}" was stopped before it finished`);
+        return { outcome: "stopped", detail: "It was stopped before it finished." };
+      }
       const message = error instanceof Error ? error.message : String(error);
       store.schedule.toNote(wakeup.id, `Your script "${name}" couldn't run: ${message} ${wakeup.note}`);
       return { outcome: "wake", detail: message };
@@ -475,12 +500,12 @@ export function homeChannel(store: Store, channels: Channel[]): Channel | null {
 /** What a wake-up turn is told: why, since when, what's waiting, and a scene that just ended. */
 export function wakeContext(store: Store, reason: WakeReason, sinceMs: number | null, detail: WakeDetail): WakeContext {
   const waiting: string[] = [];
-  const entries = store.notebook.listEntries("friend");
+  const entries = store.notebook.listEntries("kinwriter");
   const nameOf = (entryId: string) => entries.find((e) => e.id === entryId)?.name ?? "an entry";
-  for (const s of store.notebook.waitingFor("friend")) {
+  for (const s of store.notebook.waitingFor("kinwriter")) {
     waiting.push(`The user's suggested change to ${nameOf(s.entryId)} is waiting for your review.`);
   }
-  for (const s of store.notebook.waitingFor("user").filter((s) => s.author === "friend")) {
+  for (const s of store.notebook.waitingFor("user").filter((s) => s.author === "kinwriter")) {
     waiting.push(`Your suggested change to ${nameOf(s.entryId)} is waiting for the user.`);
   }
   for (const v of store.identity.pending()) {
@@ -525,7 +550,7 @@ export function wakeContext(store: Store, reason: WakeReason, sinceMs: number | 
       channel: channel.name,
       recent: posts
         .map((m) => {
-          const who = m.author === "friend" ? "You" : m.author === "peer" ? (m.speaker?.name ?? "Another kinwriter") : "The user";
+          const who = whoWrote(m, true);
           const text = m.content.length > ASIDE_CHARS ? `${m.content.slice(0, ASIDE_CHARS)}…` : m.content;
           return `${who}${m.characters.length ? ` (as ${m.characters.join(" & ")})` : ""}: ${text}`;
         })

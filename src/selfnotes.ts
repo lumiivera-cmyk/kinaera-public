@@ -15,7 +15,7 @@
  *     instead of adding.
  *
  * Kinwriters who were made before self-notes were private start shared,
- * since you'd always been able to read theirs (migration 12), and they're
+ * since you'd always been able to read theirs (migration 13), and they're
  * told once that they can stop sharing.
  *
  * Dev mode can always read them, without telling the kinwriter (disclosed
@@ -107,8 +107,8 @@ export function selfHeader(store: Store, kinwriterId: string | null): Record<str
   const current = store.identity.current();
   return {
     id: kinwriterId ?? store.seeds.get()?.seed.header.id ?? "",
-    name: settings.friendName,
-    pronouns: settings.friendPronouns,
+    name: settings.kinwriterName,
+    pronouns: settings.kinwriterPronouns,
     derived_from: store.seeds.get() ? "seed" : "hand-written",
     last_revised: (current?.resolvedAt ?? current?.createdAt ?? "").slice(0, 10),
     shared_with_user: selfShared(store),

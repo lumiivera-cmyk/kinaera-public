@@ -3,7 +3,7 @@
  * with who reacted, the picker, and your custom emojis.
  */
 
-import { $, api, hideFormError, scoped, showFormError, state } from "./core.js";
+import { $, api, fileToBase64, hideFormError, scoped, showError, showFormError, state } from "./core.js";
 import { refreshMessages, renderMessages } from "./messages.js";
 
 // -------------------------------------------------------------- reactions
@@ -47,8 +47,8 @@ export function renderReactions(message) {
     chip.type = "button";
     chip.className = "reaction";
     if (authors.includes("user")) chip.classList.add("mine");
-    if (authors.includes("friend")) chip.classList.add("friend");
-    const names = authors.map((a) => (a === "user" ? "You" : state.settings.friendName));
+    if (authors.includes("kinwriter")) chip.classList.add("kinwriter");
+    const names = authors.map((a) => (a === "user" ? "You" : state.settings.kinwriterName));
     chip.title = `${names.join(" and ")} reacted ${emoji}`;
     chip.setAttribute("aria-label", chip.title);
     const count = document.createElement("span");
@@ -71,7 +71,7 @@ async function toggleReaction(messageId, emoji) {
     if (message) message.reactions = reactions;
     renderMessages();
   } catch (error) {
-    alert(error.message);
+    showError(`Couldn't react: ${error.message}`, null);
   }
 }
 
@@ -185,16 +185,6 @@ function renderEmojiList() {
       return item;
     }),
   );
-}
-
-/** A file as base64 (without the data: prefix). */
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
 }
 
 async function addEmoji(event) {

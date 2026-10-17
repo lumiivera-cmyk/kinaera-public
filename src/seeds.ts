@@ -4,11 +4,15 @@
  *
  * A seed is a Markdown file with a header for code and a body for the
  * kinwriter. Code only ever reads the header; the body goes to the
- * kinwriter. The body always has the same seven headings, in this order, so
+ * kinwriter. The body always has the same nine headings, in this order, so
  * they can be checked by their exact text:
  *
- *   ## Who they are   ## On the page   ## In OOC   ## Voice
- *   ## Tension        ## Leanings      ## Left open
+ *   ## Who they are   ## Wants          ## Off the page
+ *   ## In OOC         ## On the page    ## Voice
+ *   ## Contradictions ## Leanings       ## Left open
+ *
+ * Version 1 seeds (seven headings, with Tension, and no Wants or Off the
+ * page) still read and check against their own headings.
  *
  * Defaults are hand-written seeds (kinwriter-defaults/). Generated ones come
  * from one model call (src/generator.ts). After the preview, nothing in the
@@ -20,16 +24,27 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
-import { headerList, headerText, splitFrontmatter, writeFrontmatter, type Header } from "./frontmatter.ts";
+import { headerList, headerText, markdownSections, splitFrontmatter, writeFrontmatter, type Header } from "./frontmatter.ts";
 
-/** The seven headings, in order. */
-export const SEED_HEADINGS = ["Who they are", "On the page", "In OOC", "Voice", "Tension", "Leanings", "Left open"] as const;
+/** The nine headings, in order. */
+export const SEED_HEADINGS = ["Who they are", "Wants", "Off the page", "In OOC", "On the page", "Voice", "Contradictions", "Leanings", "Left open"] as const;
+
+/** Version 1's seven headings, for seeds made before version 2. */
+export const SEED_HEADINGS_V1 = ["Who they are", "On the page", "In OOC", "Voice", "Tension", "Leanings", "Left open"] as const;
 
 /** The format's version, for future migrations. */
-export const SEED_VERSION = 1;
+export const SEED_VERSION = 2;
 
 /** How long a seed's body may be, in words. */
-export const SEED_WORDS = { min: 250, max: 450 };
+export const SEED_WORDS = { min: 350, max: 750 };
+
+/** Version 1's length. */
+export const SEED_WORDS_V1 = { min: 250, max: 600 };
+
+/** The headings a seed of this version has. */
+export function seedHeadings(version: number = SEED_VERSION): readonly string[] {
+  return version === 1 ? SEED_HEADINGS_V1 : SEED_HEADINGS;
+}
 
 /** The words that say how often a tic shows up. Every Voice bullet has one. */
 export const DOSAGE_WORDS = ["rarely", "occasionally", "regularly", "often"];
@@ -112,15 +127,7 @@ export function writeSeed(seed: Seed): string {
 // ------------------------------------------------------------ the body
 
 /** The body's `##` sections, in the order they're written. */
-export function seedSections(body: string): { heading: string; text: string }[] {
-  const sections: { heading: string; text: string }[] = [];
-  for (const line of body.split("\n")) {
-    const heading = line.match(/^##\s+(.+?)\s*$/);
-    if (heading) sections.push({ heading: heading[1]!, text: "" });
-    else if (sections.length) sections.at(-1)!.text += `${line}\n`;
-  }
-  return sections.map((s) => ({ heading: s.heading, text: s.text.trim() }));
-}
+export const seedSections = markdownSections;
 
 /** One section's text ("" if it isn't there). */
 export function seedSection(body: string, heading: string): string {
@@ -147,15 +154,15 @@ export function seedWordCount(body: string): number {
     .filter((word) => /[\p{L}\p{N}]/u.test(word)).length;
 }
 
-/** Whether the headings are the seven, in order, with exact text. A readable problem, or null. */
-export function checkHeadings(body: string): string | null {
+/** Whether the headings are this version's, in order, with exact text. A readable problem, or null. */
+export function checkHeadings(body: string, version: number = SEED_VERSION): string | null {
   const found = seedSections(body).map((s) => s.heading);
-  const expected = [...SEED_HEADINGS];
+  const expected = [...seedHeadings(version)];
   if (found.length === expected.length && found.every((h, i) => h === expected[i])) return null;
   const missing = expected.filter((h) => !found.includes(h));
   if (missing.length) return `It needs every heading: missing "## ${missing.join('", "## ')}".`;
   const extra = found.filter((h) => !(expected as string[]).includes(h));
-  if (extra.length) return `"## ${extra[0]}" isn't one of the seven headings. They are: ${expected.join(", ")}.`;
+  if (extra.length) return `"## ${extra[0]}" isn't one of the ${expected.length} headings. They are: ${expected.join(", ")}.`;
   if (found.length !== expected.length) return "Each heading should appear once.";
   return `The headings are out of order. They go: ${expected.join(", ")}.`;
 }
@@ -179,16 +186,17 @@ export interface SeedProblem {
  * `wordCount: false` (an edit you made), the length isn't checked.
  */
 export function validateSeed(
-  seed: { header: Pick<SeedHeader, "name" | "pronouns">; body: string },
+  seed: { header: Pick<SeedHeader, "name" | "pronouns"> & { seed_version?: number }; body: string },
   options: { avoidTerms?: string[]; wordCount?: boolean; words?: { min: number; max: number } } = {},
 ): SeedProblem[] {
   const problems: SeedProblem[] = [];
   if (!seed.header.name.trim()) problems.push({ check: "name", message: "It has no name." });
   if (!seed.header.pronouns.trim()) problems.push({ check: "pronouns", message: "It has no pronouns." });
-  const headings = checkHeadings(seed.body);
+  const version = seed.header.seed_version ?? SEED_VERSION;
+  const headings = checkHeadings(seed.body, version);
   if (headings) problems.push({ check: "headings", message: headings });
   if (options.wordCount !== false) {
-    const words = options.words ?? SEED_WORDS;
+    const words = options.words ?? (version === 1 ? SEED_WORDS_V1 : SEED_WORDS);
     const count = seedWordCount(seed.body);
     if (count < words.min || count > words.max) problems.push({ check: "length", message: `It's ${count} words; it should be ${words.min} to ${words.max}.` });
   }
@@ -280,7 +288,7 @@ export class SeedArchive {
 
 /**
  * A seed as the app sends it on Accept: read, and checked the way an edit
- * is (name, pronouns and the seven headings, not the length, since you may
+ * is (name, pronouns and the headings, not the length, since you may
  * have edited it). Throws a readable error.
  */
 export function acceptedSeed(text: unknown): Seed {
@@ -302,12 +310,12 @@ export function acceptedSeed(text: unknown): Seed {
  * copy of its body. Their self-notes are private until they share them.
  */
 export function beginFromSeed(
-  store: { updateSettings(update: { friendName?: string; friendPronouns?: string }): unknown; seeds: SeedArchive; identity: { begin(identity: string, tastes: string): unknown } },
+  store: { updateSettings(update: { kinwriterName?: string; kinwriterPronouns?: string }): unknown; seeds: SeedArchive; identity: { begin(identity: string, tastes: string): unknown } },
   seed: Seed,
   kinwriterId: string,
 ): void {
   const kept: Seed = { header: { ...seed.header, id: kinwriterId }, body: seed.body.trim() };
-  store.updateSettings({ friendName: kept.header.name, friendPronouns: kept.header.pronouns });
+  store.updateSettings({ kinwriterName: kept.header.name, kinwriterPronouns: kept.header.pronouns });
   store.seeds.save(kept);
   store.identity.begin(kept.body, "");
 }

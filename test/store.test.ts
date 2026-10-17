@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { openDatabase, SCHEMA_VERSION } from "../src/db.ts";
-import { NotFoundError, Store, ValidationError, validateNewChannel, validateSettings } from "../src/store.ts";
+import { NotFoundError, ValidationError } from "../src/errors.ts";
+import { Store, validateNewChannel, validateSettings } from "../src/store.ts";
 import { tempDir } from "./helpers.ts";
 
 let dir: ReturnType<typeof tempDir>;
@@ -34,7 +35,7 @@ describe("a new server", () => {
   test("has the example character in the notebook, pinned to #story", () => {
     const [story, ooc] = store.listChannels();
     const [ilse] = store.notebook.listEntries("user");
-    expect(ilse).toMatchObject({ name: "Ilse Marrow", kind: "character", owner: "friend" });
+    expect(ilse).toMatchObject({ name: "Ilse Marrow", kind: "character", owner: "kinwriter" });
     // The sheet was read into fields.
     expect(ilse!.fields.find((f) => f.label === "Background")!.value).toContain("logbook");
     expect(store.notebook.castFor("user", story!.id).map((c) => c.name)).toEqual(["Ilse Marrow"]);
@@ -43,8 +44,8 @@ describe("a new server", () => {
 
   test("starts with the default settings", () => {
     const settings = store.getSettings();
-    expect(settings.friendName).toBe("Arlo");
-    expect(settings.friendPrompt).toContain("Arlo");
+    expect(settings.kinwriterName).toBe("Arlo");
+    expect(settings.kinwriterPrompt).toContain("Arlo");
     // One prompt per kind of channel, each with its own default.
     expect(settings.oocPrompt).toContain("one or two sentences");
     expect(settings.literaryPrompt).toContain("prose");
@@ -99,10 +100,10 @@ describe("the database layout", () => {
 
 describe("settings", () => {
   test("keep their changes after a restart", () => {
-    store.updateSettings({ historyLimit: 12, friendName: "Sol" });
+    store.updateSettings({ historyLimit: 12, kinwriterName: "Sol" });
     store.close();
     store = new Store(dir.path);
-    expect(store.getSettings()).toMatchObject({ historyLimit: 12, friendName: "Sol" });
+    expect(store.getSettings()).toMatchObject({ historyLimit: 12, kinwriterName: "Sol" });
   });
 });
 
@@ -128,7 +129,7 @@ describe("channels", () => {
 
   test("deleting a channel deletes its messages and their characters", () => {
     const story = store.listChannels()[0]!;
-    const message = store.addMessage({ channelId: story.id, author: "friend", content: "Hi", characters: ["Ilse"] });
+    const message = store.addMessage({ channelId: story.id, author: "kinwriter", content: "Hi", characters: ["Ilse"] });
     store.deleteChannel(story.id);
 
     expect(() => store.getMessage(message.id)).toThrow(NotFoundError);
@@ -189,8 +190,8 @@ describe("turns", () => {
   test("messages added together share a turn id", () => {
     const story = store.listChannels()[0]!;
     const turn = store.addTurn([
-      { channelId: story.id, author: "friend", content: "one" },
-      { channelId: story.id, author: "friend", content: "two" },
+      { channelId: story.id, author: "kinwriter", content: "one" },
+      { channelId: story.id, author: "kinwriter", content: "two" },
     ]);
     expect(turn[0]!.turnId).toBeString();
     expect(turn[1]!.turnId).toBe(turn[0]!.turnId);
@@ -200,11 +201,11 @@ describe("turns", () => {
     const story = store.listChannels()[0]!;
     expect(store.lastKinwriterTurn(story.id)).toEqual([]);
 
-    store.addTurn([{ channelId: story.id, author: "friend", content: "earlier" }]);
+    store.addTurn([{ channelId: story.id, author: "kinwriter", content: "earlier" }]);
     store.addTurn([{ channelId: story.id, author: "user", content: "hi" }]);
     store.addTurn([
-      { channelId: story.id, author: "friend", content: "a" },
-      { channelId: story.id, author: "friend", content: "b" },
+      { channelId: story.id, author: "kinwriter", content: "a" },
+      { channelId: story.id, author: "kinwriter", content: "b" },
     ]);
     expect(store.lastKinwriterTurn(story.id).map((m) => m.content)).toEqual(["a", "b"]);
 
@@ -214,7 +215,7 @@ describe("turns", () => {
 
   test("an old message without a turn id is a turn of its own", () => {
     const story = store.listChannels()[0]!;
-    store.addMessage({ channelId: story.id, author: "friend", content: "old" });
+    store.addMessage({ channelId: story.id, author: "kinwriter", content: "old" });
     expect(store.lastKinwriterTurn(story.id).map((m) => m.content)).toEqual(["old"]);
   });
 });
@@ -224,7 +225,7 @@ describe("messages", () => {
     const [story, ooc] = store.listChannels();
     store.addMessage({ channelId: story!.id, author: "user", content: "one" });
     store.addMessage({ channelId: ooc!.id, author: "user", content: "elsewhere" });
-    store.addMessage({ channelId: story!.id, author: "friend", content: "two", characters: ["Ilse", "Gull"], model: "m" });
+    store.addMessage({ channelId: story!.id, author: "kinwriter", content: "two", characters: ["Ilse", "Gull"], model: "m" });
 
     const messages = store.getMessages(story!.id);
     expect(messages.map((m) => [m.content, m.characters, m.model])).toEqual([
@@ -238,7 +239,7 @@ describe("messages", () => {
   test("can be edited, deleted and cleared", () => {
     const story = store.listChannels()[0]!;
     const a = store.addMessage({ channelId: story.id, author: "user", content: "typo" });
-    const b = store.addMessage({ channelId: story.id, author: "friend", content: "reply" });
+    const b = store.addMessage({ channelId: story.id, author: "kinwriter", content: "reply" });
 
     expect(store.editMessage(a.id, "fixed")).toMatchObject({ content: "fixed", editedAt: expect.any(String) });
     store.deleteMessage(b.id);
@@ -265,8 +266,8 @@ describe("validation", () => {
 
   test.each([
     [{ historyLimit: 0 }, /historyLimit must be between/],
-    [{ friendName: "  " }, /friendName must be non-empty/],
-    [{ friendPrompt: 42 }, /friendPrompt must be text/],
+    [{ kinwriterName: "  " }, /kinwriterName must be non-empty/],
+    [{ kinwriterPrompt: 42 }, /kinwriterPrompt must be text/],
     [{ rpAssignment: "gpt" }, /rpAssignment must be/],
     [{ themeOptions: { "rainy-window": { "bubble-blur": "lots" } } }, /must be numbers/],
     [{ themeOptions: { "Not A Theme": {} } }, /themeOptions must be a theme id/],
@@ -283,5 +284,75 @@ describe("validation", () => {
     [{ name: "x", kind: "rp", mode: "noir" }, /mode must be/],
   ])("rejects new channel %j", (input, error) => {
     expect(() => validateNewChannel(input)).toThrow(error);
+  });
+});
+
+describe("fixes", () => {
+  const story = () => store.listChannels().find((c) => c.name === "story")!;
+  const say = (content: string) => store.addTurn([{ channelId: story().id, author: "user", content }])[0]!;
+
+  test("deleting a channel's first message keeps the branches forked at it", () => {
+    const a = say("A");
+    say("B");
+    store.branchFrom(a.id);
+    say("B2");
+    store.deleteMessage(a.id);
+    const [branch] = store.branches(story().id);
+    expect(branch).toMatchObject({ forkId: "start", count: 1, first: { content: "B" } });
+    // Going to it sets aside what's in the chat now, from the start.
+    const shelved = store.switchBranch(branch!.id);
+    expect(store.getMessages(story().id).map((m) => m.content)).toEqual(["B"]);
+    expect(shelved).toMatchObject({ forkId: "start", count: 1 });
+    expect(store.branches(story().id).map((b) => b.first.content)).toEqual(["B2"]);
+  });
+
+  test("a peer's edit or deletion marks the digest that covered it stale", () => {
+    const a = say("A");
+    store.summaries.save(story().id, "digest", "", "so far", 1_000_000);
+    store.mirrorEdit(a.id, "A, edited elsewhere");
+    expect(store.summaries.get(story().id, "digest")!.stale).toBe(true);
+    store.summaries.save(story().id, "digest", "", "so far", 1_000_000);
+    store.mirrorDelete(a.id);
+    expect(store.summaries.get(story().id, "digest")!.stale).toBe(true);
+  });
+
+  test("a turn that rolls back tells nobody about its messages", () => {
+    const events: string[] = [];
+    store.onMessageEvent = (event, message) => events.push(`${event}:${message.content}`);
+    const before = store.revision;
+    // The second message's channel doesn't exist, so the whole turn fails.
+    expect(() =>
+      store.addTurn([
+        { channelId: story().id, author: "user", content: "one" },
+        { channelId: "no-such-channel", author: "user", content: "two" },
+      ]),
+    ).toThrow();
+    expect(events).toEqual([]);
+    expect(store.revision).toBe(before);
+    store.addTurn([{ channelId: story().id, author: "user", content: "three" }]);
+    expect(events).toEqual(["added:three"]);
+  });
+
+  test("an existing but empty database still gets #story and #ooc", () => {
+    store.close();
+    const empty = tempDir();
+    openDatabase(join(empty.path, "kinaera.db")).close();
+    store = new Store(empty.path);
+    expect(store.listChannels().map((c) => c.name)).toEqual(["story", "ooc"]);
+    store.close();
+    // Opening it again doesn't add them twice.
+    store = new Store(empty.path);
+    expect(store.listChannels().map((c) => c.name)).toEqual(["story", "ooc"]);
+    empty.cleanup();
+  });
+
+  test("a deleted alternate isn't counted", () => {
+    const [old] = store.addTurn([{ channelId: story().id, author: "kinwriter", content: "v1" }]);
+    const turnId = crypto.randomUUID();
+    store.supersede([old!.id], turnId);
+    const [now] = store.addTurn([{ channelId: story().id, author: "kinwriter", content: "v2" }], turnId);
+    expect(store.getMessage(now!.id).alternates).toBe(1);
+    store.db.query("UPDATE messages SET deleted_at = 'x' WHERE id = $id").run({ id: old!.id });
+    expect(store.getMessage(now!.id).alternates).toBe(0);
   });
 });

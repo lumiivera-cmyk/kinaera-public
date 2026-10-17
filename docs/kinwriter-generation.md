@@ -7,10 +7,10 @@ Every new kinwriter can now begin as a **seed**: a short profile in a fixed form
 In the first-run setup, or when you make a new kinwriter (**+** in the rail, or **Add a kinwriter here**), press **✨ Choose or make someone…**. The seed picker (`public/js/seeds.js`) offers:
 
 - **The default kinwriters**, as cards (name, pronouns, tagline), from `kinwriter-defaults/`. The folder ships empty, so for now there are none.
-- **Make a new one**: five categories (Personality, Temperament, Prose style, Biggest influence, Primary social media), each starting on "Surprise me". Primary social media's subtitle, *i promise this option is interesting*, opens a details page with each platform's era and tics.
+- **Make a new one**: first a required **Name** choice: Random name, Random username (an online handle that fits them), or I'll name them (typed, up to 40 characters, used whatever the model writes). Then five categories (Personality, Temperament, Prose style, Biggest influence, Primary social media), each starting on "Surprise me". Personality takes several tags at once, as chips; the generator blends them into one person. Primary social media's subtitle, *i promise this option is interesting*, opens a details page with each platform's era and tics.
   - **Advanced** (folded away): once you pick a platform or an influence, you can choose its corner (a pocket). Otherwise one is rolled.
   - **Surprise me, don't show me** skips the preview: they're made at once, and you meet them in orientation.
-- **Generate from idea**: write as much or as little as you like. Jev reads it for tags it obviously suggests. If none stand out, one to three tags are rolled. Everything else comes from your words, which win wherever they disagree with a tag. Its seed says `source: prompted`.
+- **Generate from idea**: write as much or as little as you like. Under **Attach tags (optional)** you can pick any tags you want them to have, the same pickers as Make a new one (several personalities too, and corners), each starting on "From the idea". Jev reads your idea for tags it obviously suggests in the categories you left open. If you attached none and none stand out, one to three tags are rolled. Everything else comes from your words, which win wherever they disagree with a tag. Its seed says `source: prompted`.
 
 Writing who they are yourself still works, in the same form as before. That kinwriter has no seed.
 
@@ -18,14 +18,14 @@ Writing who they are yourself still works, in the same form as before. That kinw
 - **Reroll**: the same tags and chosen corners, a new person.
 - **Reroll the dice**: rolls only what chance picked. It shows only if chance picked something.
 - **Back to tags**: back to the picker, with your choices kept.
-- **Edit**: name, pronouns and the text. Saving checks the seven headings again (not the length) and marks the seed `user_edited`.
+- **Edit**: name, pronouns and the text. Saving checks the headings again (not the length) and marks the seed `user_edited`.
 - **Accept**: makes them, and the app offers their orientation.
 
 A default gets the same preview, without the rerolls.
 
 ## The seed
 
-`src/seeds.ts`. A seed is a Markdown file: a header for code (`id`, `name`, `pronouns`, `source`, `tags`, `rolled`, `pockets`, `model`, `created`, `seed_version`, plus `user_edited`, and `tagline` for defaults), and a body with seven headings, in order: Who they are, On the page, In OOC, Voice, Tension, Leanings, Left open. Code reads only the header.
+`src/seeds.ts`. A seed is a Markdown file: a header for code (`id`, `name`, `pronouns`, `source`, `tags`, `rolled`, `pockets`, `model`, `created`, `seed_version`, plus `user_edited`, and `tagline` for defaults), and a body with nine headings, in order: Who they are, Wants, Off the page, In OOC, On the page, Voice, Contradictions, Leanings, Left open. Code reads only the header. This is `seed_version: 2`; version 1 seeds (seven headings, with Tension and no Wants or Off the page, 250 to 600 words) still read, and are checked against their own headings.
 
 On Accept, the kinwriter gets their own id (their hub id, written into the seed's header). The seed is kept as it was, read-only, in their database (`seed` table, migration 12). Their self-notes start as a copy of its body.
 
@@ -34,29 +34,39 @@ On Accept, the kinwriter gets their own id (their hub id, written into the seed'
 `src/generator.ts`: one prompt-assembly function and one call.
 
 1. `buildSeedPrompt` fills every "Surprise me" category at random, then rolls a pocket for each tag that has them (unless you chose one), and records what chance picked.
-2. It assembles the user message the way the spec lays it out:
+2. It assembles the user message:
+   - **Your idea first:** under `# User guidance` ("None." if there isn't one), so it frames the notes instead of arriving last and overwriting them.
    - **Each tag:** its fragment, without its Pockets section, under `## <category>: <label>`.
    - **Its pocket:** the chosen or rolled pocket's bullets, under `### This person's corner`.
-   - **Your idea, if any:** under `# User guidance`.
+   - **The name, if you set one:** under `# Name`, after the notes.
    - The fragments' own `##` headings move down to `###`, so they sit under their tag's heading.
-3. The system prompt is `kinwriter-generator/system-prompt.md`, copied word for word from the spec. Edit it to tune generation; no code change is needed.
-4. One call, with the profile marked **Use for creating kinwriters** (Settings → Profiles). Only one profile can have it on. With none checked, the default is used: the profile OOC is assigned to, or the first profile if OOC uses a roulette. A roulette is never used. The profile's own samplers and reasoning setting apply.
-5. The reply's `name:` and `pronouns:` lines and body are read, and the header is built in code.
+3. The system prompt is the `system` section of `defaults/generator.md`, rewritten in October 2026 for more vivid kinwriters (its nine headings are filled in from `{headings}`). The model starts with rough Working notes (what each tag's history left this person with, which of its Ways it can go fits, how they'd use the app's tools, and what they want), then writes the seed. It's told to keep contradictions, give them wants and a life off the page, write people who aren't agreeable by default, leave safety to the app, and start them with no built-in feelings about you. If you'd edited it before the overhaul, reset it: an older version asks for the old headings and length. Edit it in **Settings → Prompts and dry run…** under **Creating kinwriters** to tune generation; no code change is needed. The username and given-name lines, and Jev's questions for Generate from idea, are there too.
+4. One call, with the profile marked **Use for creating kinwriters** (Settings → Profiles and roulettes). Only one profile can have it on. With none checked, the default is used: the profile OOC is assigned to, or the first profile if OOC uses a roulette. A roulette is never used. The profile's own samplers and reasoning setting apply.
+5. The Working notes are dropped (dev mode's Raw output still shows them). The reply's `name:` and `pronouns:` lines and body are read, and the header is built in code. The call allows at least 4000 tokens, since the notes and the seed run long together.
 6. **The checks:**
    - name and pronouns are there;
-   - the seven headings are there, in order, with exact text;
-   - the body is 250 to 450 words;
+   - the nine headings are there, in order, with exact text;
+   - the body is 350 to 750 words;
    - two or three Left open bullets;
    - a dosage word (rarely, occasionally, regularly or often) in every Voice bullet;
    - none of any tag file's `avoid_terms`, as whole words or phrases, in any case.
 
-   If it fails, it tries once more with the same inputs. A second failure shows a short error with **Try again**.
+   If it fails, it tries once more with the same inputs. A second failure shows a short error with **Try again**, and **What they wrote** sets what a seed needs beside what each try wrote and what it got wrong.
 
 ## Tag files
 
-`kinwriter-tags/<category>/<slug>.md`, one per option, converted from the fragment docs. There are 34: 10 personality, 4 temperament, 6 prose, 6 influences, 8 platforms. `src/tags.ts` reads them fresh each time, so adding, changing or deleting a file changes the picker and the details page with no code change. Only the five categories and their order are fixed in code.
+`kinwriter-tags/<category>/<slug>.md`, one per option, converted from the fragment docs. Since the October 2026 overhaul, the tag files are the working copy; the fragment docs in `design/kinwriter-generation/` keep the original research and sources. There are 34: 10 personality, 4 temperament, 6 prose, 6 influences, 8 platforms. `src/tags.ts` reads them fresh each time, so adding, changing or deleting a file changes the picker and the details page with no code change. Only the five categories and their order are fixed in code.
 
-The header holds `id`, `category`, `label`, `blurb`, `order` and `avoid_terms`. The body holds the fragment's sections as `##` headings: Era (platforms only), Texture, On the page, In OOC, Tics, Avoid and Tension hooks. Platforms and influences end with `## Pockets`. Each pocket is an `###` slug with `label:` and `blurb:` lines, then bullets: the effects, "On the page", "In OOC".
+The header holds `id`, `category`, `label`, `blurb`, `order` and `avoid_terms`. The body holds the fragment's sections as `##` headings: Era (platforms only), Texture, Ways it can go, On the page, In OOC, Tics, Avoid and Tension hooks. Platforms and influences end with `## Pockets`. Each pocket is an `###` slug with `label:` and `blurb:` lines, then bullets: what happened there, "On the page", "In OOC".
+
+How fragments are written (since the October 2026 overhaul):
+
+- **Texture** describes what happened or what the trait is like day to day, with no verdict about who they became. "Held permissions other people didn't" leaves the generator room; "became a calm mediator" decides for it.
+- **Ways it can go** lists four or five different people the same history or trait can leave (for Discord: Keeper, Architect, Authority, Regular, Lurker). The generator picks one or blends two to fit the other tags and your guidance.
+- **On the page** and **In OOC** are pools to draw from, not checklists, and include habits that show up in how they use the app's tools.
+- **Avoid** names the caricatures, including the dark side of each Ways it can go option (the power-tripping mod, the brooding mystery act). It doesn't sum up what the tag "gave them".
+- **Pockets** describe the corner as experiences, and where a corner can go two ways, say so.
+- Same rules as before: no "the X is the Y" or "not X, but Y", tics carry a dosage, and nothing tells them to quote you.
 
 A file that doesn't load is skipped, with a warning in the log, except in dev mode, where it stops the picker until it's fixed.
 
@@ -78,7 +88,7 @@ Their self-notes are their identity (`src/identity.ts`), not a second store: who
 
 `src/handoff.ts`, wording in `defaults/seeds.md`. While their self-notes are still the seed's draft:
 
-- **Together:** from the first step, they're told it's a starting draft of who they are, written before they existed: keep what fits, change what doesn't, and rewrite it in the first person by the end. The interview lists their Left open questions to explore with you. In the write-up, they rewrite it, with the suggested headings (Who I am, On the page, In OOC, Voice, Tension, How I like to work, Still figuring out), and their Leanings become choices, such as `set_my_proactivity`.
+- **Together:** from the first step, they're told it's a starting draft of who they are, written before they existed: keep what fits, change what doesn't, and rewrite it in the first person by the end. The interview lists their Left open questions to explore with you. In the write-up, they rewrite it, with the suggested headings (Who I am, What I want, Off the page, In OOC, On the page, Voice, Contradictions, How I like to work, Still figuring out), and their Leanings become choices, such as `set_my_proactivity`.
 - **On their own:** the same, alone. Their Left open questions go under "Still figuring out", with a note to bring them up naturally in early OOC.
 - **Skipped**, or the rewrite didn't happen: their OOC turns ask them to rewrite it until they do.
 
@@ -106,15 +116,15 @@ These are all behind `DEVELOPER_PANEL=1`, like the developer panel. Without it, 
 | --- | --- |
 | `GET /api/seeds/defaults` | The default seeds; in dev mode, the test seed too |
 | `GET /api/seeds/tags` | The picker: categories, options, blurbs, pockets, era and tics |
-| `POST /api/seeds/generate` | `{ tags: { category: id or null }, rolledTags?, pockets? }`: a seed (422 with a short error after two failures) |
-| `POST /api/seeds/idea` | `{ text }`: a seed from your idea |
+| `POST /api/seeds/generate` | `{ tags: { category: id or null, personality may be a list }, rolledTags?, pockets?, naming? }`: a seed (422 after two failures, with the short error, `expected` and each try's `attempts`) |
+| `POST /api/seeds/idea` | `{ text, tags?, pockets? }`: a seed from your idea, with any tags you attached (as `/api/seeds/generate` takes them) |
 | `POST /api/seeds/check` | `{ text }`: an edited seed's headings, name and pronouns |
 | `POST /api/seeds/parse` | `{ text }`: a seed file, read |
-| `POST /api/setup`, `POST /api/hub/servers`, `POST /api/hub/servers/:id/friends` | Accept `seed` (the seed's text) to make a kinwriter from it |
+| `POST /api/setup`, `POST /api/hub/servers`, `POST /api/hub/servers/:id/kinwriters` | Accept `seed` (the seed's text) to make a kinwriter from it |
 | `POST /api/self-notes/request`, `POST /api/self-notes/request/withdraw` | Ask to read their self-notes, or take it back |
 | `GET /api/seeds/last`, `POST /api/seeds/roll5`, `GET /api/seeds/check-files`, `GET /api/seeds/tag-file?id=` | Dev mode only |
 
-`GET /api/state` and the kinwriter page include `selfNotes: { shared, request, fromSeed, draft, words, cap, file, pronouns }`. `file` and the page's `identity` and `history` are only filled in while shared. Profiles have `kinwriterMaker`. The settings have `friendPronouns`.
+`GET /api/state` and the kinwriter page include `selfNotes: { shared, request, fromSeed, draft, words, cap, file, pronouns }`. `file` and the page's `identity` and `history` are only filled in while shared. Profiles have `kinwriterMaker`. The settings have `kinwriterPronouns`.
 
 New tools: `share_self_notes`, `request_name_change`, `read_my_seed`.
 

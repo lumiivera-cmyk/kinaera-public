@@ -21,7 +21,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { NotFoundError, ValidationError } from "./errors.ts";
+import { findByShortId, NotFoundError, ValidationError } from "./errors.ts";
 
 /** The short version in every prompt: at most this many characters. */
 export const STANDING_LIMIT = 600;
@@ -139,10 +139,7 @@ export class SelfPage {
 
   /** Find a note by the start of its id (the short id your kinwriter sees). */
   findNote(shortId: string): SelfNote {
-    const wanted = shortId.trim().toLowerCase();
-    const match = this.notes().filter((n) => wanted && n.id.toLowerCase().startsWith(wanted));
-    if (match.length !== 1) throw new NotFoundError("note");
-    return match[0]!;
+    return findByShortId(this.notes(), shortId, "note");
   }
 
   /** You add a note on what their writing shows. It waits for them. */

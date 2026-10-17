@@ -14,7 +14,7 @@
  *     so instead.
  */
 
-import { $, api, currentChannel, hideFormError, showFormError, state } from "./core.js";
+import { $, api, currentChannel, hideFormError, showError, showFormError, state } from "./core.js";
 
 const dialog = $("orientation-dialog");
 const panel = $("orientation-panel");
@@ -33,7 +33,7 @@ export function maybeOfferOrientation() {
 
 /** The choice: together, on their own, or (under Advanced) skip. */
 export function openOrientationChoice() {
-  const name = state.settings.friendName;
+  const name = state.settings.kinwriterName;
   const o = state.orientation ?? {};
   hideFormError(dialog);
   $("orientation-dialog-title").textContent = o.status === "requested" ? `${name} asked for an orientation` : `An orientation with ${name}`;
@@ -74,11 +74,30 @@ export async function startOrientation(version) {
   renderOrientation();
 }
 
-$("orientation-full").addEventListener("click", () => startOrientation("full"));
-$("orientation-returning").addEventListener("click", () => startOrientation("returning"));
-$("orientation-skip").addEventListener("click", async () => {
-  if (await choose("/api/orientation/skip")) renderOrientation();
-});
+/**
+ * Run a button's request with the button turned off, so it can't be
+ * pressed twice; the panel then shows it as the orientation now stands.
+ */
+async function whileRunning(button, work) {
+  if (pressed.has(button)) return;
+  pressed.add(button);
+  button.disabled = true;
+  try {
+    await work();
+  } finally {
+    pressed.delete(button);
+    button.disabled = false;
+    if (running()) renderOrientation();
+  }
+}
+
+$("orientation-full").addEventListener("click", (event) => whileRunning(event.currentTarget, () => startOrientation("full")));
+$("orientation-returning").addEventListener("click", (event) => whileRunning(event.currentTarget, () => startOrientation("returning")));
+$("orientation-skip").addEventListener("click", (event) =>
+  whileRunning(event.currentTarget, async () => {
+    if (await choose("/api/orientation/skip")) renderOrientation();
+  }),
+);
 $("orientation-later").addEventListener("click", async (event) => {
   // For their request, "Not now" is an answer, and they're told.
   if (state.orientation?.status === "requested") {
@@ -91,6 +110,8 @@ $("orientation-later").addEventListener("click", async (event) => {
 
 let feedTimer = null;
 let lastFeedId = null;
+/** Buttons whose request is still running (see `whileRunning`). */
+const pressed = new Set();
 
 /** Draw the panel and the composer note for the open channel, and keep the feed coming. */
 export function renderOrientation() {
@@ -98,7 +119,7 @@ export function renderOrientation() {
   const channel = currentChannel();
   // It happens in #practice, and in the starter scene once that's made.
   const here = Boolean(session && channel && [session.channelId, session.scene].includes(channel.id));
-  const name = state.settings.friendName;
+  const name = state.settings.kinwriterName;
   panel.hidden = !here;
   // Their other channels wait while it runs.
   const note = $("orienting-note");
@@ -114,8 +135,8 @@ export function renderOrientation() {
   $("orientation-title").textContent = together ? `Orientation with ${name}` : `${name}'s orientation`;
   $("orientation-step").textContent = step ? `Step ${step.index + 1} of ${step.count}` : "";
   $("orientation-step-title").textContent = step?.title ?? "";
-  // Your card: plain words, no model call. On their own, a line on what they're doing.
-  // On their own, a line on what they're doing, until your choices at the end.
+  // Your card: plain words, no model call. On their own, a line on what
+  // they're doing, until your choices at the end.
   const choosing = step?.id === "choices";
   const card = together || choosing ? named(step?.card) : `${name} is going through it on their own, step after step. Each tool they use shows up below. When they're done, you choose what to keep.`;
   $("orientation-card").replaceChildren(
@@ -132,15 +153,15 @@ export function renderOrientation() {
   const hand = $("orientation-hand-over");
   hand.hidden = !(together && step?.waiting);
   hand.textContent = `Hand it to ${name}`;
-  hand.disabled = state.orientation.writing === true;
+  hand.disabled = state.orientation.writing === true || pressed.has(hand);
   $("orientation-spotlight").hidden = !(together && step?.spotlights?.length);
   const next = $("orientation-next");
   next.hidden = !(together || choosing);
   const last = step && step.index + 1 >= step.count;
   next.textContent = last ? "Finish" : "Next";
   // Their part of a step is theirs to finish first.
-  next.disabled = state.orientation.writing === true;
-  next.title = next.disabled ? `${name} is still writing` : "";
+  next.disabled = state.orientation.writing === true || pressed.has(next);
+  next.title = state.orientation.writing === true ? `${name} is still writing` : "";
   $("orientation-finish").hidden = !together || last;
   startFeed();
 }
@@ -458,11 +479,13 @@ async function spotlightTour(items, named) {
 
 $("orientation-spotlight").addEventListener("click", () => {
   const step = state.orientation?.step;
-  const name = state.settings.friendName;
+  const name = state.settings.kinwriterName;
   if (step?.spotlights?.length) spotlightTour(step.spotlights, (t) => t.replaceAll("{name}", name));
 });
 
-$("orientation-hand-over").addEventListener("click", async () => {
+$("orientation-hand-over").addEventListener("click", (event) => whileRunning(event.currentTarget, handOver));
+
+async function handOver() {
   try {
     const data = await api("POST", "/api/orientation/hand-over", {});
     state.orientation = data.orientation;
@@ -472,11 +495,13 @@ $("orientation-hand-over").addEventListener("click", async () => {
       await openChannel(data.orientation.session.channelId);
     } else renderOrientation();
   } catch (error) {
-    alert(error.message);
+    showError(`Couldn't hand it over: ${error.message}`, null);
   }
-});
+}
 
-$("orientation-next").addEventListener("click", async () => {
+$("orientation-next").addEventListener("click", (event) => whileRunning(event.currentTarget, nextStep));
+
+async function nextStep() {
   const step = state.orientation?.step;
   const last = step && step.index + 1 >= step.count;
   try {
@@ -505,9 +530,9 @@ $("orientation-next").addEventListener("click", async () => {
       await openChannel(data.orientation.session.scene);
     } else renderOrientation();
   } catch (error) {
-    alert(error.message);
+    showError(`Couldn't go on: ${error.message}`, null);
   }
-});
+}
 
 function startFeed() {
   if (feedTimer) return;
@@ -524,6 +549,8 @@ function stopFeed() {
 }
 
 async function pollFeed() {
+  // Not while the app is in the background; the next poll catches up.
+  if (document.visibilityState !== "visible") return;
   try {
     const data = await api("GET", `/api/orientation${lastFeedId ? `?after=${encodeURIComponent(lastFeedId)}` : ""}`);
     const was = state.orientation?.status;
@@ -551,8 +578,10 @@ async function pollFeed() {
   }
 }
 
-$("orientation-finish").addEventListener("click", async () => {
-  const name = state.settings.friendName;
+$("orientation-finish").addEventListener("click", (event) => whileRunning(event.currentTarget, finishOrientation));
+
+async function finishOrientation() {
+  const name = state.settings.kinwriterName;
   if (!confirm(`End the orientation with ${name} now, skipping the steps left? Every channel opens again.`)) return;
   try {
     const data = await api("POST", "/api/orientation/finish", {});
@@ -561,6 +590,6 @@ $("orientation-finish").addEventListener("click", async () => {
     const { renderAll } = await import("./channels.js");
     renderAll();
   } catch (error) {
-    alert(error.message);
+    showError(`Couldn't finish it: ${error.message}`, null);
   }
-});
+}

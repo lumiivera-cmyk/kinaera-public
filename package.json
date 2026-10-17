@@ -1,7 +1,7 @@
 {
   "name": "kinaera",
   "version": "0.1.0",
-  "description": "A Discord-style space for writing stories with AI kinwriters who have real tools and lives of their own.",
+  "description": "A Discord-style space for writing stories with AI kinwriters.",
   "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",

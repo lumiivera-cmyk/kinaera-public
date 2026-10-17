@@ -96,7 +96,7 @@ describe("changing the notebook", () => {
   test("edits their own entries directly, merging fields", async () => {
     const outcome = await run("edit_notebook_entry", { name: "Ilse Marrow", fields: { Age: "35", Speech: "", Scar: "Left hand." } });
     expect(outcome).toMatchObject({ ok: true, summary: "edited Ilse Marrow" });
-    const fields = store.notebook.listEntries("friend")[0]!.fields;
+    const fields = store.notebook.listEntries("kinwriter")[0]!.fields;
     expect(fields.find((f) => f.label === "Age")!.value).toBe("35");
     expect(fields.some((f) => f.label === "Speech")).toBe(false);
     expect(fields.at(-1)).toEqual({ label: "Scar", value: "Left hand." });
@@ -133,7 +133,7 @@ describe("changing the notebook", () => {
 
   test("reviews your suggestions by short id", async () => {
     const ilse = store.notebook.listEntries("user")[0]!;
-    store.notebook.updateEntrySettings("friend", ilse.id, { editing: "suggest" });
+    store.notebook.updateEntrySettings("kinwriter", ilse.id, { editing: "suggest" });
     const { suggestion } = store.notebook.editEntry("user", ilse.id, { name: "Ilse M." }) as { suggestion: { id: string } };
     const outcome = await run("review_suggestion", { id: suggestion.id.slice(0, 8), decision: "accept" });
     expect(outcome).toMatchObject({ ok: true, summary: "accepted the user's suggestion for Ilse Marrow" });
@@ -165,7 +165,7 @@ describe("the cast and channels", () => {
 
   test("starts a new scene in this channel", async () => {
     expect((await run("start_new_scene", { title: "Dawn" })).summary).toBe('started a new scene, "Dawn"');
-    expect(store.lastMessage(ctx.channel.id)).toMatchObject({ kind: "scene_break", content: "Dawn", author: "friend" });
+    expect(store.lastMessage(ctx.channel.id)).toMatchObject({ kind: "scene_break", content: "Dawn", author: "kinwriter" });
   });
 
   test("can only propose deleting a channel, once", async () => {
@@ -182,17 +182,17 @@ describe("comments", () => {
     const outcome = await run("comment_on_message", { quote: "knock twice", note: "Love the rhythm." });
     expect(outcome).toMatchObject({ ok: true, summary: 'commented on "knock twice"' });
     const [thread] = store.comments.forChannel(ctx.channel.id);
-    expect(thread).toMatchObject({ quote: "knock twice", comments: [{ author: "friend", note: "Love the rhythm." }] });
+    expect(thread).toMatchObject({ quote: "knock twice", comments: [{ author: "kinwriter", note: "Love the rhythm." }] });
     expect((await run("comment_on_message", { quote: "never said", note: "x" })).summary).toMatch(/No recent message/);
   });
 
   test("replies to and resolves threads by short id", async () => {
-    const message = store.addMessage({ channelId: ctx.channel.id, author: "friend", content: "The lamp guttered." });
+    const message = store.addMessage({ channelId: ctx.channel.id, author: "kinwriter", content: "The lamp guttered." });
     const thread = store.comments.start("user", message.id, "Ominous!", "lamp guttered");
     const id = thread.id.slice(0, 8);
     expect((await run("reply_to_comment", { thread: id, note: "That's the idea." })).ok).toBe(true);
     expect((await run("resolve_comment", { thread: id })).ok).toBe(true);
-    expect(store.comments.thread(thread.id)).toMatchObject({ resolved: true, comments: [{}, { author: "friend" }] });
+    expect(store.comments.thread(thread.id)).toMatchObject({ resolved: true, comments: [{}, { author: "kinwriter" }] });
     expect((await run("reply_to_comment", { thread: "zzzz", note: "x" })).summary).toMatch(/no comment thread/);
   });
 });

@@ -61,6 +61,8 @@ export interface Config {
    * fixed one in defaults/character.md.
    */
   userThemesDir?: string;
+  /** Where your background pictures are (shared by every kinwriter; default `<dataDir>/backgrounds`). */
+  userBackgroundsDir?: string;
   kinwriterId?: string;
   example?: boolean | "generate";
   /**

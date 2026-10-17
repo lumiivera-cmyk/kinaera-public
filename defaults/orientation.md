@@ -114,7 +114,7 @@ First, a minute to find your way around: the channels, the notebook, your inbox,
 .channel-link[data-kind="ooc"] | OOC: out of character, just the two of you.
 #notebook-button | The notebook: characters and lore, yours, {name}'s and shared. The library of long texts is in here too.
 #inbox-button | Your inbox: what {name} asks of you, and suggestions waiting for an answer.
-#friend-card | {name}'s page: who they are, their self-page, their health, and orientations.
+#kinwriter-card | {name}'s page: who they are, their self-page, their health, and orientations.
 #settings-button | Settings: who writes (models and profiles), {name} reaching out, quiet hours, and every prompt's wording.
 
 ## step-opener-kinwriter
@@ -228,7 +228,7 @@ you
 
 ## step-profiles-card
 
-A profile is a model with its settings. Pick one in Settings â†’ Who writes, and its settings show right below it (the table below says what each one does).
+A profile is a model with its settings. Pick one at the top of Settings ("Roleplay written by", "OOC written by"), and its settings show right below it (the table below says what each one does).
 
 From most together to most direct:
 
@@ -249,10 +249,10 @@ Try it: under {name}'s latest reply in the starter scene, tap "Regenerate withâ€
 | Temperature | How adventurous the word choices are. Higher is more surprising, lower is safer. |
 | Top P, Min P | Two ways of trimming unlikely words before one is picked. They keep a high temperature from going off the rails. |
 | Max tokens | The longest one reply can be. |
-| Reasoning effort | How much the model thinks before writing, for models that do. |
+| Reasoning | How much the model thinks before writing, for models that do. Off skips it, where the model allows. |
 | Can use tools | Whether turns on this profile get tools. Without it they can't check, ask or edit. |
 | Consultant | Whether they can go to this profile for a second opinion. |
-| Quirk prompt | Notes that tame one model's habits. |
+| Model notes | Notes that tame one model's habits. |
 | Roulettes | Several profiles taking turns, with weights the user sets. |
 
 ## step-profiles-kinwriter

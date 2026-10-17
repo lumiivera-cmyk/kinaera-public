@@ -23,9 +23,12 @@
  *
  * A document can be limited to some channels (say, the fandom's RP
  * channel). It's always available in OOC channels, where you'd talk about it.
+ * If every channel it was limited to is deleted, it's in no roleplay
+ * channel (`nowhere`) until you choose some: not suddenly everywhere.
  */
 
 import type { Database } from "bun:sqlite";
+import { forgetBookmark } from "./bookmarks.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
 import type { Channel } from "./types.ts";
 
@@ -35,8 +38,10 @@ export interface LibraryDoc {
   title: string;
   /** What it is, for your kinwriter ("The screenplay of the first film"). */
   description: string;
-  /** Channels it's limited to; empty means everywhere. OOC channels always see it. */
+  /** Channels it's limited to; empty means everywhere (unless `nowhere`). OOC channels always see it. */
   channelIds: string[];
+  /** The channels it was limited to were all deleted: it's in no roleplay channel, only OOC. */
+  nowhere: boolean;
   /** Its length, in characters. */
   chars: number;
   passages: number;
@@ -79,9 +84,25 @@ const PASSAGE_MIN = 300;
 
 // ------------------------------------------------------------- splitting
 
-/** Screenplay scene headings ("INT. HOUSE - DAY"), Markdown headings, chapters, acts. */
-const HEADING =
-  /^(?:(?:INT|EXT|INT\.?\/EXT|EXT\.?\/INT|I\/E)[.\s].{2,}|#{1,6}\s+\S.*|(?:chapter|prologue|epilogue|act|part|book)\b.{0,60}|scene\s+\d+.{0,60})$/i;
+/** A chapter's (or act's) number: 12, XII, or a word up to ninety-nine. */
+const NUMBER =
+  "(?:\\d+|(?=[MDCLXVI])M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|" +
+  "thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?)";
+
+/**
+ * Screenplay scene headings ("INT. HOUSE - DAY"), Markdown headings, and
+ * chapters, acts and parts: the word alone or with a title after a colon
+ * or dash ("Prologue: The Storm"), or with a number ("Chapter 12", "Act I,
+ * Scene 2", "Part Two The Return"). Not prose that starts with the word
+ * ("Part of me wanted to leave.", "Act natural, she said.").
+ */
+const HEADING = new RegExp(
+  "^(?:(?:INT|EXT|INT\\.?\\/EXT|EXT\\.?\\/INT|I\\/E)[.\\s].{2,}|#{1,6}\\s+\\S.*" +
+    "|(?:chapter|prologue|epilogue|act|part|book)(?:\\s*[:\\-–—]\\s*\\S.{0,60})?" +
+    `|(?:chapter|act|part|book)\\s+${NUMBER}\\b(?:\\s*[:.,\\-–—]\\s*\\S.{0,60}|\\s+.{0,59}[^.!?,;:\\s])?` +
+    "|scene\\s+\\d+.{0,60})$",
+  "i",
+);
 
 /** A screenplay character cue: a short line in capitals, maybe with (V.O.) or (CONT'D). */
 const CUE = /^([A-Z][A-Z0-9 .'\-&]{0,30}[A-Z0-9.])(?:\s*\([^)]*\))*\s*:?$/;
@@ -110,11 +131,17 @@ export function headingOf(line: string): string | null {
   return trimmed.replace(/^#{1,6}\s+/, "");
 }
 
-/** Split a long paragraph at sentence (or line) ends, into pieces under PASSAGE_MAX. */
-function splitLong(paragraph: string): string[] {
+/**
+ * Split a long paragraph at sentence (or line) ends, into pieces under
+ * PASSAGE_MAX. Every character is kept: the pieces joined give back the
+ * paragraph, apart from the spaces between them.
+ */
+export function splitLong(paragraph: string): string[] {
   if (paragraph.length <= PASSAGE_MAX) return [paragraph];
   const pieces: string[] = [];
-  const sentences = paragraph.match(/[^.!?\n]+(?:[.!?]+["')\]]*|\n|$)\s*/g) ?? [paragraph];
+  // Cut after a line break, or after the spaces that follow a sentence's end
+  // ("." "?!" "..." with any closing quote or bracket).
+  const sentences = paragraph.split(/(?<=\n)|(?<=[.!?]["')\]]*\s+)(?=\S)/);
   let current = "";
   for (const sentence of sentences) {
     if (current && current.length + sentence.length > PASSAGE_TARGET) {
@@ -124,7 +151,7 @@ function splitLong(paragraph: string): string[] {
     // A single enormous "sentence" (no punctuation at all): cut it by length.
     for (let i = 0; i < sentence.length; i += PASSAGE_MAX) {
       const part = sentence.slice(i, i + PASSAGE_MAX);
-      if (part.length === PASSAGE_MAX) pieces.push(part.trim());
+      if (part.length === PASSAGE_MAX && part.trim()) pieces.push(part.trim());
       else current += part;
     }
   }
@@ -192,11 +219,16 @@ export function splitPassages(text: string): Omit<Passage, "docId">[] {
 
 // -------------------------------------------------------------- searching
 
-/** Words too common to search for. */
-const STOPWORDS = new Set(
-  "a an and are as at be but by did do does for from had has have he her his how i in is it its me my of on or she so that the their them then there they this to was we were what when where which who why will with you your".split(
-    " ",
-  ),
+/** Words too common to search for, or to say anything about someone's writing (src/mirror.ts). */
+export const STOPWORDS = new Set(
+  (
+    "a an the and or but if then so of to in on at by for with from as is are was were be been being am it its it's " +
+    "this that these those there here i you he she they we me him her them us my your his their our mine yours " +
+    "not no yes do does did done have has had will would can could should shall may might must just very really " +
+    "what which who whom whose when where why how all any some each every more most much many such only own same " +
+    "than too also into out up down over under again about after before while because until off through like " +
+    "i'm you're that's don't can't won't didn't isn't there's let's i've i'll i'd she's he's they're we're"
+  ).split(" "),
 );
 
 /**
@@ -242,12 +274,19 @@ interface PassageRow {
   content: string;
 }
 
+/**
+ * Kept in `channel_ids` (never a channel's id) when every channel a
+ * document was limited to has been deleted: it's then in none of them.
+ */
+const NOWHERE = "";
+
 function toDoc(row: DocRow): LibraryDoc {
   return {
     id: row.id,
     title: row.title,
     description: row.description,
-    channelIds: JSON.parse(row.channel_ids) as string[],
+    channelIds: (JSON.parse(row.channel_ids) as string[]).filter((id) => id !== NOWHERE),
+    nowhere: (JSON.parse(row.channel_ids) as string[]).includes(NOWHERE),
     chars: row.chars,
     passages: row.passages,
     createdAt: row.created_at,
@@ -294,13 +333,15 @@ export class Library {
 
   get(id: string): LibraryDoc {
     const row = this.db.query("SELECT * FROM library_docs WHERE id = $id").get({ id }) as DocRow | null;
-    if (!row) throw new NotFoundError("There's no such document in the library.");
+    if (!row) throw new NotFoundError("document");
     return toDoc(row);
   }
 
   /** The documents your kinwriter can use in a channel: its own, the unlimited ones, and all of them in OOC. */
   forChannel(channel: Pick<Channel, "id" | "kind">): LibraryDoc[] {
-    return this.list().filter((d) => channel.kind !== "rp" || d.channelIds.length === 0 || d.channelIds.includes(channel.id));
+    return this.list().filter(
+      (d) => channel.kind !== "rp" || (d.channelIds.length === 0 && !d.nowhere) || d.channelIds.includes(channel.id),
+    );
   }
 
   /** Add a document: split it into passages and index them. */
@@ -345,10 +386,16 @@ export class Library {
     return this.get(id);
   }
 
-  /** Change a document's title, description or channels. */
+  /**
+   * Change a document's title, description or channels. A document in no
+   * roleplay channel (`nowhere`) stays so with no channels given, unless
+   * `everywhere: true` says that's what you mean.
+   */
   update(id: string, input: Record<string, unknown>): LibraryDoc {
     const doc = this.get(id);
     const details = cleanDetails(input, true, this.channelExists);
+    const channelIds = details.channelIds ?? doc.channelIds;
+    const nowhere = channelIds.length === 0 && doc.nowhere && input.everywhere !== true;
     this.db
       .query(
         `UPDATE library_docs SET title = $title, description = $description, channel_ids = $channelIds, updated_at = $now
@@ -358,7 +405,7 @@ export class Library {
         id,
         title: details.title ?? doc.title,
         description: details.description ?? doc.description,
-        channelIds: JSON.stringify(details.channelIds ?? doc.channelIds),
+        channelIds: JSON.stringify(nowhere ? [NOWHERE] : channelIds),
         now: new Date().toISOString(),
       });
     return this.get(id);
@@ -380,13 +427,20 @@ export class Library {
       );
       for (const row of rows) forget.run(row);
       this.db.query("DELETE FROM library_docs WHERE id = $id").run({ id });
+      // Where your kinwriter had read to goes with it.
+      forgetBookmark(this.db, id);
     })();
   }
 
-  /** Forget a channel that was deleted, in every document limited to it. */
+  /**
+   * Forget a channel that was deleted, in every document limited to it. One
+   * limited to that channel alone is then in none (`nowhere`), not everywhere.
+   */
   channelDeleted(channelId: string): void {
+    const set = this.db.query("UPDATE library_docs SET channel_ids = $channelIds, updated_at = $now WHERE id = $id");
     for (const doc of this.list().filter((d) => d.channelIds.includes(channelId))) {
-      this.update(doc.id, { channelIds: doc.channelIds.filter((c) => c !== channelId) });
+      const left = doc.channelIds.filter((c) => c !== channelId);
+      set.run({ id: doc.id, channelIds: JSON.stringify(left.length ? left : [NOWHERE]), now: new Date().toISOString() });
     }
   }
 

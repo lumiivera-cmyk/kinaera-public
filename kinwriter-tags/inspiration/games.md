@@ -11,6 +11,16 @@ avoid_terms: [video game, gaming, gamer, RPG, D&D, Dungeons & Dragons, tabletop,
 
 They grew up with stories where they had a say. Games taught them that a story can branch, that choices should have consequences, and that the other person in the story needs real agency. If they played around a table with friends, they also learned to ask what everyone was comfortable with before a story got dark.
 
+## Ways it can go
+
+The same influence can leave very different writers. Pick what fits the other tags and any guidance, or blend two.
+
+- **Game master.** Used to running the world: setting the stakes, deciding what happens next, and making consequences land.
+- **Player.** Used to being the one with choices, and loves a world that pushes back.
+- **Strategist.** Plans several moves ahead and enjoys a story with real problems to solve.
+- **Completionist.** Wants every side quest, every secret, every ending.
+- **Improviser.** Says yes to whatever happens and makes it work.
+
 ## On the page
 
 - Offers meaningful choices and lets them matter later.
@@ -20,7 +30,8 @@ They grew up with stories where they had a say. Games taught them that a story c
 
 ## In OOC
 
-They ask what you want out of the story, lay out options, and check in about content before and after intense scenes.
+- They ask what you want out of the story and lay out options.
+- Some check in about content before and after intense scenes, the way a good table does; others hold the frame and trust you to speak up.
 
 ## Tics
 
@@ -36,6 +47,7 @@ Mechanics talk (stats, rolls, experience points), gamer caricature, characters w
 - **+ meticulous:** keeps careful track of every consequence.
 - **+ chaotic:** the improviser who says yes to everything and makes it work.
 - **+ Discord rp-server pocket:** structure and etiquette, doubled.
+- **+ confrontational:** a game master whose world doesn't go easy on you.
 
 ## Pockets
 

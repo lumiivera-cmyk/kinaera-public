@@ -22,7 +22,8 @@
  * **Saving to the notebook** (`toNotebook`): a passage of a pad becomes a
  * new entry, or is added to a field of an existing one, with the
  * notebook's own permissions (a change your kinwriter may only suggest is a
- * suggestion). By default it then leaves the pad. A new entry from their
+ * suggestion). By default it then leaves the pad (but not when it only
+ * became a suggestion, which may be rejected). A new entry from their
  * private pad starts hidden from you, like the note it came from.
  *
  * Kept in app_state, one value per pad (`scratchpad:<channel>:<pad>`), as
@@ -36,7 +37,7 @@ import type { Author, Channel, EntryKind } from "./types.ts";
 import type { Store } from "./store.ts";
 
 export type PadName = "shared" | "user" | "kinwriter";
-export const PAD_NAMES: PadName[] = ["shared", "user", "kinwriter"];
+const PAD_NAMES: PadName[] = ["shared", "user", "kinwriter"];
 
 /** Longest a pad can be, in characters (about 2,000 words). */
 export const PAD_LIMIT = 12_000;
@@ -160,8 +161,8 @@ export interface SavedToNotebook {
   pad: Pad;
 }
 
-/** Whether two entry names are the same: ignoring case, punctuation and a leading "the" (as `sameEntryName` in src/tools.ts). */
-function sameName(a: string, b: string): boolean {
+/** Whether two entry names are the same: ignoring case, punctuation and a leading "the" (src/tools.ts uses it too). */
+export function sameName(a: string, b: string): boolean {
   const key = (name: string) => name.toLowerCase().replace(/^\s*the\s+/, "").replace(/[^\p{L}\p{N}]+/gu, "");
   return key(a) !== "" && key(a) === key(b);
 }
@@ -206,7 +207,7 @@ export function toNotebook(store: Store, channelId: string, pad: PadName, actor:
       name,
       fields,
       // Theirs from their private pad stays a secret until they reveal it.
-      ...(actor === "friend" && pad === "kinwriter" ? { visibility: "hidden" } : {}),
+      ...(actor === "kinwriter" && pad === "kinwriter" ? { visibility: "hidden" } : {}),
     });
     created = true;
   }
@@ -214,7 +215,8 @@ export function toNotebook(store: Store, channelId: string, pad: PadName, actor:
   if (pinned) notebook.pin(actor, channelId, entry.id);
 
   let next = current;
-  if (!input.keep) {
+  // Only a suggestion: it stays in the pad, so a rejection loses nothing.
+  if (!input.keep && !suggested) {
     const before = current.text.slice(0, at).replace(/[ \t]+$/, "");
     let after = current.text.slice(at + input.passage.length).replace(/^[ \t]+/, "");
     // A whole line (or lines) taken out: its line break goes with it.
@@ -242,7 +244,15 @@ export function mergeText(base: string, mine: string, theirs: string): string {
   if (mine === theirs || theirs === base) return mine;
   if (mine === base) return theirs;
   const b = base.split("\n");
-  const hunks = [...lineHunks(b, mine.split("\n"), "m"), ...lineHunks(b, theirs.split("\n"), "t")].sort((x, y) => x.start - y.start || x.end - y.end);
+  const mineLines = mine.split("\n");
+  const theirLines = theirs.split("\n");
+  // The line-by-line comparison takes time and memory in proportion to
+  // base lines × lines on each side. Too big (much longer than a pad can
+  // be): keep mine, then what of theirs isn't in it.
+  if (b.length * Math.max(mineLines.length, theirLines.length) > MERGE_CELLS) {
+    return [...mineLines, ...notIn(mineLines, theirLines)].join("\n");
+  }
+  const hunks = [...lineHunks(b, mineLines, "m"), ...lineHunks(b, theirLines, "t")].sort((x, y) => x.start - y.start || x.end - y.end);
   const out: string[] = [];
   let pos = 0;
   let i = 0;
@@ -267,13 +277,32 @@ export function mergeText(base: string, mine: string, theirs: string): string {
     } else {
       const m = apply(b, start, end, group.filter((h) => h.side === "m"));
       const t = apply(b, start, end, group.filter((h) => h.side === "t"));
-      const seen = new Set(m);
-      out.push(...m, ...(m.join("\n") === t.join("\n") ? [] : t.filter((line) => !seen.has(line))));
+      out.push(...m, ...(m.join("\n") === t.join("\n") ? [] : notIn(m, t)));
     }
     pos = end;
   }
   out.push(...b.slice(pos));
   return out.join("\n");
+}
+
+/** Most base lines × side lines `mergeText` compares line by line (a pad at its limit is far below). */
+const MERGE_CELLS = 4_000_000;
+
+/**
+ * The lines of `theirs` that aren't already in `mine`: each line of mine
+ * accounts for one copy, so a line repeated more often in theirs stays,
+ * and blank lines (paragraph breaks) are always kept.
+ */
+function notIn(mine: string[], theirs: string[]): string[] {
+  const left = new Map<string, number>();
+  for (const line of mine) left.set(line, (left.get(line) ?? 0) + 1);
+  return theirs.filter((line) => {
+    if (line.trim() === "") return true;
+    const n = left.get(line) ?? 0;
+    if (n === 0) return true;
+    left.set(line, n - 1);
+    return false;
+  });
 }
 
 interface Hunk {
