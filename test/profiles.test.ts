@@ -12,7 +12,7 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { MIGRATIONS, openDatabase, runStep } from "../src/db.ts";
 import { Store } from "../src/store.ts";
-import { tempDir } from "./helpers.ts";
+import { oneProfile, tempDir } from "./helpers.ts";
 
 let dir: ReturnType<typeof tempDir>;
 let store: Store;
@@ -28,10 +28,36 @@ afterEach(() => {
 });
 
 describe("profiles", () => {
-  test("a new server starts with one profile, writing both jobs", () => {
-    const [first] = store.profiles.list();
-    expect(first).toMatchObject({ model: "deepseek-ai/DeepSeek-V3.1-Terminus", temperature: 0.8, topP: 0.95, minP: 0.025, supportsTools: true });
-    expect(store.getSettings()).toMatchObject({ rpAssignment: `profile:${first!.id}`, oocAssignment: `profile:${first!.id}` });
+  test("a new server starts with the starting loadout", () => {
+    const profiles = store.profiles.list();
+    expect(profiles.map((p) => [p.name, p.model])).toEqual([
+      ["TEE - Gemma 4 31b IT", "TEE/gemma-4-31b-it"],
+      ["TEE - GLM 5.3", "TEE/glm-5.3"],
+      ["TEE - Kimi K3", "TEE/kimi-k3"],
+      ["Gemini 4 Argon", "google/gemini-4-argon"],
+      ["TEE - KK3 Consult", "TEE/kimi-k3"],
+      ["TEE - Gemma 4 Decision", "TEE/gemma-4-31b-it"],
+    ]);
+    const [gemma, glm, kimi, argon, consult, decision] = profiles;
+    expect(gemma).toMatchObject({ temperature: 1.2, maxTokens: 4096, topP: 0.95, minP: 0.025, reasoningEffort: null, kinwriterMaker: true, consultant: false });
+    expect(glm).toMatchObject({ temperature: 0.75, maxTokens: 1024, topP: 0.95, minP: null, reasoningEffort: "high", consultant: true });
+    expect(kimi).toMatchObject({ temperature: 0.9, maxTokens: 1024, topP: null, minP: null, reasoningEffort: "high", consultant: false });
+    expect(argon).toMatchObject({ temperature: 0.9, maxTokens: 1024, topP: null, minP: null, reasoningEffort: "low" });
+    expect(consult).toMatchObject({ temperature: 0.9, maxTokens: 32000, reasoningEffort: "low", consultant: true });
+    expect(decision).toMatchObject({ temperature: 0.8, maxTokens: 1024, topP: 0.9, minP: 0.05, reasoningEffort: null });
+    expect(profiles.every((p) => p.supportsTools && !p.quirkPrompt)).toBe(true);
+    expect(profiles.filter((p) => p.kinwriterMaker)).toHaveLength(1);
+
+    expect(store.profiles.listRoulettes()).toEqual([]);
+    expect(store.getSettings()).toMatchObject({
+      rpAssignment: `profile:${argon!.id}`,
+      oocAssignment: `profile:${gemma!.id}`,
+      summaryAssignment: `profile:${decision!.id}`,
+      heartbeatAssignment: `profile:${decision!.id}`,
+      decisionModel: "typesafe/jev-1.13",
+      decisionConfidence: 0.8,
+      decisionFallback: `profile:${decision!.id}`,
+    });
   });
 
   test("can be made with just a name and a model, and changed", () => {
@@ -54,6 +80,7 @@ describe("profiles", () => {
   });
 
   test("the last profile can't be deleted", () => {
+    oneProfile(store);
     expect(() => store.profiles.delete(store.profiles.list()[0]!.id)).toThrow(/at least one profile/);
   });
 

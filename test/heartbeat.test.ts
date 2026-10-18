@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/server.ts";
 import { validateSettings } from "../src/store.ts";
 import { Wakeups } from "../src/wakeups.ts";
 import type { Channel } from "../src/types.ts";
-import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
+import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt, oneProfile } from "./helpers.ts";
 
 let fake: FakeNanoGpt;
 let dir: ReturnType<typeof tempDir>;
@@ -32,6 +32,7 @@ beforeEach(() => {
   dir = tempDir();
   notified = [];
   app = createApp(testConfig(dir.path, fake.baseUrl, { notifier: { available: () => true, notify: (n) => notified.push(n) } }));
+  oneProfile(app.store);
   ooc = app.store.listChannels()[1]!;
   now = new Date();
   now.setHours(12, 0, 0, 0);

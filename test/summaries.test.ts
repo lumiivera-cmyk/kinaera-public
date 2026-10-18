@@ -21,7 +21,7 @@ import {
 import { validateSettings } from "../src/store.ts";
 import { runTool } from "../src/tools.ts";
 import type { Channel, ChatMessage, Message } from "../src/types.ts";
-import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
+import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt, oneProfile } from "./helpers.ts";
 
 let fake: FakeNanoGpt;
 let dir: ReturnType<typeof tempDir>;
@@ -33,6 +33,7 @@ beforeEach(() => {
   fake = startFakeNanoGpt();
   dir = tempDir();
   app = createApp(testConfig(dir.path, fake.baseUrl));
+  oneProfile(app.store);
   [story, ooc] = app.store.listChannels() as [Channel, Channel];
 });
 
