@@ -6,7 +6,7 @@ A theme is CSS. Most themes only need to redefine the **variables** below. Anyth
 
 ## Making a theme
 
-1. Open **Appearance** (the palette button at the bottom of the channel list).
+1. Open **Settings → Look** (or the palette button at the bottom of the channel list).
 2. Pick the theme closest to what you want and press **Copy to edit**. Copying **Classic** gives you every variable below with its default value.
 3. Change values in the editor and press **Apply** to see the result behind the editor. **Save** keeps it and closes the editor.
 4. To use an image or font, add it under **Images and fonts**, then refer to it by name: `--app-background: url(sky.jpg) center / cover;`. Fonts go in an `@font-face` rule, which works in channel themes too.
@@ -113,7 +113,7 @@ Every `*-bg` can be a colour, gradient or image. Every `*-backdrop` is a [`backd
 | `.update-banner` | "Kinaera has been updated", at the top of the channel |
 | `.button`, `.button-primary`, `.button-danger`, `.icon-button`, `.link-button` | Buttons |
 | `.dialog`, `.dialog-title`, `.dialog-buttons`, `.hint`, `.form-error` | Dialogs and their parts |
-| `.theme-list`, `.theme-card`, `.theme-swatch`, `.theme-name`, `.theme-badge`, `.theme-description` | The theme picker in Appearance. The chosen card has `aria-checked="true"`. |
+| `.theme-list`, `.theme-card`, `.theme-swatch`, `.theme-name`, `.theme-badge`, `.theme-description` | The theme picker in Settings → Look. The chosen card has `aria-checked="true"`. |
 | `.theme-editor`, `.code-input`, `.theme-files` | The theme editor |
 | `.notebook`, `.notebook-actions`, `.notebook-list`, `.notebook-folder`, `.notebook-folder-header`, `.notebook-folder-name` | The notebook dialog and its folders |
 | `.notebook-entries`, `.notebook-entry`, `.notebook-entry-name`, `.notebook-entry-badges`, `.entry-badge` | Entries in the notebook. Each `.notebook-entry` has `data-kind` (`character` or `lore`) and `data-owner` (`user`, `kinwriter` or `joint`). |
@@ -127,7 +127,8 @@ Every `*-bg` can be a colour, gradient or image. Every `*-backdrop` is a [`backd
 | `.activity`, `.activity-summary`, `.activity-details` | A turn's actions under its messages. `.activity` gets `.has-errors` if a call failed. |
 | `.tool-call`, `.tool-call-head`, `.tool-call-name`, `.tool-call-summary`, `.tool-call-raw` | One tool call, in the activity details and the tool log. Has `data-status` (`ok` or `error`) and `data-source` (`native` or `text`). |
 | `.tool-log`, `.tool-log-list`, `.tool-log-actions` | The tool log dialog |
-| `.profile-list`, `.profile-row`, `.profile-row-name`, `.roulette-entries`, `.roulette-entry`, `.roulette-share` | Profiles and roulettes |
+| `.profile-list`, `.profile-row`, `.profile-row-name`, `.roulette-entries`, `.roulette-entry`, `.roulette-share` | Profiles and roulettes (Settings → Models) |
+| `.settings-hub`, `.settings-nav`, `.settings-nav-group`, `.settings-nav-item`, `.settings-body`, `.settings-head`, `.settings-panel` | The Settings screen: its list of sections (the open one has `aria-current="true"`, coloured like a channel link) and the open section. On a phone, `data-view` on `.settings-hub` is `list` or `panel`. |
 | `.tool-test-row`, `.tool-test` | "Test tools" and its result, which has `data-verdict` (`native`, `text`, `none` or `broken`) |
 | `.inbox`, `.inbox-list`, `.inbox-section`, `.inbox-card`, `.inbox-card-title`, `.inbox-card-text`, `.inbox-card-buttons` | The inbox |
 | `.suggestion-diff`, `.diff-before`, `.diff-after` | A suggestion's before and after |
@@ -140,13 +141,13 @@ Every `*-bg` can be a colour, gradient or image. Every `*-backdrop` is a [`backd
 | `.attach-row`, `.attach-chip`, `.message-attachments`, `.attach-list`, `.attach-option`, `.attach-button` | Attached notes: above the text box, under messages, and the picker |
 | `.theme-layers`, `.layer-1` to `.layer-4` | Empty layers for themes to draw on (see Layers below) |
 | `.channel-indicator` | A pill behind the open channel's link, hidden unless a theme shows it (see Liquid glass below). Gets `.stretching`, then `.settling`, as it moves between channels. |
-| `.theme-options`, `.theme-option-group`, `.theme-option`, `.theme-option-label`, `.theme-option-value` | Sliders in Appearance |
+| `.theme-options`, `.theme-option-group`, `.theme-option`, `.theme-option-label`, `.theme-option-value` | Sliders in Settings → Look |
 | `.check-option`, `.check-inline`, `.section-title`, `.advanced` | Checkboxes, section headings and "advanced" details in dialogs |
 | `.notice-banner` | Short notices at the top of the channel, e.g. about glass effects |
 
 ## Sliders (theme options)
 
-A theme can offer sliders in Appearance, each setting a CSS variable its CSS uses. Declare them in the theme's `theme.json`, or in the theme editor under **Sliders**:
+A theme can offer sliders in Settings → Look, each setting a CSS variable its CSS uses. Declare them in the theme's `theme.json`, or in the theme editor under **Sliders**:
 
 ```json
 "options": [
@@ -185,7 +186,7 @@ body { position: relative; isolation: isolate; overflow: hidden; }
 
 `isolation` keeps the layers behind the app's content but in front of the page's background. As a channel theme, `body` becomes the channel view, so the same CSS works there. Rainy Window uses all four: the city, rain falling outside, drops on the glass (each showing the city upside down, cut out with a `mask`), and drops sliding down (an animated SVG).
 
-**Your own background picture.** When you choose a picture in Appearance (src/backgrounds.ts), the page gets the class `has-user-background` on `<html>`, the app-level `.theme-layers` are hidden, and `#user-background` (a fixed element after them) shows the picture instead, faded by the "Fade the picture" slider toward white in light themes and black in dark ones (from the theme's `color-scheme`). The theme's glass and colours stay.
+**Your own background picture.** When you choose a picture in Settings → Look (src/backgrounds.ts), the page gets the class `has-user-background` on `<html>`, the app-level `.theme-layers` are hidden, and `#user-background` (a fixed element after them) shows the picture instead, faded by the "Fade the picture" slider toward white in light themes and black in dark ones (from the theme's `color-scheme`). The theme's glass and colours stay.
 
 ## Free layers for glass effects
 

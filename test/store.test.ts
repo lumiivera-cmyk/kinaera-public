@@ -67,13 +67,18 @@ describe("the database layout", () => {
     db.close();
   });
 
-  test("starts with one connection profile, writing both jobs", () => {
+  test("starts with the starting loadout: six profiles, and every job assigned", () => {
     const db = openDatabase(join(dir.path, "fresh.db"));
-    const profiles = db.query("SELECT id, model FROM profiles").all() as { id: string; model: string }[];
-    expect(profiles).toHaveLength(1);
+    const profiles = db.query("SELECT id, name FROM profiles ORDER BY position").all() as { id: string; name: string }[];
+    expect(profiles).toHaveLength(6);
+    const id = (name: string) => profiles.find((p) => p.name === name)!.id;
+    expect(db.query("SELECT id FROM roulettes").all()).toEqual([]);
     const setting = (key: string) => JSON.parse((db.query("SELECT value FROM settings WHERE key = ?").get(key) as { value: string }).value);
-    expect(setting("rpAssignment")).toBe(`profile:${profiles[0]!.id}`);
-    expect(setting("oocAssignment")).toBe(`profile:${profiles[0]!.id}`);
+    expect(setting("rpAssignment")).toBe(`profile:${id("Gemini 4 Argon")}`);
+    expect(setting("oocAssignment")).toBe(`profile:${id("TEE - Gemma 4 31b IT")}`);
+    for (const key of ["summaryAssignment", "heartbeatAssignment", "decisionFallback"]) {
+      expect(setting(key)).toBe(`profile:${id("TEE - Gemma 4 Decision")}`);
+    }
     db.close();
   });
 

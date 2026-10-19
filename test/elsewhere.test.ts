@@ -11,7 +11,7 @@ import { createApp, type App } from "../src/server.ts";
 import { runTool, toolSpecs, type ToolContext } from "../src/tools.ts";
 import { Wakeups } from "../src/wakeups.ts";
 import type { Channel, Message } from "../src/types.ts";
-import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
+import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt, oneProfile } from "./helpers.ts";
 
 let fake: FakeNanoGpt;
 let dir: ReturnType<typeof tempDir>;
@@ -23,6 +23,7 @@ beforeEach(() => {
   fake = startFakeNanoGpt();
   dir = tempDir();
   app = createApp(testConfig(dir.path, fake.baseUrl));
+  oneProfile(app.store);
   [story, ooc] = app.store.listChannels() as [Channel, Channel];
   // No orientation waiting: these tests are about other things.
   app.store.appState.set("orientation.pending", null);

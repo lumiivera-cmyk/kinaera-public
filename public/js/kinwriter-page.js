@@ -1,7 +1,8 @@
 /**
  * Kinwriters and servers: the rail on the left, switching between kinwriters,
- * the kinwriter menu (name, avatar, colour, how they write; opened from their
- * page, js/kinwriter-self.js), making new kinwriters, and server settings.
+ * the kinwriter's own sections of Settings (Profile, How they write, How
+ * they behave; js/settings-hub.js is the screen), making new kinwriters, and
+ * the server's section of Settings.
  */
 
 import { channelIcon, parseAddress, renderAll } from "./channels.js";
@@ -10,6 +11,7 @@ import { initial } from "./format.js";
 import { seenMessages } from "./live.js";
 import { createGroup, renderServerGroups } from "./groups.js";
 import { openSeedPicker } from "./seeds.js";
+import { explain, openSettings, saved, whenSectionShown, whenSettingsOpen } from "./settings-hub.js";
 
 // ------------------------------------------------------ kinwriters and servers
 
@@ -97,7 +99,7 @@ export function renderRail() {
       button.append(dot);
     }
     button.addEventListener("click", () => {
-      if (server === current) return openServerSettings();
+      if (server === current) return openSettings("servers");
       const last = readLocal(`kinaera.kinwriter.${server.id}`) ?? readLocal(`${OLD_KEY}.${server.id}`);
       switchKinwriter(server.kinwriters.find((p) => p.id === last)?.id ?? first.id);
     });
@@ -170,9 +172,15 @@ export function otherKinwriterItems() {
 
 const currentKinwriterLook = () => ({ name: state.settings.kinwriterName, avatar: state.settings.kinwriterAvatar, color: state.settings.kinwriterColor });
 
-// ------------------------------------------------------------ the kinwriter menu
+// ------------------------------------------------- the kinwriter's settings
 
+/** Settings, on this kinwriter's Profile. */
 export function openKinwriter() {
+  openSettings("profile");
+}
+
+/** Fill this kinwriter's sections from `state.settings` (they're saved whole). */
+function fillKinwriter() {
   const s = state.settings;
   const form = $("kinwriter-form").elements;
   paintAvatar($("kinwriter-dialog-avatar"), currentKinwriterLook());
@@ -194,11 +202,14 @@ export function openKinwriter() {
   form.scripts.checked = s.scripts === true;
   $("kinwriter-move").hidden = (currentServer()?.kinwriters.length ?? 1) < 2;
   hideFormError($("kinwriter-form"));
-  $("kinwriter-dialog").showModal();
 }
+whenSettingsOpen(fillKinwriter);
 
-async function saveKinwriter(event) {
-  event.preventDefault();
+/** One save at a time, in order: a quick second change waits for the first. */
+let savingKinwriter = Promise.resolve();
+const saveKinwriterSoon = () => (savingKinwriter = savingKinwriter.then(saveKinwriter));
+
+async function saveKinwriter() {
   const form = $("kinwriter-form").elements;
   try {
     const { settings } = await api("PUT", "/api/settings", {
@@ -216,11 +227,16 @@ async function saveKinwriter(event) {
       scripts: form.scripts.checked,
     });
     state.settings = settings;
-    $("kinwriter-dialog").close();
+    $("kinwriter-dialog-title").textContent = settings.kinwriterName;
+    for (const name of document.querySelectorAll("#settings-dialog .own-name")) name.textContent = settings.kinwriterName;
+    hideFormError($("kinwriter-form"));
+    saved();
     await loadHub();
     renderAll();
   } catch (error) {
-    showFormError($("kinwriter-form"), error.message);
+    // Back to the last saved values, so one bad box doesn't stop every later change from saving.
+    fillKinwriter();
+    showFormError($("kinwriter-form"), explain($("kinwriter-form"), error.message, { replyDelayMs: "replyDelaySeconds" }));
   }
 }
 
@@ -283,8 +299,8 @@ async function moveKinwriterOut() {
   try {
     await api("POST", `/api/hub/kinwriters/${encodeURIComponent(state.kinwriterId)}/move`, {});
     await loadHub();
-    $("kinwriter-dialog").close();
     renderAll();
+    renderServer();
   } catch (error) {
     showFormError($("kinwriter-form"), error.message);
   }
@@ -344,7 +360,8 @@ async function createKinwriter(event) {
 
 // ------------------------------------------------------------- servers
 
-function openServerSettings() {
+/** Settings → Kinwriters and groups: this server's name, kinwriters, archived ones and groups. */
+function renderServer() {
   const server = currentServer();
   if (!server) return;
   $("server-name-input").value = server.name;
@@ -364,8 +381,8 @@ function openServerSettings() {
   renderServerGroups(server);
   renderArchived(server);
   hideFormError($("server-form"));
-  $("server-dialog").showModal();
 }
+whenSectionShown("servers", renderServer);
 
 /** Archived kinwriters, each with their note: restore into this server, or delete for good. */
 function renderArchived(server) {
@@ -418,14 +435,16 @@ function renderArchived(server) {
 }
 
 async function saveServer(event) {
-  event.preventDefault();
+  event?.preventDefault();
   try {
     const data = await api("PATCH", `/api/hub/servers/${encodeURIComponent(currentServer().id)}`, { name: $("server-name-input").value });
     state.hub = data.servers;
-    $("server-dialog").close();
+    hideFormError($("server-form"));
+    saved();
     renderRail();
   } catch (error) {
-    showFormError($("server-form"), error.message);
+    $("server-name-input").value = currentServer().name;
+    showFormError($("server-form"), `${error.message.replace(/\.$/, "")}. It's back as it was.`);
   }
 }
 
@@ -444,11 +463,12 @@ async function deleteServer() {
   }
 }
 
-$("open-kinwriter-from-settings").addEventListener("click", () => {
-  els.settingsDialog.close();
-  openKinwriter();
+$("kinwriter-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveKinwriterSoon();
 });
-$("kinwriter-form").addEventListener("submit", saveKinwriter);
+// Every field saves when it changes (a text box when you leave it).
+$("kinwriter-form").addEventListener("change", (event) => event.target.name && saveKinwriterSoon());
 $("kinwriter-form").addEventListener("input", previewKinwriterLook);
 $("kinwriter-form").elements.oocBubbles.addEventListener("change", updateTextingOnly);
 $("kinwriter-delete").addEventListener("click", deleteKinwriter);
@@ -456,11 +476,12 @@ $("kinwriter-archive").addEventListener("click", archiveKinwriter);
 $("kinwriter-move").addEventListener("click", moveKinwriterOut);
 $("new-kinwriter-form").addEventListener("submit", createKinwriter);
 $("new-kinwriter-seed").addEventListener("click", chooseNewKinwriter);
-$("server-name").addEventListener("click", openServerSettings);
+$("server-name").addEventListener("click", () => openSettings("servers"));
 $("server-form").addEventListener("submit", saveServer);
+$("server-name-input").addEventListener("change", () => saveServer());
 $("server-delete").addEventListener("click", deleteServer);
 $("create-group").addEventListener("click", () => createGroup(currentServer().id));
 $("server-add-kinwriter").addEventListener("click", () => {
-  $("server-dialog").close();
+  els.settingsDialog.close();
   openNewKinwriter(currentServer().id);
 });

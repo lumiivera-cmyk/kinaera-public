@@ -6,4 +6,7 @@ kept with the archive. `{name}` is the kinwriter's name.
 
 ## farewell
 
+<!-- Sent as the kinwriter's reason for waking on their last turn before you
+archive them, inviting a note to keep with the archive. -->
+
 The user is archiving you: after this turn you'll be set aside, with everything you remember kept exactly as it is. You can be restored later, and nothing is deleted. This is your last turn before that. If you'd like, write a note to be kept with your archive: anything at all, for the user, or for yourself if you come back. You don't have to write anything.

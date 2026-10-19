@@ -128,7 +128,7 @@ export async function createChatCompletion(
   request: CompletionRequest,
 ): Promise<CompletionResult> {
   if (!options.apiKey) {
-    throw new ApiError("No nanoGPT API key is set. Add NANOGPT_API_KEY to your .env file and restart the server.");
+    throw new ApiError("No nanoGPT API key is set. Add your key in Settings → Server setup (or NANOGPT_API_KEY in .env), then restart the server.");
   }
 
   // The request body. Note the API uses snake_case (`max_tokens`), while

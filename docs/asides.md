@@ -14,7 +14,7 @@ The same plain rules as every wake-up still apply (`src/wakeups.ts`):
 - **Chattiness** off turns it off, along with everything else.
 - **Quiet hours.**
 - **Never a third time without you writing.** Your own story posts count as writing, so while you're playing, this rarely stops it.
-- **Its own limit**, Settings → Your kinwriter reaching out → **After their story posts**: after every story post (no limit), at most every 5, 15 or 30 minutes (the default), every hour, every 3 hours, or off. This is apart from the general cooldown, so a long cooldown for coming back to the app doesn't hold asides back. An aside does count toward the general cooldown, though, so a heartbeat right after one waits.
+- **Its own limit**, Settings → Reaching out → **After their story posts**: after every story post (no limit), at most every 5, 15 or 30 minutes (the default), every hour, every 3 hours, or off. This is apart from the general cooldown, so a long cooldown for coming back to the app doesn't hold asides back. An aside does count toward the general cooldown, though, so a heartbeat right after one waits.
 
 It isn't blocked for being "mid-conversation", as opening the app is: you're always mid-story when it happens.
 

@@ -31,6 +31,10 @@ The other sections are the wording around them.
 
 ## reflex-edited
 
+<!-- A check Jev runs on the kinwriter's draft in OOC, practice, group and DM
+channels, skipped if they edited a message recently. On a yes, the reminder
+goes to the kinwriter and the claim may show under their posted message. -->
+
 kind: follow-through
 channels: ooc, practice, group, dm
 tools: edit_my_message
@@ -40,6 +44,10 @@ reminder: You said you changed an earlier message, but it hasn't changed: edit_m
 claim: changed an earlier message
 
 ## reflex-deleted
+
+<!-- A check Jev runs on the kinwriter's draft in OOC, practice, group and DM
+channels, skipped if they deleted a message recently. On a yes, the reminder
+goes to the kinwriter and the claim may show under their posted message. -->
 
 kind: follow-through
 channels: ooc, practice, group, dm
@@ -51,6 +59,10 @@ claim: removed an earlier message
 
 ## reflex-now
 
+<!-- A check Jev runs on the kinwriter's draft in OOC, practice, group and DM
+channels, skipped if they used one of the listed tools recently. On a yes, the
+reminder goes to the kinwriter and the claim may show under their message. -->
+
 kind: follow-through
 channels: ooc, practice, group, dm
 tools: edit_my_message, delete_my_message, post_in_channel, post_draft, start_new_scene, create_channel, create_notebook_entry, edit_notebook_entry
@@ -60,6 +72,10 @@ reminder: You said you're doing it now, but your turn ends when you stop: there'
 claim: do something right away (it wasn't done)
 
 ## reflex-later
+
+<!-- A check Jev runs on the kinwriter's draft in OOC, practice, group and DM
+channels, skipped if they set a wake-up recently. On a yes, the reminder goes
+to the kinwriter and the claim may show under their message. -->
 
 kind: follow-through
 channels: ooc, practice, group, dm
@@ -71,6 +87,10 @@ claim: come back to it later (no wake-up is set)
 
 ## reflex-remember
 
+<!-- A check Jev runs on the kinwriter's draft in OOC, practice, group and DM
+channels, skipped if they wrote any notes recently. On a yes, the reminder
+goes to the kinwriter and the claim may show under their message. -->
+
 kind: follow-through
 channels: ooc, practice, group, dm
 tools: write_journal, edit_journal_entry, keep_journal_entry, create_notebook_entry, edit_notebook_entry, write_self_page, revise_identity, note_relationship, write_profile_note, keep_pattern_note
@@ -81,6 +101,10 @@ claim: remember something (nothing was noted)
 
 ## reflex-posted
 
+<!-- A check Jev runs on the kinwriter's draft in OOC, practice, group and DM
+channels, skipped if they posted elsewhere recently. On a yes, the reminder
+goes to the kinwriter and the claim may show under their message. -->
+
 kind: follow-through
 channels: ooc, practice, group, dm
 tools: post_in_channel, post_draft, start_new_scene, create_channel
@@ -90,6 +114,10 @@ reminder: You said you posted or started something in another channel, but nothi
 claim: posted in another channel
 
 ## reflex-carry-on
+
+<!-- A check Jev runs on the kinwriter's draft in OOC, practice, group and DM
+channels, only while scripts are on for them. On a yes, the reminder goes to
+the kinwriter and the claim may show under their message. -->
 
 kind: follow-through
 channels: ooc, practice, group, dm
@@ -102,6 +130,10 @@ claim: keep going (no next turn was set up)
 
 ## reflex-plan
 
+<!-- An optional check (off until the kinwriter turns it on) that Jev runs on
+drafts in any channel while scripts are on. On a yes, the reminder is sent to
+the kinwriter before their reply is posted. -->
+
 kind: chance
 default: off
 channels: all
@@ -113,6 +145,10 @@ reminder: You've planned several steps. A script runs them exactly as written, i
 
 ## reflex-lore
 
+<!-- An optional check (off until the kinwriter turns it on) that Jev runs on
+story drafts in roleplay channels. On a yes, the reminder is sent to the
+kinwriter before their post goes up. -->
+
 kind: chance
 default: off
 channels: rp
@@ -123,6 +159,10 @@ reminder: Something lasting comes up in this post (a new name or fact). If it's 
 
 ## reflex-recall
 
+<!-- An optional check (off until the kinwriter turns it on) that Jev runs on
+drafts in any channel. On a yes, the reminder is sent to the kinwriter before
+their reply is posted. -->
+
 kind: chance
 default: off
 channels: all
@@ -132,6 +172,11 @@ rephrased: Does the draft depend on a particular earlier fact (what happened, wh
 reminder: Your draft leans on a detail from earlier. If you're not sure of it, check (or read_notebook_entry) before it's posted.
 
 ## state
+
+<!-- Sent to Jev along with the follow-through questions whenever a
+kinwriter's draft is checked. {user} is your latest message, {draft} their
+draft, {tools} and {recent} what they did, {known} the notebook's entry names.
+-->
 
 The user's latest message:
 {user}
@@ -148,14 +193,24 @@ Names already in the notebook: {known}
 
 ## nudge
 
+<!-- Sent to the kinwriter as a message after Jev flags their draft, giving
+them one more round before it posts. {reminders} is the list of reminders from
+each check that came up. -->
+
 (A quick follow-through check, by Jev reading your draft: it decides nothing.
 {reminders}
 Your draft isn't posted yet. Now either call the tool you meant to (then write your reply again, or reply with exactly [same] to post the draft as it was), or call keep_my_draft to post the draft as it is without it, if the reminder doesn't fit. If you keep it, the user sees that you were reminded and didn't.)
 
 ## keep-draft
 
+<!-- The description of the keep-my-draft option offered to the kinwriter,
+beside their tools, in the extra round after a reminder. -->
+
 Post your draft as it is, without the tool the reminder named: when the reminder doesn't fit (you didn't mean what it read), or you'd rather not. The user sees that you were reminded and kept your draft.
 
 ## standing
+
+<!-- Added to the kinwriter's prompt under "Good to know" on every turn where
+they have tools and Jev (the decision model) is set up. -->
 
 You keep a quick double-check on your own follow-through. Outside story channels, after you draft a reply, Jev (a small, fast model) reads the draft and asks a few fixed questions: did you say you'd just done something (edited a message, set something for later, noted something, posted elsewhere) without calling the tool? If one comes up, you get a short reminder and one more round to act or not, and the user sees that you were reminded. It decides nothing for you. set_my_reflexes lists the checks and turns any of them off or on, including ones that start off: a nudge when something lasting comes up in a story, one to check a detail you're recalling, and (with scripts) one that suggests a script when you plan several steps.

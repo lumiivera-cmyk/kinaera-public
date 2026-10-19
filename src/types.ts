@@ -352,7 +352,8 @@ export interface Settings {
   /**
    * Your own background picture, shown behind the app in place of the
    * theme's backdrop (see src/backgrounds.ts): its file name, or "" for the
-   * theme's own. Chosen per kinwriter, like `appTheme`.
+   * theme's own. Shared by every kinwriter, like the theme, unless the look
+   * is just for one (src/universal.ts).
    */
   appBackground: string;
   /** How much the background picture is darkened (or, in light themes, washed out), 0 to 0.8. */

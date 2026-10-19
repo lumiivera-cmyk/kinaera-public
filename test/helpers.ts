@@ -11,7 +11,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../src/config.ts";
-import type { ChatMessage } from "../src/types.ts";
+import type { Store } from "../src/store.ts";
+import type { ChatMessage, Profile } from "../src/types.ts";
 
 /** What the fake server should do with the next request. */
 export type FakeReply =
@@ -163,4 +164,28 @@ export function testConfig(dataDir: string, apiBaseUrl: string, overrides: Parti
     autoWake: false,
     ...overrides,
   };
+}
+
+/**
+ * Trim a new server's starting loadout (src/db.ts) down to one plain
+ * profile writing roleplay and OOC, no roulettes and no other jobs
+ * assigned: the start many tests were written for.
+ */
+export function oneProfile(store: Store): Profile {
+  for (const roulette of store.profiles.listRoulettes()) store.profiles.deleteRoulette(roulette.id);
+  const [first, ...rest] = store.profiles.list();
+  for (const profile of rest) store.profiles.delete(profile.id);
+  const plain = store.profiles.update(first!.id, {
+    name: "DeepSeek-V3.1-Terminus",
+    model: "deepseek-ai/DeepSeek-V3.1-Terminus",
+    temperature: 0.8,
+    maxTokens: 1024,
+    topP: 0.95,
+    minP: 0.025,
+    reasoningEffort: null,
+    consultant: false,
+    kinwriterMaker: false,
+  });
+  store.updateSettings({ rpAssignment: `profile:${plain.id}`, oocAssignment: `profile:${plain.id}` });
+  return plain;
 }

@@ -6,7 +6,7 @@
  * refraction, from public/glass.js, in Chrome and other Chromium browsers;
  * elsewhere, and in Lite mode, they just blur).
  *
- * Sliders in Appearance (declared in theme.json) set these variables:
+ * Sliders in Settings → Look (declared in theme.json) set these variables:
  *   --bubble-transparency  0 (solid) to 0.95 (almost clear)
  *   --bubble-blur          how much the bubbles blur what's behind them
  *   --refraction           how strongly the bubbles' edges bend what's behind (px)

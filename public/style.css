@@ -1356,6 +1356,10 @@ button:disabled {
   margin-bottom: 4px;
 }
 
+.prompts-used {
+  margin: 0 0 6px;
+}
+
 .prompts-section textarea {
   width: 100%;
   font: 13px / 1.5 var(--font-mono);
@@ -1698,7 +1702,6 @@ button:disabled {
 
 .entry-link.missing {
   color: var(--text-muted);
-  text-decoration: line-through;
 }
 
 .entry-settings {
@@ -1801,6 +1804,203 @@ button:disabled {
 .profile-row-name {
   font-weight: 600;
   color: var(--text-strong);
+}
+
+/* The Profiles page's loadout: who writes what, and every profile's settings drawn out. Kept compact. */
+.loadout-jobs {
+  display: grid;
+  margin: 0 0 8px;
+  padding: 2px 0;
+  list-style: none;
+  border: var(--input-border);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  font-size: 13px;
+}
+
+.loadout-job {
+  display: grid;
+  grid-template-columns: 9.5em minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0 8px;
+  padding: 2px 8px;
+}
+
+/* "just for …" and "channel's own" sit right after what it uses. */
+.loadout-job-what > .entry-badge {
+  margin-left: 6px;
+}
+
+.loadout-job-name {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.loadout-job-what {
+  overflow-wrap: anywhere;
+}
+
+.loadout-card {
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 6px 10px 8px;
+  border: var(--input-border);
+  background: var(--input-bg);
+  font-size: 13px;
+}
+
+.loadout-card:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.loadout-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.loadout-model,
+.loadout-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.loadout-model {
+  margin-top: -3px;
+  color: var(--text-muted);
+}
+
+.loadout-gauges {
+  display: grid;
+  grid-template-columns: auto minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: 1px 8px;
+}
+
+/* Wide enough: two settings per line. */
+@media (min-width: 560px) {
+  .loadout-gauges {
+    grid-template-columns: auto minmax(40px, 1fr) auto auto minmax(40px, 1fr) auto;
+    column-gap: 8px;
+  }
+}
+
+.loadout-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.loadout-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.loadout-scale {
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.loadout-bar {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--channel-link-active-bg);
+  overflow: hidden;
+}
+
+.loadout-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* "auto": left to the model, so no bar of its own. */
+.loadout-bar-auto {
+  background: repeating-linear-gradient(135deg, var(--channel-link-active-bg) 0 3px, transparent 3px 6px);
+}
+
+.loadout-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+
+.loadout-steps > span {
+  height: 5px;
+  border-radius: 2px;
+  background: var(--channel-link-active-bg);
+}
+
+.loadout-steps > span.lit {
+  background: var(--accent);
+}
+
+.loadout-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.loadout-switch {
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--channel-link-active-bg);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.loadout-switch.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.loadout-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--channel-link-active-bg);
+  font-size: 12px;
+}
+
+.loadout-none {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* A roulette: one bar split by weight, each part in its own shade. */
+.loadout-split {
+  display: flex;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.loadout-split > span {
+  flex-basis: 0;
+  min-width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent);
+  background: hsl(from var(--accent) calc(h + var(--part) * 47) s l);
+  box-shadow: inset 1px 0 0 rgb(0 0 0 / 25%);
+}
+
+.loadout-shares {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
 }
 
 .assignment-grid {
@@ -3513,4 +3713,188 @@ button.attach-chip {
 
 .scratchpad-status {
   margin-top: 6px;
+}
+
+/* Server setup: saved, waiting for a restart (js/server-setup.js). */
+.restart-notice {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warning, #d9a441);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #d9a441) 12%, transparent);
+  font-size: 14px;
+}
+
+/* ============================================================ settings */
+
+/*
+ * Settings (js/settings-hub.js): one screen, the list of sections beside the
+ * open section; on a phone, the list first, then a section with a back arrow.
+ * The list and the section each scroll on their own.
+ */
+.settings-hub {
+  width: min(960px, 100vw - 24px);
+  height: calc(100vh - 24px);
+  height: calc(100dvh - 24px);
+  padding: 0;
+}
+
+.settings-hub[open] {
+  flex-direction: row;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 230px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 10px 20px;
+  border-right: 1px solid color-mix(in srgb, var(--text-muted) 20%, transparent);
+}
+
+.settings-nav-head,
+.settings-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-nav-head {
+  padding: 0 6px;
+}
+
+.settings-nav-head .dialog-title,
+.settings-head .dialog-title {
+  flex: 1;
+  margin: 0;
+}
+
+.settings-nav-group {
+  margin: 16px 10px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  margin: 1px 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--channel-link-color);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: var(--channel-link-hover-bg);
+  color: var(--text);
+}
+
+/* The open section: like the open channel, plus a bar, for themes whose open channel has no fill of its own. */
+.settings-nav-item[aria-current="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--channel-link-active-bg));
+  color: var(--channel-link-active-color);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* The list and the section scroll, so they can take focus: no ring round them. */
+.settings-nav:focus,
+.settings-scroll:focus {
+  outline: none;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-head {
+  padding: 14px 16px 0 20px;
+}
+
+.settings-saved {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.settings-for,
+#own-status:not(:empty) {
+  margin: 2px 20px 0;
+}
+
+#own-status:empty {
+  display: none;
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px 24px;
+}
+
+/* A save that failed: kept in view at the bottom of the section, however far down it is. */
+.settings-scroll .form-error:not([hidden]) {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  /* Over the dialog's own fill and frosted, so the section scrolling under it doesn't show through. */
+  background: linear-gradient(var(--error-bg), var(--error-bg)), var(--dialog-bg);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+
+/* Wide: the list is always there, so no back arrow, and one close button (the section's). */
+@media (min-width: 800px) {
+  .settings-back,
+  .settings-nav .settings-close {
+    display: none;
+  }
+}
+
+/* A phone: the list, or a section, filling the screen. */
+@media (max-width: 799px) {
+  .settings-hub {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .settings-nav {
+    flex: 1;
+    border-right: 0;
+  }
+
+  .settings-nav-item {
+    padding: 11px 12px;
+  }
+
+  .settings-hub[data-view="list"] .settings-body,
+  .settings-hub[data-view="panel"] .settings-nav {
+    display: none;
+  }
+
+  .settings-head {
+    padding-left: 8px;
+  }
 }

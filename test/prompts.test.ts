@@ -99,6 +99,18 @@ describe("editing the wording", () => {
     expect(prompt.user).toContain("# Name\nCall them Ilse, exactly.");
   });
 
+  test("every section says where it's used, and that note is never sent", async () => {
+    const { data } = await call("GET", "/api/hub/prompts");
+    for (const file of data.files) {
+      for (const section of file.sections) {
+        expect(`${file.file}/${section.name}: ${section.used}`).not.toBe(`${file.file}/${section.name}: `);
+        expect(section.text).not.toContain("<!--");
+        expect(wording(file.file)[section.name]).not.toContain("<!--");
+      }
+    }
+    expect(data.files.find((f: any) => f.file === "time").sections.find((s: any) => s.name === "heartbeat").used).toContain("heartbeat");
+  });
+
   test("placeholders are filled; unknown ones are left alone", () => {
     expect(fill('{name} said {"q1": 1} and {other}', { name: "Ilse" })).toBe('Ilse said {"q1": 1} and {other}');
   });

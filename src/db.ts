@@ -1004,29 +1004,72 @@ function renameFriend(db: Database): void {
   }
 }
 
+type StartingProfile = {
+  name: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  topP: number | null;
+  minP: number | null;
+  reasoningEffort: "none" | "low" | "medium" | "high" | null;
+  consultant?: boolean;
+  kinwriterMaker?: boolean;
+};
+
 /**
- * The connection profile a new server starts with, which writes both
- * roleplay and OOC until you change that. Only ever made for a brand-new
- * database: existing profiles are never touched.
+ * The profiles a new server starts with, in order (the first is the
+ * default wherever nothing is chosen). All of them can use tools. Only ever
+ * made for a brand-new database: existing profiles are never touched.
  */
-const STARTING_PROFILE = {
-  model: "deepseek-ai/DeepSeek-V3.1-Terminus",
-  temperature: 0.8,
-  maxTokens: 1024,
-  topP: 0.95,
-  minP: 0.025,
+const STARTING_PROFILES: StartingProfile[] = [
+  { name: "TEE - Gemma 4 31b IT", model: "TEE/gemma-4-31b-it", temperature: 1.2, maxTokens: 4096, topP: 0.95, minP: 0.025, reasoningEffort: null, kinwriterMaker: true },
+  { name: "TEE - GLM 5.3", model: "TEE/glm-5.3", temperature: 0.75, maxTokens: 1024, topP: 0.95, minP: null, reasoningEffort: "high", consultant: true },
+  { name: "TEE - Kimi K3", model: "TEE/kimi-k3", temperature: 0.9, maxTokens: 1024, topP: null, minP: null, reasoningEffort: "high" },
+  { name: "Gemini 4 Argon", model: "google/gemini-4-argon", temperature: 0.9, maxTokens: 1024, topP: null, minP: null, reasoningEffort: "low" },
+  { name: "TEE - KK3 Consult", model: "TEE/kimi-k3", temperature: 0.9, maxTokens: 32000, topP: null, minP: null, reasoningEffort: "low", consultant: true },
+  { name: "TEE - Gemma 4 Decision", model: "TEE/gemma-4-31b-it", temperature: 0.8, maxTokens: 1024, topP: 0.9, minP: 0.05, reasoningEffort: null },
+];
+
+/** Who writes each job on a new server, by starting profile name. */
+const STARTING_ASSIGNMENTS: Record<string, string> = {
+  rpAssignment: "profile:Gemini 4 Argon",
+  oocAssignment: "profile:TEE - Gemma 4 31b IT",
+  summaryAssignment: "profile:TEE - Gemma 4 Decision",
+  heartbeatAssignment: "profile:TEE - Gemma 4 Decision",
+  decisionFallback: "profile:TEE - Gemma 4 Decision",
 };
 
 function startingProfile(db: Database): void {
-  const p = STARTING_PROFILE;
-  const id = crypto.randomUUID();
-  db.query(
-    `INSERT INTO profiles (id, name, model, temperature, max_tokens, top_p, min_p, position, created_at)
-     VALUES ($id, $name, $model, $temperature, $maxTokens, $topP, $minP, 0, $now)`,
-  ).run({ id, name: p.model.split("/").at(-1)!, model: p.model, temperature: p.temperature, maxTokens: p.maxTokens, topP: p.topP, minP: p.minP, now: new Date().toISOString() });
+  const now = new Date().toISOString();
+  const ids = new Map<string, string>();
+  const addProfile = db.query(
+    `INSERT INTO profiles (id, name, model, temperature, max_tokens, top_p, min_p, reasoning_effort, supports_tools,
+                           consultant, kinwriter_maker, position, created_at)
+     VALUES ($id, $name, $model, $temperature, $maxTokens, $topP, $minP, $reasoningEffort, 1,
+             $consultant, $kinwriterMaker, $position, $now)`,
+  );
+  STARTING_PROFILES.forEach((p, position) => {
+    const id = crypto.randomUUID();
+    ids.set(`profile:${p.name}`, `profile:${id}`);
+    addProfile.run({
+      id,
+      name: p.name,
+      model: p.model,
+      temperature: p.temperature,
+      maxTokens: p.maxTokens,
+      topP: p.topP,
+      minP: p.minP,
+      reasoningEffort: p.reasoningEffort,
+      consultant: p.consultant ? 1 : 0,
+      kinwriterMaker: p.kinwriterMaker ? 1 : 0,
+      position,
+      now,
+    });
+  });
   const assign = db.query("INSERT INTO settings (key, value) VALUES ($key, $value)");
-  assign.run({ key: "rpAssignment", value: JSON.stringify(`profile:${id}`) });
-  assign.run({ key: "oocAssignment", value: JSON.stringify(`profile:${id}`) });
+  for (const [key, target] of Object.entries(STARTING_ASSIGNMENTS)) {
+    assign.run({ key, value: JSON.stringify(ids.get(target)!) });
+  }
 }
 
 /**

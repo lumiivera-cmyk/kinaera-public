@@ -10,7 +10,7 @@ The library holds long texts your kinwriter can look things up in: a film's scre
 - **Search** the library yourself to see what your kinwriter would find, and tap a result to read the passage (with Previous and Next).
 - Tap a document to rename it, change its description or channels, or delete it.
 
-Your kinwriter needs a profile that can use tools (Settings → Profiles and roulettes). Their prompt lists the library's titles and descriptions, and asks them to look things up rather than guess. What they searched for and read shows under their message, like any other action ("⚙ Arlo searched "The Lighthouse" for "drowned bell", read passage 12").
+Your kinwriter needs a profile that can use tools (Settings → Models). Their prompt lists the library's titles and descriptions, and asks them to look things up rather than guess. What they searched for and read shows under their message, like any other action ("⚙ Arlo searched "The Lighthouse" for "drowned bell", read passage 12").
 
 ## How it works
 

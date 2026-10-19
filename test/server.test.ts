@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { appVersion, createApp, matchRoute, type App } from "../src/server.ts";
 import { MAX_ROUNDS } from "../src/kinwriter.ts";
 import type { Channel } from "../src/types.ts";
-import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
+import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt, oneProfile } from "./helpers.ts";
 
 let fake: FakeNanoGpt;
 let dir: ReturnType<typeof tempDir>;
@@ -26,6 +26,7 @@ beforeEach(() => {
   fake = startFakeNanoGpt();
   dir = tempDir();
   app = createApp(testConfig(dir.path, fake.baseUrl));
+  oneProfile(app.store);
   [story, ooc] = app.store.listChannels() as [Channel, Channel];
 });
 

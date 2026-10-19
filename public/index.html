@@ -125,7 +125,7 @@
       whole app. Hidden unless a theme shows them. See docs/theme-reference.md.
     -->
     <div class="theme-layers" aria-hidden="true"><i class="layer-1"></i><i class="layer-2"></i><i class="layer-3"></i><i class="layer-4"></i></div>
-    <!-- Your own background picture, when you've chosen one (Appearance): it replaces the layers above. -->
+    <!-- Your own background picture, when you've chosen one (Settings → Look): it replaces the layers above. -->
     <div id="user-background" class="user-background" aria-hidden="true" hidden></div>
 
     <div class="app" id="app">
@@ -314,269 +314,696 @@
     <!-- ============================================================ dialogs -->
     <!-- A <dialog> gives us a modal with Escape-to-close for free. -->
 
-    <!-- Settings: shared by every kinwriter, with some sections settable just for one (js/settings.js). -->
-    <dialog id="settings-dialog" class="dialog surface">
-      <form id="settings-form" method="dialog">
-        <h2 class="dialog-title">Settings</h2>
+    <!--
+      Settings: one screen, a list of sections down the side (on a phone, the
+      list first). Grouped by who they're for: shared by every kinwriter (some
+      can be set "Just for" one), this kinwriter's own, this server, and the
+      app. Changes save as they're made (js/settings-hub.js).
+    -->
+    <dialog id="settings-dialog" class="dialog surface settings-hub" data-view="list" aria-labelledby="settings-heading">
+      <nav class="settings-nav" aria-label="Settings sections">
+        <div class="settings-nav-head">
+          <h2 class="dialog-title" id="settings-heading">Settings</h2>
+          <button type="button" class="icon-button settings-close" data-close aria-label="Close settings" title="Close">✕</button>
+        </div>
+        <p class="settings-nav-group">Every kinwriter</p>
+        <button type="button" class="settings-nav-item" data-section="models">Models</button>
+        <button type="button" class="settings-nav-item" data-section="memory">Memory</button>
+        <button type="button" class="settings-nav-item" data-section="reaching">Reaching out</button>
+        <button type="button" class="settings-nav-item" data-section="jev">Jev</button>
+        <button type="button" class="settings-nav-item" data-section="prompts">Prompts</button>
+        <button type="button" class="settings-nav-item" data-section="rules">Rules</button>
+        <button type="button" class="settings-nav-item" data-section="look">Look</button>
+        <p class="settings-nav-group"><span class="own-name"></span></p>
+        <button type="button" class="settings-nav-item" data-section="profile">Profile</button>
+        <button type="button" class="settings-nav-item" data-section="writing">How they write</button>
+        <button type="button" class="settings-nav-item" data-section="behaving">How they behave</button>
+        <p class="settings-nav-group">This server</p>
+        <button type="button" class="settings-nav-item" data-section="servers">Kinwriters and groups</button>
+        <p class="settings-nav-group">App</p>
+        <button type="button" class="settings-nav-item" data-section="emojis">Custom emojis</button>
+        <button type="button" class="settings-nav-item" data-section="labs">Labs</button>
+        <button type="button" class="settings-nav-item" data-section="setup">API key and setup</button>
+        <button type="button" class="settings-nav-item" data-section="developer" data-developer hidden>Developer</button>
+      </nav>
 
-        <p class="hint">
-          Shared by every kinwriter, on every server. A section ticked "Just for" is set for this kinwriter alone. Who
-          they are, and how they write, is in their own menu:
-          <button type="button" class="link-button inline-link" id="open-kinwriter-from-settings">Kinwriter…</button>
-        </p>
+      <div class="settings-body">
+        <header class="settings-head">
+          <button type="button" class="icon-button settings-back" id="settings-back" aria-label="All settings" title="All settings">←</button>
+          <h3 class="dialog-title settings-title" id="settings-title"></h3>
+          <span class="settings-saved" id="settings-saved" role="status"></span>
+          <button type="button" class="icon-button settings-close" data-close aria-label="Close settings" title="Close">✕</button>
+        </header>
+        <p class="hint settings-for" id="settings-for"></p>
         <p class="hint" id="own-status" role="status"></p>
 
-        <label class="check-option own-toggle">
-          <input type="checkbox" data-own="models" />
-          <span>Models just for <span class="own-name"></span></span>
-        </label>
+        <div class="settings-scroll" id="settings-scroll">
+          <form id="settings-form" method="dialog">
+            <section class="settings-panel" data-section="models" data-title="Models" hidden>
+              <label class="check-option own-toggle">
+                <input type="checkbox" data-own="models" />
+                <span>Just for <span class="own-name"></span></span>
+              </label>
+              <p class="hint">
+                A <strong>connection profile</strong> is one model with its settings. A <strong>roulette</strong> picks one of
+                several profiles at random each turn, by weight, for variety. Neither changes who your kinwriter is.
+              </p>
+              <!-- Which connection profile or roulette writes each kind of channel. -->
+              <div class="grid assignment-grid">
+                <div>
+                  <label for="setting-rp-assignment">Roleplay written by</label>
+                  <select id="setting-rp-assignment" name="rpAssignment"></select>
+                </div>
+                <div>
+                  <label for="setting-ooc-assignment">OOC written by</label>
+                  <select id="setting-ooc-assignment" name="oocAssignment"></select>
+                </div>
+              </div>
+              <p class="hint">
+                A channel can override these in its own settings. Summaries, the heartbeat check and Jev are chosen in
+                Memory, Reaching out and Jev, so each follows that section's "Just for".
+              </p>
+              <h3 class="section-title">Who writes what</h3>
+              <p class="hint">For <strong id="loadout-for"></strong></p>
+              <ul id="loadout-jobs" class="loadout-jobs"></ul>
 
-        <p class="hint">Characters, yours and your kinwriter's, live in the notebook (the book button).</p>
+              <h3 class="section-title">Profiles</h3>
+              <ul id="profile-list" class="profile-list"></ul>
+              <button type="button" class="button" id="new-profile">New profile</button>
 
-        <!-- Which connection profile or roulette writes each kind of channel. -->
-        <div class="grid assignment-grid">
-          <div>
-            <label for="setting-rp-assignment">Roleplay written by</label>
-            <select id="setting-rp-assignment" name="rpAssignment"></select>
+              <h3 class="section-title">Roulettes</h3>
+              <ul id="roulette-list" class="profile-list"></ul>
+              <button type="button" class="button" id="new-roulette">New roulette</button>
+            </section>
+            <section class="settings-panel" data-section="memory" data-title="Memory" hidden>
+              <label class="check-option own-toggle">
+                <input type="checkbox" data-own="memory" />
+                <span>Just for <span class="own-name"></span></span>
+              </label>
+              <label for="setting-history">Recent messages</label>
+              <input id="setting-history" name="historyLimit" type="number" min="1" max="1000" step="1" />
+              <p class="hint">How many of a channel's newest messages your kinwriter always reads in full.</p>
+
+              <label class="check-option">
+                <input type="checkbox" name="summaries" />
+                <span
+                  ><strong>Summaries</strong><br /><span class="hint"
+                    >Your kinwriter remembers older messages through summaries: of each scene when it ends, the story so
+                    far, and a line or two per channel for OOC. Off: older messages are simply left out.</span
+                  ></span
+                >
+              </label>
+              <div class="grid assignment-grid summaries-only">
+                <div>
+                  <label for="setting-summary-every">Summarize every</label>
+                  <input id="setting-summary-every" name="summaryEvery" type="number" min="2" max="500" step="1" />
+                </div>
+                <div>
+                  <label for="setting-summary-assignment">Summaries written by</label>
+                  <select id="setting-summary-assignment" name="summaryAssignment"></select>
+                </div>
+              </div>
+              <p class="hint summaries-only">
+                In a long scene (or OOC chat), once this many more messages have piled up beyond the recent ones, the
+                oldest are folded into a summary of it. A cheap, careful model is a good choice for summaries.
+              </p>
+            </section>
+            <section class="settings-panel" data-section="reaching" data-title="Reaching out" hidden>
+              <label class="check-option own-toggle">
+                <input type="checkbox" data-own="reaching" />
+                <span>Just for <span class="own-name"></span> (wake-ups and the heartbeat)</span>
+              </label>
+              <label for="setting-wakeups">Chattiness</label>
+              <select id="setting-wakeups" name="wakeups">
+                <option value="off">Off: only when you write</option>
+                <option value="quiet">Quiet: when you come back after a while, and to review your suggestions</option>
+                <option value="normal">Normal: also when you end a scene</option>
+                <option value="chatty">Chatty: also whenever you open the app</option>
+              </select>
+              <p class="hint">
+                Your kinwriter may take a turn on their own, in your OOC channel. Quiet hours, the cooldown and "never a third
+                time without you writing" always apply; after that, whether to write is up to them.
+              </p>
+              <div class="grid assignment-grid wakeups-only">
+                <div>
+                  <label for="setting-away-hours">Away after (hours)</label>
+                  <input id="setting-away-hours" name="awayHours" type="number" min="0.25" max="720" step="0.25" />
+                </div>
+                <div>
+                  <label for="setting-wake-cooldown">At most every (minutes)</label>
+                  <input id="setting-wake-cooldown" name="wakeCooldownMinutes" type="number" min="1" max="10080" step="1" />
+                </div>
+                <div>
+                  <label for="setting-quiet-start">Quiet hours from</label>
+                  <select id="setting-quiet-start" name="quietStart">
+                    <option value="-1">No quiet hours</option>
+                    <option value="0">00:00</option>
+                    <option value="1">01:00</option>
+                    <option value="2">02:00</option>
+                    <option value="3">03:00</option>
+                    <option value="4">04:00</option>
+                    <option value="5">05:00</option>
+                    <option value="6">06:00</option>
+                    <option value="7">07:00</option>
+                    <option value="8">08:00</option>
+                    <option value="9">09:00</option>
+                    <option value="10">10:00</option>
+                    <option value="11">11:00</option>
+                    <option value="12">12:00</option>
+                    <option value="13">13:00</option>
+                    <option value="14">14:00</option>
+                    <option value="15">15:00</option>
+                    <option value="16">16:00</option>
+                    <option value="17">17:00</option>
+                    <option value="18">18:00</option>
+                    <option value="19">19:00</option>
+                    <option value="20">20:00</option>
+                    <option value="21">21:00</option>
+                    <option value="22">22:00</option>
+                    <option value="23">23:00</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="setting-quiet-end">...until</label>
+                  <select id="setting-quiet-end" name="quietEnd">
+                    <option value="0">00:00</option>
+                    <option value="1">01:00</option>
+                    <option value="2">02:00</option>
+                    <option value="3">03:00</option>
+                    <option value="4">04:00</option>
+                    <option value="5">05:00</option>
+                    <option value="6">06:00</option>
+                    <option value="7">07:00</option>
+                    <option value="8">08:00</option>
+                    <option value="9">09:00</option>
+                    <option value="10">10:00</option>
+                    <option value="11">11:00</option>
+                    <option value="12">12:00</option>
+                    <option value="13">13:00</option>
+                    <option value="14">14:00</option>
+                    <option value="15">15:00</option>
+                    <option value="16">16:00</option>
+                    <option value="17">17:00</option>
+                    <option value="18">18:00</option>
+                    <option value="19">19:00</option>
+                    <option value="20">20:00</option>
+                    <option value="21">21:00</option>
+                    <option value="22">22:00</option>
+                    <option value="23">23:00</option>
+                  </select>
+                </div>
+              </div>
+              <div class="wakeups-only">
+                <label for="setting-aside">After their story posts</label>
+                <p class="hint">
+                  When your kinwriter posts in a story, a moment in OOC to say something to you as themselves if they want to:
+                  a reaction, a question, an idea. Most of the time they'll let the story speak. It has its own limit, apart
+                  from the cooldown above (or none); quiet hours and "never a third time without you writing" still apply.
+                </p>
+                <select id="setting-aside" name="asideMinutes">
+                  <option value="-1">Off</option>
+                  <option value="0">After every story post</option>
+                  <option value="5">At most every 5 minutes</option>
+                  <option value="15">At most every 15 minutes</option>
+                  <option value="30">At most every 30 minutes</option>
+                  <option value="60">At most every hour</option>
+                  <option value="180">At most every 3 hours</option>
+                </select>
+              </div>
+              <div class="wakeups-only">
+                <label for="setting-heartbeat">Heartbeat</label>
+                <p class="hint">
+                  Now and then, even with the app closed, your kinwriter gets a free moment of their own. They can text you,
+                  act with their tools, or do nothing. Set quiet hours above so it never wakes you. The hard rules still
+                  apply to every beat: a short heartbeat does little unless the cooldown above is short too.
+                </p>
+                <select id="setting-heartbeat" name="heartbeatHours">
+                  <option value="0">Off</option>
+                  <option value="0.1667">About every 10 minutes</option>
+                  <option value="0.25">About every 15 minutes</option>
+                  <option value="0.5">About every 30 minutes</option>
+                  <option value="1">About every hour</option>
+                  <option value="2">About every 2 hours</option>
+                  <option value="4">About every 4 hours</option>
+                  <option value="6">About every 6 hours</option>
+                  <option value="8">About every 8 hours</option>
+                  <option value="12">About every 12 hours</option>
+                  <option value="24">About once a day</option>
+                </select>
+                <p class="hint" id="heartbeat-status"></p>
+                <label for="setting-heartbeat-assignment">Heartbeat check</label>
+                <p class="hint">
+                  A cheaper model can read each beat first and answer only whether your kinwriter would use the moment. Most
+                  beats stop there, and the model that writes OOC is asked only on a yes. "No check" sends every beat
+                  straight to it.
+                </p>
+                <select id="setting-heartbeat-assignment" name="heartbeatAssignment"></select>
+              </div>
+              <details class="wake-log wakeups-only" id="wake-log">
+                <summary>Recent wake-ups</summary>
+                <ul id="wake-log-list" class="wake-log-list"></ul>
+              </details>
+              <div class="memory-buttons wakeups-only">
+                <button type="button" class="button" id="beat-now">Beat now</button>
+              </div>
+              <p class="hint wakeups-only" id="beat-result" role="status"></p>
+            </section>
+            <section class="settings-panel" data-section="jev" data-title="Jev" hidden>
+              <p class="hint">
+                Jev is a fast decision model on nanoGPT that answers small yes-or-no questions with a confidence, and never
+                writes. It never decides anything for your kinwriter: it's an instrument they can use to check facts.
+              </p>
+              <div class="grid assignment-grid">
+                <div>
+                  <label for="setting-decision-model">Jev's model</label>
+                  <input id="setting-decision-model" name="decisionModel" autocomplete="off" placeholder="Off" />
+                </div>
+                <div>
+                  <label for="setting-decision-confidence">How sure Jev has to be</label>
+                  <input id="setting-decision-confidence" name="decisionConfidence" type="number" min="0.5" max="0.99" step="0.01" />
+                </div>
+              </div>
+              <label for="setting-decision-fallback">If Jev can't answer, ask</label>
+              <select id="setting-decision-fallback" name="decisionFallback"></select>
+              <div class="memory-buttons">
+                <button type="button" class="button" id="test-jev">Test Jev</button>
+                <button type="button" class="button" id="open-check-log">Check log</button>
+              </div>
+              <p class="hint" id="test-jev-result" role="status"></p>
+            </section>
+            <section class="settings-panel" data-section="rules" data-title="Rules" hidden>
+              <label for="setting-hard-limits">Hard limits (optional)</label>
+              <textarea id="setting-hard-limits" name="hardLimits" rows="3" maxlength="4000" placeholder="Anything that should never be written, in any story."></textarea>
+              <p class="hint">If you want them: they're in every kinwriter's prompt, in every channel. Most people never need this.</p>
+            </section>
+            <p class="form-error" role="alert" hidden></p>
+          </form>
+          <section class="settings-panel" data-section="prompts" data-title="Prompts" hidden>
+            <div id="prompts-screen" class="prompts">
+              <div class="prompts-tabs" role="tablist">
+                <button type="button" class="button prompts-tab" role="tab" data-tab="wording" aria-selected="true">Wording</button>
+                <button type="button" class="button prompts-tab" role="tab" data-tab="dry-run" aria-selected="false">Dry run</button>
+              </div>
+
+              <section class="prompts-panel" data-panel="wording">
+                <p class="hint">
+                  The wording of every prompt, shared by all your kinwriters. Edits are kept apart from the defaults, and each
+                  can be reset. How your kinwriter writes is their own, in
+                  <button type="button" class="link-button inline-link" id="prompts-open-kinwriter">How they write</button>; tool
+                  descriptions show in Dry run.
+                </p>
+                <input id="prompts-search" type="search" placeholder="Find wording…" autocomplete="off" />
+                <div id="prompts-files"></div>
+              </section>
+
+              <section class="prompts-panel" data-panel="dry-run" hidden>
+                <p class="hint">
+                  See exactly what a turn would send, built just as that turn builds it, without taking one. Nothing is saved
+                  and no tool runs. Journal entries, draft titles and notes on other kinwriters show as private.
+                </p>
+                <form id="dry-run-form">
+                  <div class="grid assignment-grid">
+                    <div>
+                      <label for="dry-run-turn">Kind of turn</label>
+                      <select id="dry-run-turn" name="turn">
+                        <option value="turn">A turn now (Kinwriter's turn, or a reply)</option>
+                        <option value="opened">Wake-up: you opened the app</option>
+                        <option value="away">Wake-up: you're back after a while</option>
+                        <option value="scene-ended">Wake-up: a scene ended</option>
+                        <option value="review">Wake-up: something to review</option>
+                        <option value="answer">Wake-up: you answered their ask</option>
+                        <option value="heartbeat">Heartbeat: a free moment</option>
+                        <option value="scheduled">A wake-up they scheduled</option>
+                        <option value="orientation">Orientation (practice channel)</option>
+                        <option value="lookback">Weekly look back (practice channel)</option>
+                        <option value="aside">After a story post: a moment in OOC</option>
+                        <option value="farewell">Last turn before archiving</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="dry-run-channel">Channel</label>
+                      <select id="dry-run-channel" name="channelId"></select>
+                    </div>
+                  </div>
+                  <label for="dry-run-profile">Written by</label>
+                  <select id="dry-run-profile" name="profileId"></select>
+                  <div class="memory-buttons">
+                    <button type="submit" class="button" value="build">Build prompt</button>
+                    <button type="submit" class="button button-primary" value="send">Ask the model</button>
+                  </div>
+                  <p class="hint">"Ask the model" sends one request (it costs what a turn's first step costs) and shows what they'd write and which tools they'd call. The calls aren't run.</p>
+                  <p class="form-error" role="alert" hidden></p>
+                </form>
+                <div id="dry-run-result" role="status"></div>
+              </section>
+            </div>
+          </section>
+          <form id="kinwriter-form" method="dialog">
+            <section class="settings-panel" data-section="profile" data-title="Profile" hidden>
+              <div class="kinwriter-dialog-head">
+                <div class="avatar kinwriter-avatar" id="kinwriter-dialog-avatar" aria-hidden="true"></div>
+                <h3 class="section-title" id="kinwriter-dialog-title">Kinwriter</h3>
+              </div>
+              <p class="hint">
+                Everything they remember is theirs alone: their notebook, channels and memory. Other kinwriters never see
+                it. Characters, yours and theirs, live in the notebook (the book button).
+              </p>
+              <div class="grid assignment-grid">
+                <div>
+                  <label for="kinwriter-name-input">Name</label>
+                  <input id="kinwriter-name-input" name="kinwriterName" autocomplete="off" />
+                </div>
+                <div>
+                  <label for="kinwriter-pronouns-input">Pronouns</label>
+                  <input id="kinwriter-pronouns-input" name="kinwriterPronouns" autocomplete="off" maxlength="40" placeholder="Like she/her (optional)" />
+                </div>
+              </div>
+
+              <div class="grid assignment-grid">
+                <div>
+                  <label for="kinwriter-avatar-input">Avatar</label>
+                  <input id="kinwriter-avatar-input" name="kinwriterAvatar" autocomplete="off" maxlength="8" placeholder="An emoji, or empty for their initial" />
+                </div>
+                <div>
+                  <label for="kinwriter-color-input">Colour</label>
+                  <div class="inline-row">
+                    <input id="kinwriter-color-input" name="kinwriterColor" type="range" min="0" max="359" step="1" />
+                    <label class="check-inline"><input type="checkbox" name="themeColor" /> Theme's</label>
+                  </div>
+                </div>
+              </div>
+
+              <div id="kinwriter-self-notes">
+                <label for="setting-kinwriter">Their self-notes</label>
+                <p class="hint" id="kinwriter-self-notes-hint">
+                  Who they are, in their own words. They share these with you to read: they're theirs to write, and they can
+                  stop sharing at any time.
+                </p>
+                <textarea id="setting-kinwriter" name="kinwriterPrompt" rows="5" readonly></textarea>
+              </div>
+              <details class="danger-zone">
+                <summary>Archive or delete</summary>
+                <div class="danger-buttons">
+                  <button type="button" class="button" id="kinwriter-archive" title="Set them aside, whole, with a last note from them. You can restore them.">Archive…</button>
+                  <button type="button" class="button" id="kinwriter-move" hidden>Own server</button>
+                  <button type="button" class="button button-danger" id="kinwriter-delete">Delete…</button>
+                </div>
+              </details>
+            </section>
+            <section class="settings-panel" data-section="writing" data-title="How they write" hidden>
+
+              <!--
+                One prompt per kind of channel. Only the one that applies is sent,
+                so instructions for long prose never reach an OOC chat.
+              -->
+              <label for="setting-literary">In literary scenes</label>
+              <p class="hint">How they write prose posts: style, pacing, length.</p>
+              <textarea id="setting-literary" name="literaryPrompt" rows="4"></textarea>
+
+              <label for="setting-casual">In casual scenes</label>
+              <p class="hint">How they write short in-character chat messages.</p>
+              <textarea id="setting-casual" name="casualPrompt" rows="4"></textarea>
+
+              <label for="setting-ooc">Out of character</label>
+              <p class="hint">How they talk to you as themselves in OOC channels, e.g. how long their messages are.</p>
+              <textarea id="setting-ooc" name="oocPrompt" rows="4"></textarea>
+
+              <label class="check-option">
+                <input type="checkbox" name="matchPace" />
+                <span
+                  ><strong>Match my pace</strong><br /><span class="hint"
+                    >In literary scenes, your kinwriter writes about as much as your latest post. Turn it off to let them
+                    write as long as they like.</span
+                  ></span
+                >
+              </label>
+            </section>
+            <section class="settings-panel" data-section="behaving" data-title="How they behave" hidden>
+              <label class="check-option">
+                <input type="checkbox" name="oocBubbles" />
+                <span
+                  ><strong>Texting in OOC</strong><br /><span class="hint"
+                    >Your kinwriter texts in short bursts, shown one at a time with "typing…" between them (double-tap it to
+                    skip). Each thing you send is its own text, and they answer once you pause.</span
+                  ></span
+                >
+              </label>
+              <div class="grid assignment-grid texting-only">
+                <div>
+                  <label for="setting-reply-delay">They answer after a pause of (seconds)</label>
+                  <input id="setting-reply-delay" name="replyDelaySeconds" type="number" min="0" max="30" step="0.5" />
+                </div>
+                <div>
+                  <label for="setting-typing-speed">Typing speed (ms per character)</label>
+                  <input id="setting-typing-speed" name="typingPerCharMs" type="number" min="0" max="1000" step="5" />
+                </div>
+              </div>
+
+              <label class="check-option">
+                <input type="checkbox" name="scripts" />
+                <span
+                  ><strong>Scripts</strong><br /><span class="hint"
+                    >Your kinwriter can write themselves scripts: tools in a fixed order that run exactly as written, in a
+                    turn or on their own at a set time. If a step fails, they're told which one and why, and can fix it and
+                    try again. They can also queue scripts to run one per turn, and take another turn when they ask for one
+                    (up to 30 in a row before one has to come from you; Stop ends it).</span
+                  ></span
+                >
+              </label>
+            </section>
+            <p class="form-error" role="alert" hidden></p>
+          </form>
+          <div id="appearance-panel">
+            <section class="settings-panel" data-section="look" data-title="Look" hidden>
+              <label class="check-option own-toggle">
+                <input type="checkbox" data-own="look" />
+                <span>Just for <span class="own-name"></span></span>
+              </label>
+              <label>App theme</label>
+              <p class="hint">Used everywhere, unless a channel has its own theme (channel settings).</p>
+              <div id="theme-list" class="theme-list" role="radiogroup" aria-label="App theme"></div>
+
+              <div class="dialog-buttons theme-actions">
+                <button type="button" class="button" id="theme-copy">Copy to edit</button>
+                <button type="button" class="button" id="theme-edit">Edit</button>
+                <button type="button" class="button button-danger" id="theme-delete">Delete</button>
+              </div>
+
+              <!-- Sliders the app theme (and the open channel's theme) offer, if any. -->
+              <div id="theme-options" class="theme-options" hidden></div>
+
+              <label>Background picture</label>
+              <p class="hint">
+                Your own picture behind the app, in place of the theme's. Looks best with the glass themes, which bend and frost
+                it. .jpg, .png, .webp or .gif (animated GIFs move), up to 25 MB.
+              </p>
+              <div id="background-list" class="background-list" role="radiogroup" aria-label="Background picture"></div>
+              <div class="dialog-buttons theme-actions">
+                <label class="button file-button">
+                  Upload a picture…
+                  <input
+                    id="background-upload"
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
+                    hidden
+                  />
+                </label>
+                <button type="button" class="button button-danger" id="background-remove" hidden>Delete picture</button>
+              </div>
+              <label class="theme-option" id="background-dim-row" hidden>
+                <span class="theme-option-label">Fade the picture</span>
+                <input type="range" id="background-dim" min="0" max="0.8" step="0.05" />
+                <output id="background-dim-value" class="theme-option-value"></output>
+              </label>
+
+              <fieldset class="kind-picker effects-picker">
+                <legend>Glass effects on this device</legend>
+                <label class="kind-option">
+                  <input type="radio" name="effects" value="auto" />
+                  <span
+                    ><strong>Automatic</strong><br /><span class="hint"
+                      >Full effects, switching to Lite if scrolling stutters.</span
+                    ></span
+                  >
+                </label>
+                <label class="kind-option">
+                  <input type="radio" name="effects" value="full" />
+                  <span><strong>Full</strong><br /><span class="hint">Real blurred glass.</span></span>
+                </label>
+                <label class="kind-option">
+                  <input type="radio" name="effects" value="lite" />
+                  <span
+                    ><strong>Lite</strong><br /><span class="hint">No blur: more solid panels that are easier on the phone.</span></span
+                  >
+                </label>
+              </fieldset>
+
+              <label class="check-option">
+                <input type="checkbox" id="fold-quiet" name="fold-quiet" />
+                <span
+                  ><strong>Fold quiet turns on this device</strong><br /><span class="hint"
+                    >Three or more turns in a row that only acted (checked in, chose not to reply) show as one line you can tap
+                    open.</span
+                  ></span
+                >
+              </label>
+            </section>
+            <p class="form-error" role="alert" hidden></p>
           </div>
-          <div>
-            <label for="setting-ooc-assignment">OOC written by</label>
-            <select id="setting-ooc-assignment" name="oocAssignment"></select>
+          <form id="server-form" method="dialog">
+            <section class="settings-panel" data-section="servers" data-title="Kinwriters and groups" hidden>
+              <label for="server-name-input">Server name</label>
+              <input id="server-name-input" autocomplete="off" maxlength="100" placeholder="Empty: its first kinwriter's name" />
+              <label>Kinwriters here</label>
+              <ul id="server-kinwriter-list" class="server-kinwriter-list"></ul>
+              <div class="memory-buttons">
+                <button type="button" class="button" id="server-add-kinwriter">Add a kinwriter here…</button>
+              </div>
+
+              <div id="archived-section" hidden>
+                <label>Archived kinwriters</label>
+                <p class="hint">Set aside with everything they remember, and the note they left. Restore one into this server.</p>
+                <ul id="archived-list" class="server-kinwriter-list archived-list"></ul>
+              </div>
+
+              <div id="server-groups">
+              <label>Group channels and DMs</label>
+              <p class="hint">
+                A group channel is you and several kinwriters: when you write, each may take a turn. A DM is two kinwriters, on
+                their own time; you choose whether you can read it (both are told).
+              </p>
+              <ul id="server-group-list" class="server-kinwriter-list"></ul>
+              <details id="new-group" class="self-suggest">
+                <summary>New group channel</summary>
+                <label for="group-name">Name</label>
+                <input id="group-name" autocomplete="off" maxlength="100" placeholder="lounge" />
+                <div id="group-kinwriters" class="group-kinwriters"></div>
+                <div class="dialog-buttons">
+                  <span class="spacer"></span>
+                  <button type="button" class="button button-primary" id="create-group">Make it</button>
+                </div>
+              </details>
+              </div>
+              <details class="danger-zone">
+                <summary>Delete this server</summary>
+                <div class="danger-buttons">
+                  <button type="button" class="button button-danger" id="server-delete">Delete server…</button>
+                </div>
+              </details>
+            </section>
+            <p class="form-error" role="alert" hidden></p>
+          </form>
+          <form id="emoji-form" method="dialog">
+            <section class="settings-panel" data-section="emojis" data-title="Custom emojis" hidden>
+              <p class="hint">
+                Small images you and your kinwriter can react with, and write in messages as <code>:name:</code>. PNG, GIF
+                (animated too), JPEG or WebP, up to 512 KB.
+              </p>
+              <ul id="emoji-list" class="emoji-list"></ul>
+              <div class="grid assignment-grid">
+                <div>
+                  <label for="emoji-file">Image</label>
+                  <input id="emoji-file" type="file" accept="image/png,image/gif,image/jpeg,image/webp" />
+                </div>
+                <div>
+                  <label for="emoji-name">Name</label>
+                  <input id="emoji-name" autocomplete="off" maxlength="32" placeholder="blob_wave" />
+                </div>
+              </div>
+              <div class="dialog-buttons">
+                <button type="submit" class="button">Add emoji</button>
+              </div>
+            </section>
+            <p class="form-error" role="alert" hidden></p>
+          </form>
+          <div id="labs-panel">
+            <section class="settings-panel" data-section="labs" data-title="Labs" hidden>
+              <label class="check-option">
+                <input type="checkbox" id="setting-together" />
+                <span
+                  ><strong>Kinwriters together (untested)</strong><br /><span class="hint"
+                    >For every kinwriter, on every server. Kinwriters on the same server know about each other: group
+                    channels, DMs between them, and their private notes on each other. These are built but not tested yet.
+                    Off, each kinwriter is on their own, even with several on one server; group channels and DMs already
+                    made are kept, out of sight, until it's on again.</span
+                  ></span
+                >
+              </label>
+              <p class="hint" id="setting-together-status" role="status"></p>
+            </section>
           </div>
+          <form id="server-setup-form" method="dialog">
+            <section class="settings-panel" data-section="setup" data-title="API key and setup" hidden>
+              <p class="hint">
+                These are kept in the <code>.env</code> file in the Kinaera folder, and read when the server starts. After
+                saving, restart Kinaera: in Termux, press <strong>Ctrl-C</strong>, then run <code>bun start</code>.
+              </p>
+              <p class="restart-notice" id="server-setup-restart" role="status" hidden>
+                Saved, but not in use yet. Restart Kinaera to use it: in Termux, press <strong>Ctrl-C</strong>, then run
+                <code>bun start</code>, then reload this page.
+              </p>
+
+              <label for="server-setup-key">nanoGPT API key</label>
+              <input id="server-setup-key" name="apiKey" type="password" autocomplete="off" spellcheck="false" />
+              <p class="hint" id="server-setup-key-status"></p>
+
+              <div class="grid assignment-grid">
+                <div>
+                  <label for="server-setup-port">Port</label>
+                  <input id="server-setup-port" name="PORT" inputmode="numeric" autocomplete="off" placeholder="4747" />
+                </div>
+                <div>
+                  <label for="server-setup-timeout">Wait for a reply (seconds)</label>
+                  <input id="server-setup-timeout" name="REQUEST_TIMEOUT_SECONDS" inputmode="numeric" autocomplete="off" placeholder="180" />
+                </div>
+              </div>
+              <p class="hint">If the port changes, the app's address changes too, e.g. http://127.0.0.1:4747. Slow reasoning models can need a long wait.</p>
+
+              <label for="server-setup-host">Where it listens</label>
+              <input id="server-setup-host" name="HOST" autocomplete="off" spellcheck="false" placeholder="127.0.0.1" />
+              <p class="hint">
+                127.0.0.1 (the default) means only this phone can open it. 0.0.0.0 lets other devices on your network open
+                it, and Kinaera has no password, so only use that on a network you trust (like Tailscale).
+              </p>
+
+              <label for="server-setup-hosts">Other names it may be opened by</label>
+              <input id="server-setup-hosts" name="ALLOWED_HOSTS" autocomplete="off" spellcheck="false" placeholder="None" />
+              <p class="hint">Besides localhost and IP addresses, separated by commas, like a Tailscale machine name.</p>
+
+              <label class="check-option">
+                <input type="checkbox" name="DEVELOPER_PANEL" />
+                <span
+                  ><strong>Developer panel</strong><br /><span class="hint"
+                    >Every private note of a kinwriter in one view, at the bottom of their health. Their prompt tells them
+                    the developer may open it.</span
+                  ></span
+                >
+              </label>
+
+              <p class="hint">
+                The nanoGPT address and the data folder can only be changed in the file itself, so a page can't send your
+                key somewhere else or seem to lose your kinwriters. Anything else in the file is kept as it is.
+              </p>
+
+              <p class="hint" id="server-setup-saved" role="status"></p>
+              <div class="dialog-buttons">
+                <span class="spacer"></span>
+                <button type="submit" class="button button-primary">Save</button>
+              </div>
+            </section>
+            <p class="form-error" role="alert" hidden></p>
+          </form>
+          <section class="settings-panel" data-section="developer" data-title="Developer" hidden>
+            <p class="hint">
+              Everything private about this kinwriter, to check the note-taking works, and the data folders (start
+              fresh, old folders, export and import).
+            </p>
+            <div class="memory-buttons">
+              <button type="button" class="button" id="settings-open-developer">Open the developer panel</button>
+            </div>
+          </section>
         </div>
-        <p class="hint">
-          A channel can override these in its own settings.
-          <button type="button" class="link-button inline-link" id="open-models">Profiles and roulettes…</button>
-        </p>
-        <p class="hint">
-          Every instruction your kinwriter's model gets, in one place:
-          <button type="button" class="link-button inline-link" id="open-prompts">Prompts and dry run…</button>
-        </p>
-
-        <h3 class="section-title">Memory</h3>
-        <label class="check-option own-toggle">
-          <input type="checkbox" data-own="memory" />
-          <span>Just for <span class="own-name"></span></span>
-        </label>
-        <label for="setting-history">Recent messages</label>
-        <input id="setting-history" name="historyLimit" type="number" min="1" max="1000" step="1" />
-        <p class="hint">How many of a channel's newest messages your kinwriter always reads in full.</p>
-
-        <label class="check-option">
-          <input type="checkbox" name="summaries" />
-          <span
-            ><strong>Summaries</strong><br /><span class="hint"
-              >Your kinwriter remembers older messages through summaries: of each scene when it ends, the story so
-              far, and a line or two per channel for OOC. Off: older messages are simply left out.</span
-            ></span
-          >
-        </label>
-        <div class="grid assignment-grid summaries-only">
-          <div>
-            <label for="setting-summary-every">Summarize every</label>
-            <input id="setting-summary-every" name="summaryEvery" type="number" min="2" max="500" step="1" />
-          </div>
-          <div>
-            <label for="setting-summary-assignment">Summaries written by</label>
-            <select id="setting-summary-assignment" name="summaryAssignment"></select>
-          </div>
-        </div>
-        <p class="hint summaries-only">
-          In a long scene (or OOC chat), once this many more messages have piled up beyond the recent ones, the
-          oldest are folded into a summary of it. A cheap, careful model is a good choice for summaries.
-        </p>
-
-        <h3 class="section-title">Your kinwriter reaching out</h3>
-        <label class="check-option own-toggle">
-          <input type="checkbox" data-own="reaching" />
-          <span>Just for <span class="own-name"></span> (wake-ups and the heartbeat)</span>
-        </label>
-        <label for="setting-wakeups">Chattiness</label>
-        <select id="setting-wakeups" name="wakeups">
-          <option value="off">Off: only when you write</option>
-          <option value="quiet">Quiet: when you come back after a while, and to review your suggestions</option>
-          <option value="normal">Normal: also when you end a scene</option>
-          <option value="chatty">Chatty: also whenever you open the app</option>
-        </select>
-        <p class="hint">
-          Your kinwriter may take a turn on their own, in your OOC channel. Quiet hours, the cooldown and "never a third
-          time without you writing" always apply; after that, whether to write is up to them.
-        </p>
-        <div class="grid assignment-grid wakeups-only">
-          <div>
-            <label for="setting-away-hours">Away after (hours)</label>
-            <input id="setting-away-hours" name="awayHours" type="number" min="0.25" max="720" step="0.25" />
-          </div>
-          <div>
-            <label for="setting-wake-cooldown">At most every (minutes)</label>
-            <input id="setting-wake-cooldown" name="wakeCooldownMinutes" type="number" min="1" max="10080" step="1" />
-          </div>
-          <div>
-            <label for="setting-quiet-start">Quiet hours from</label>
-            <select id="setting-quiet-start" name="quietStart">
-              <option value="-1">No quiet hours</option>
-              <option value="0">00:00</option>
-              <option value="1">01:00</option>
-              <option value="2">02:00</option>
-              <option value="3">03:00</option>
-              <option value="4">04:00</option>
-              <option value="5">05:00</option>
-              <option value="6">06:00</option>
-              <option value="7">07:00</option>
-              <option value="8">08:00</option>
-              <option value="9">09:00</option>
-              <option value="10">10:00</option>
-              <option value="11">11:00</option>
-              <option value="12">12:00</option>
-              <option value="13">13:00</option>
-              <option value="14">14:00</option>
-              <option value="15">15:00</option>
-              <option value="16">16:00</option>
-              <option value="17">17:00</option>
-              <option value="18">18:00</option>
-              <option value="19">19:00</option>
-              <option value="20">20:00</option>
-              <option value="21">21:00</option>
-              <option value="22">22:00</option>
-              <option value="23">23:00</option>
-            </select>
-          </div>
-          <div>
-            <label for="setting-quiet-end">...until</label>
-            <select id="setting-quiet-end" name="quietEnd">
-              <option value="0">00:00</option>
-              <option value="1">01:00</option>
-              <option value="2">02:00</option>
-              <option value="3">03:00</option>
-              <option value="4">04:00</option>
-              <option value="5">05:00</option>
-              <option value="6">06:00</option>
-              <option value="7">07:00</option>
-              <option value="8">08:00</option>
-              <option value="9">09:00</option>
-              <option value="10">10:00</option>
-              <option value="11">11:00</option>
-              <option value="12">12:00</option>
-              <option value="13">13:00</option>
-              <option value="14">14:00</option>
-              <option value="15">15:00</option>
-              <option value="16">16:00</option>
-              <option value="17">17:00</option>
-              <option value="18">18:00</option>
-              <option value="19">19:00</option>
-              <option value="20">20:00</option>
-              <option value="21">21:00</option>
-              <option value="22">22:00</option>
-              <option value="23">23:00</option>
-            </select>
-          </div>
-        </div>
-        <div class="wakeups-only">
-          <label for="setting-aside">After their story posts</label>
-          <p class="hint">
-            When your kinwriter posts in a story, a moment in OOC to say something to you as themselves if they want to:
-            a reaction, a question, an idea. Most of the time they'll let the story speak. It has its own limit, apart
-            from the cooldown above (or none); quiet hours and "never a third time without you writing" still apply.
-          </p>
-          <select id="setting-aside" name="asideMinutes">
-            <option value="-1">Off</option>
-            <option value="0">After every story post</option>
-            <option value="5">At most every 5 minutes</option>
-            <option value="15">At most every 15 minutes</option>
-            <option value="30">At most every 30 minutes</option>
-            <option value="60">At most every hour</option>
-            <option value="180">At most every 3 hours</option>
-          </select>
-        </div>
-        <div class="wakeups-only">
-          <label for="setting-heartbeat">Heartbeat</label>
-          <p class="hint">
-            Now and then, even with the app closed, your kinwriter gets a free moment of their own. They can text you,
-            act with their tools, or do nothing. Set quiet hours above so it never wakes you. The hard rules still
-            apply to every beat: a short heartbeat does little unless the cooldown above is short too.
-          </p>
-          <select id="setting-heartbeat" name="heartbeatHours">
-            <option value="0">Off</option>
-            <option value="0.1667">About every 10 minutes</option>
-            <option value="0.25">About every 15 minutes</option>
-            <option value="0.5">About every 30 minutes</option>
-            <option value="1">About every hour</option>
-            <option value="2">About every 2 hours</option>
-            <option value="4">About every 4 hours</option>
-            <option value="6">About every 6 hours</option>
-            <option value="8">About every 8 hours</option>
-            <option value="12">About every 12 hours</option>
-            <option value="24">About once a day</option>
-          </select>
-          <p class="hint" id="heartbeat-status"></p>
-          <label for="setting-heartbeat-assignment">Heartbeat check</label>
-          <p class="hint">
-            A cheaper model can read each beat first and answer only whether your kinwriter would use the moment. Most
-            beats stop there, and the model that writes OOC is asked only on a yes. "No check" sends every beat
-            straight to it.
-          </p>
-          <select id="setting-heartbeat-assignment" name="heartbeatAssignment"></select>
-        </div>
-        <details class="wake-log wakeups-only" id="wake-log">
-          <summary>Recent wake-ups</summary>
-          <ul id="wake-log-list" class="wake-log-list"></ul>
-        </details>
-        <div class="memory-buttons wakeups-only">
-          <button type="button" class="button" id="beat-now">Beat now</button>
-        </div>
-        <p class="hint wakeups-only" id="beat-result" role="status"></p>
-
-        <h3 class="section-title">Jev (for checking facts)</h3>
-        <p class="hint">
-          Jev is a fast decision model on nanoGPT that answers small yes-or-no questions with a confidence, and never
-          writes. It never decides anything for your kinwriter: it's an instrument they can use to check facts.
-        </p>
-        <div class="grid assignment-grid">
-          <div>
-            <label for="setting-decision-model">Jev's model</label>
-            <input id="setting-decision-model" name="decisionModel" autocomplete="off" placeholder="Off" />
-          </div>
-          <div>
-            <label for="setting-decision-confidence">How sure Jev has to be</label>
-            <input id="setting-decision-confidence" name="decisionConfidence" type="number" min="0.5" max="0.99" step="0.01" />
-          </div>
-        </div>
-        <label for="setting-decision-fallback">If Jev can't answer, ask</label>
-        <select id="setting-decision-fallback" name="decisionFallback"></select>
-        <div class="memory-buttons">
-          <button type="button" class="button" id="test-jev">Test Jev</button>
-          <button type="button" class="button" id="open-check-log">Check log</button>
-        </div>
-        <p class="hint" id="test-jev-result" role="status"></p>
-
-        <details class="advanced">
-          <summary>Advanced</summary>
-          <label for="setting-hard-limits">Hard limits (optional)</label>
-          <textarea id="setting-hard-limits" name="hardLimits" rows="3" maxlength="4000" placeholder="Anything that should never be written, in any story."></textarea>
-          <p class="hint">If you want them: they're in every kinwriter's prompt, in every channel. Most people never need this.</p>
-
-          <label class="check-option">
-            <input type="checkbox" id="setting-together" />
-            <span
-              ><strong>Kinwriters together (untested)</strong><br /><span class="hint"
-                >For every kinwriter, on every server. Kinwriters on the same server know about each other: group
-                channels, DMs between them, and their private notes on each other. These are built but not tested yet.
-                Off, each kinwriter is on their own, even with several on one server; group channels and DMs already
-                made are kept, out of sight, until it's on again. Saved as soon as you change it.</span
-              ></span
-            >
-          </label>
-          <p class="hint" id="setting-together-status" role="status"></p>
-        </details>
-
-        <p class="form-error" role="alert" hidden></p>
-
-        <div class="dialog-buttons">
-          <span class="spacer"></span>
-          <button type="button" class="button" data-close>Cancel</button>
-          <button type="submit" class="button button-primary">Save</button>
-        </div>
-      </form>
+      </div>
     </dialog>
 
     <!-- The check log: every check your kinwriter made (js/history.js). -->
@@ -800,7 +1227,7 @@
         <h2 class="dialog-title" id="self-title">Kinwriter</h2>
       </div>
       <div class="memory-buttons">
-        <button type="button" class="button" id="self-settings">Settings…</button>
+        <button type="button" class="button" id="self-settings">Their settings…</button>
         <button type="button" class="button" id="open-interventions">What you've changed</button>
         <button type="button" class="button" id="kinwriter-check-log">Check log</button>
       </div>
@@ -972,122 +1399,6 @@
         <span class="spacer"></span>
         <button type="button" class="button button-primary" data-close>Close</button>
       </div>
-    </dialog>
-
-    <!-- The open kinwriter: who they are, how they look, how they write. -->
-    <dialog id="kinwriter-dialog" class="dialog surface">
-      <form id="kinwriter-form" method="dialog">
-        <div class="kinwriter-dialog-head">
-          <div class="avatar kinwriter-avatar" id="kinwriter-dialog-avatar" aria-hidden="true"></div>
-          <h2 class="dialog-title" id="kinwriter-dialog-title">Kinwriter</h2>
-        </div>
-        <p class="hint">
-          Everything they remember is theirs alone: their notebook, channels and memory. Other kinwriters never
-          see it. (Settings are shared by everyone, except any section ticked "Just for" them.)
-        </p>
-
-        <div class="grid assignment-grid">
-          <div>
-            <label for="kinwriter-name-input">Name</label>
-            <input id="kinwriter-name-input" name="kinwriterName" autocomplete="off" />
-          </div>
-          <div>
-            <label for="kinwriter-pronouns-input">Pronouns</label>
-            <input id="kinwriter-pronouns-input" name="kinwriterPronouns" autocomplete="off" maxlength="40" placeholder="Like she/her (optional)" />
-          </div>
-        </div>
-
-        <div class="grid assignment-grid">
-          <div>
-            <label for="kinwriter-avatar-input">Avatar</label>
-            <input id="kinwriter-avatar-input" name="kinwriterAvatar" autocomplete="off" maxlength="8" placeholder="An emoji, or empty for their initial" />
-          </div>
-          <div>
-            <label for="kinwriter-color-input">Colour</label>
-            <div class="inline-row">
-              <input id="kinwriter-color-input" name="kinwriterColor" type="range" min="0" max="359" step="1" />
-              <label class="check-inline"><input type="checkbox" name="themeColor" /> Theme's</label>
-            </div>
-          </div>
-        </div>
-
-        <div id="kinwriter-self-notes">
-          <label for="setting-kinwriter">Their self-notes</label>
-          <p class="hint" id="kinwriter-self-notes-hint">
-            Who they are, in their own words. They share these with you to read: they're theirs to write, and they can
-            stop sharing at any time.
-          </p>
-          <textarea id="setting-kinwriter" name="kinwriterPrompt" rows="5" readonly></textarea>
-        </div>
-
-        <label class="check-option">
-          <input type="checkbox" name="matchPace" />
-          <span
-            ><strong>Match my pace</strong><br /><span class="hint"
-              >In literary scenes, your kinwriter writes about as much as your latest post. Turn it off to let them
-              write as long as they like.</span
-            ></span
-          >
-        </label>
-
-        <label class="check-option">
-          <input type="checkbox" name="oocBubbles" />
-          <span
-            ><strong>Texting in OOC</strong><br /><span class="hint"
-              >Your kinwriter texts in short bursts, shown one at a time with "typing…" between them (double-tap it to
-              skip). Each thing you send is its own text, and they answer once you pause.</span
-            ></span
-          >
-        </label>
-        <div class="grid assignment-grid texting-only">
-          <div>
-            <label for="setting-reply-delay">They answer after a pause of (seconds)</label>
-            <input id="setting-reply-delay" name="replyDelaySeconds" type="number" min="0" max="30" step="0.5" />
-          </div>
-          <div>
-            <label for="setting-typing-speed">Typing speed (ms per character)</label>
-            <input id="setting-typing-speed" name="typingPerCharMs" type="number" min="0" max="1000" step="5" />
-          </div>
-        </div>
-
-        <label class="check-option">
-          <input type="checkbox" name="scripts" />
-          <span
-            ><strong>Scripts</strong><br /><span class="hint"
-              >Your kinwriter can write themselves scripts: tools in a fixed order that run exactly as written, in a
-              turn or on their own at a set time. If a step fails, they're told which one and why, and can fix it and
-              try again. They can also queue scripts to run one per turn, and take another turn when they ask for one
-              (up to 30 in a row before one has to come from you; Stop ends it).</span
-            ></span
-          >
-        </label>
-
-        <!--
-          One prompt per kind of channel. Only the one that applies is sent,
-          so instructions for long prose never reach an OOC chat.
-        -->
-        <label for="setting-literary">In literary scenes</label>
-        <p class="hint">How they write prose posts: style, pacing, length.</p>
-        <textarea id="setting-literary" name="literaryPrompt" rows="4"></textarea>
-
-        <label for="setting-casual">In casual scenes</label>
-        <p class="hint">How they write short in-character chat messages.</p>
-        <textarea id="setting-casual" name="casualPrompt" rows="4"></textarea>
-
-        <label for="setting-ooc">Out of character</label>
-        <p class="hint">How they talk to you as themselves in OOC channels, e.g. how long their messages are.</p>
-        <textarea id="setting-ooc" name="oocPrompt" rows="4"></textarea>
-
-        <p class="form-error" role="alert" hidden></p>
-        <div class="dialog-buttons">
-          <button type="button" class="button" id="kinwriter-archive" title="Set them aside, whole, with a last note from them. You can restore them.">Archive…</button>
-          <button type="button" class="button button-danger" id="kinwriter-delete">Delete…</button>
-          <button type="button" class="button" id="kinwriter-move" hidden>Own server</button>
-          <span class="spacer"></span>
-          <button type="button" class="button" data-close>Cancel</button>
-          <button type="submit" class="button button-primary">Save</button>
-        </div>
-      </form>
     </dialog>
 
     <!-- After a fresh start (bun run fresh): make your new kinwriter (js/setup.js). -->
@@ -1332,52 +1643,6 @@
       </div>
     </dialog>
 
-    <!-- A server: its name, its kinwriters, and deleting it. -->
-    <dialog id="server-dialog" class="dialog surface">
-      <form id="server-form" method="dialog">
-        <h2 class="dialog-title">Server</h2>
-        <label for="server-name-input">Name</label>
-        <input id="server-name-input" autocomplete="off" maxlength="100" placeholder="Empty: its first kinwriter's name" />
-        <label>Kinwriters here</label>
-        <ul id="server-kinwriter-list" class="server-kinwriter-list"></ul>
-        <div class="memory-buttons">
-          <button type="button" class="button" id="server-add-kinwriter">Add a kinwriter here…</button>
-        </div>
-
-        <div id="archived-section" hidden>
-          <label>Archived kinwriters</label>
-          <p class="hint">Set aside with everything they remember, and the note they left. Restore one into this server.</p>
-          <ul id="archived-list" class="server-kinwriter-list archived-list"></ul>
-        </div>
-
-        <div id="server-groups">
-        <label>Group channels and DMs</label>
-        <p class="hint">
-          A group channel is you and several kinwriters: when you write, each may take a turn. A DM is two kinwriters, on
-          their own time; you choose whether you can read it (both are told).
-        </p>
-        <ul id="server-group-list" class="server-kinwriter-list"></ul>
-        <details id="new-group" class="self-suggest">
-          <summary>New group channel</summary>
-          <label for="group-name">Name</label>
-          <input id="group-name" autocomplete="off" maxlength="100" placeholder="lounge" />
-          <div id="group-kinwriters" class="group-kinwriters"></div>
-          <div class="dialog-buttons">
-            <span class="spacer"></span>
-            <button type="button" class="button button-primary" id="create-group">Make it</button>
-          </div>
-        </details>
-        </div>
-        <p class="form-error" role="alert" hidden></p>
-        <div class="dialog-buttons">
-          <button type="button" class="button button-danger" id="server-delete">Delete server…</button>
-          <span class="spacer"></span>
-          <button type="button" class="button" data-close>Cancel</button>
-          <button type="submit" class="button button-primary">Save</button>
-        </div>
-      </form>
-    </dialog>
-
     <!-- A channel category: its name (and deleting it). -->
     <dialog id="category-dialog" class="dialog surface">
       <form id="category-form" method="dialog">
@@ -1390,34 +1655,6 @@
           <span class="spacer"></span>
           <button type="button" class="button" data-close>Cancel</button>
           <button type="submit" class="button button-primary">Save</button>
-        </div>
-      </form>
-    </dialog>
-
-    <!-- Custom emojis: images used as :name:, in reactions and messages. -->
-    <dialog id="emoji-dialog" class="dialog surface">
-      <form id="emoji-form" method="dialog">
-        <h2 class="dialog-title">Custom emojis</h2>
-        <p class="hint">
-          Small images you and your kinwriter can react with, and write in messages as <code>:name:</code>. PNG, GIF
-          (animated too), JPEG or WebP, up to 512 KB.
-        </p>
-        <ul id="emoji-list" class="emoji-list"></ul>
-        <div class="grid assignment-grid">
-          <div>
-            <label for="emoji-file">Image</label>
-            <input id="emoji-file" type="file" accept="image/png,image/gif,image/jpeg,image/webp" />
-          </div>
-          <div>
-            <label for="emoji-name">Name</label>
-            <input id="emoji-name" autocomplete="off" maxlength="32" placeholder="blob_wave" />
-          </div>
-        </div>
-        <p class="form-error" role="alert" hidden></p>
-        <div class="dialog-buttons">
-          <button type="submit" class="button">Add emoji</button>
-          <span class="spacer"></span>
-          <button type="button" class="button button-primary" data-close>Done</button>
         </div>
       </form>
     </dialog>
@@ -1636,29 +1873,6 @@
           <button type="submit" class="button button-primary">Save</button>
         </div>
       </form>
-    </dialog>
-
-    <!-- Connection profiles and roulettes. Filled in by the app (js/). -->
-    <dialog id="models-dialog" class="dialog surface">
-      <h2 class="dialog-title">Profiles and roulettes</h2>
-      <p class="hint">
-        A <strong>connection profile</strong> is one model with its settings. A <strong>roulette</strong> picks one of
-        several profiles at random each turn, by weight, for variety. Neither changes who your kinwriter is.
-      </p>
-
-      <h3 class="section-title">Profiles</h3>
-      <ul id="profile-list" class="profile-list"></ul>
-      <button type="button" class="button" id="new-profile">New profile</button>
-
-      <h3 class="section-title">Roulettes</h3>
-      <ul id="roulette-list" class="profile-list"></ul>
-      <button type="button" class="button" id="new-roulette">New roulette</button>
-
-      <p class="form-error" role="alert" hidden></p>
-      <div class="dialog-buttons">
-        <span class="spacer"></span>
-        <button type="button" class="button button-primary" data-close>Done</button>
-      </div>
     </dialog>
 
     <!-- One connection profile. -->
@@ -1944,88 +2158,6 @@
       </form>
     </dialog>
 
-    <!-- Appearance: pick the app theme, glass effects, and manage your themes. -->
-    <dialog id="appearance-dialog" class="dialog surface">
-      <h2 class="dialog-title">Appearance</h2>
-
-      <label>App theme</label>
-      <p class="hint">Used everywhere, unless a channel has its own theme (channel settings).</p>
-      <div id="theme-list" class="theme-list" role="radiogroup" aria-label="App theme"></div>
-
-      <div class="dialog-buttons theme-actions">
-        <button type="button" class="button" id="theme-copy">Copy to edit</button>
-        <button type="button" class="button" id="theme-edit">Edit</button>
-        <button type="button" class="button button-danger" id="theme-delete">Delete</button>
-      </div>
-
-      <!-- Sliders the app theme (and the open channel's theme) offer, if any. -->
-      <div id="theme-options" class="theme-options" hidden></div>
-
-      <label>Background picture</label>
-      <p class="hint">
-        Your own picture behind the app, in place of the theme's. Looks best with the glass themes, which bend and frost
-        it. .jpg, .png, .webp or .gif (animated GIFs move), up to 25 MB. Your pictures are kept for every kinwriter; which one
-        shows is chosen for each, like the theme.
-      </p>
-      <div id="background-list" class="background-list" role="radiogroup" aria-label="Background picture"></div>
-      <div class="dialog-buttons theme-actions">
-        <label class="button file-button">
-          Upload a picture…
-          <input
-            id="background-upload"
-            type="file"
-            accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
-            hidden
-          />
-        </label>
-        <button type="button" class="button button-danger" id="background-remove" hidden>Delete picture</button>
-      </div>
-      <label class="theme-option" id="background-dim-row" hidden>
-        <span class="theme-option-label">Fade the picture</span>
-        <input type="range" id="background-dim" min="0" max="0.8" step="0.05" />
-        <output id="background-dim-value" class="theme-option-value"></output>
-      </label>
-
-      <fieldset class="kind-picker effects-picker">
-        <legend>Glass effects on this device</legend>
-        <label class="kind-option">
-          <input type="radio" name="effects" value="auto" />
-          <span
-            ><strong>Automatic</strong><br /><span class="hint"
-              >Full effects, switching to Lite if scrolling stutters.</span
-            ></span
-          >
-        </label>
-        <label class="kind-option">
-          <input type="radio" name="effects" value="full" />
-          <span><strong>Full</strong><br /><span class="hint">Real blurred glass.</span></span>
-        </label>
-        <label class="kind-option">
-          <input type="radio" name="effects" value="lite" />
-          <span
-            ><strong>Lite</strong><br /><span class="hint">No blur: more solid panels that are easier on the phone.</span></span
-          >
-        </label>
-      </fieldset>
-
-      <label class="check-option">
-        <input type="checkbox" id="fold-quiet" name="fold-quiet" />
-        <span
-          ><strong>Fold quiet turns on this device</strong><br /><span class="hint"
-            >Three or more turns in a row that only acted (checked in, chose not to reply) show as one line you can tap
-            open.</span
-          ></span
-        >
-      </label>
-
-      <p class="form-error" role="alert" hidden></p>
-
-      <div class="dialog-buttons">
-        <span class="spacer"></span>
-        <button type="button" class="button button-primary" data-close>Done</button>
-      </div>
-    </dialog>
-
     <!-- Editing one of your themes. -->
     <dialog id="theme-editor" class="dialog surface theme-editor">
       <form id="theme-editor-form" method="dialog">
@@ -2056,7 +2188,7 @@
         <details class="lite-css theme-options-editor">
           <summary>Sliders (optional)</summary>
           <p class="hint">
-            Sliders shown in Appearance, each setting a CSS variable your CSS uses. A JSON list, e.g.
+            Sliders shown in Settings → Look, each setting a CSS variable your CSS uses. A JSON list, e.g.
             <code>[{"id": "blur", "label": "Blur", "variable": "--my-blur", "min": 0, "max": 30, "step": 1, "default": 12, "unit": "px"}]</code>
           </p>
           <textarea id="theme-options-json" name="options" rows="6" spellcheck="false" class="code-input"></textarea>
@@ -2081,72 +2213,6 @@
           <button type="submit" class="button button-primary">Save</button>
         </div>
       </form>
-    </dialog>
-
-    <!-- Every prompt's wording, editable, and a dry run of any kind of turn (public/js/prompts.js). -->
-    <dialog id="prompts-dialog" class="dialog surface prompts">
-      <h2 class="dialog-title">Prompts</h2>
-      <div class="prompts-tabs" role="tablist">
-        <button type="button" class="button prompts-tab" role="tab" data-tab="wording" aria-selected="true">Wording</button>
-        <button type="button" class="button prompts-tab" role="tab" data-tab="dry-run" aria-selected="false">Dry run</button>
-      </div>
-
-      <section class="prompts-panel" data-panel="wording">
-        <p class="hint">
-          The wording of every prompt, shared by all your kinwriters. Edits are kept apart from the defaults, and each
-          can be reset. Who your kinwriter is and how they write are in
-          <button type="button" class="link-button inline-link" id="prompts-open-kinwriter">their menu</button>; tool
-          descriptions show in Dry run.
-        </p>
-        <input id="prompts-search" type="search" placeholder="Find wording…" autocomplete="off" />
-        <div id="prompts-files"></div>
-      </section>
-
-      <section class="prompts-panel" data-panel="dry-run" hidden>
-        <p class="hint">
-          See exactly what a turn would send, built just as that turn builds it, without taking one. Nothing is saved
-          and no tool runs. Journal entries, draft titles and notes on other kinwriters show as private.
-        </p>
-        <form id="dry-run-form">
-          <div class="grid assignment-grid">
-            <div>
-              <label for="dry-run-turn">Kind of turn</label>
-              <select id="dry-run-turn" name="turn">
-                <option value="turn">A turn now (Kinwriter's turn, or a reply)</option>
-                <option value="opened">Wake-up: you opened the app</option>
-                <option value="away">Wake-up: you're back after a while</option>
-                <option value="scene-ended">Wake-up: a scene ended</option>
-                <option value="review">Wake-up: something to review</option>
-                <option value="answer">Wake-up: you answered their ask</option>
-                <option value="heartbeat">Heartbeat: a free moment</option>
-                <option value="scheduled">A wake-up they scheduled</option>
-                <option value="orientation">Orientation (practice channel)</option>
-                <option value="lookback">Weekly look back (practice channel)</option>
-                <option value="aside">After a story post: a moment in OOC</option>
-                <option value="farewell">Last turn before archiving</option>
-              </select>
-            </div>
-            <div>
-              <label for="dry-run-channel">Channel</label>
-              <select id="dry-run-channel" name="channelId"></select>
-            </div>
-          </div>
-          <label for="dry-run-profile">Written by</label>
-          <select id="dry-run-profile" name="profileId"></select>
-          <div class="memory-buttons">
-            <button type="submit" class="button" value="build">Build prompt</button>
-            <button type="submit" class="button button-primary" value="send">Ask the model</button>
-          </div>
-          <p class="hint">"Ask the model" sends one request (it costs what a turn's first step costs) and shows what they'd write and which tools they'd call. The calls aren't run.</p>
-          <p class="form-error" role="alert" hidden></p>
-        </form>
-        <div id="dry-run-result" role="status"></div>
-      </section>
-
-      <div class="dialog-buttons">
-        <span class="spacer"></span>
-        <button type="button" class="button button-primary" data-close>Close</button>
-      </div>
     </dialog>
 
     <!-- Shows the exact prompt stack the next kinwriter turn would send. -->

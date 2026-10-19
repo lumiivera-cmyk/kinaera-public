@@ -5,11 +5,12 @@ server. Change them while looking at any kinwriter and everyone has the change.
 
 ## Just for one kinwriter
 
-Three sections can be set for one kinwriter alone, with the "Just for …" box at the top of each:
+Four sections can be set for one kinwriter alone, with the "Just for …" box at the top of each:
 
 - **Models**: which profile or roulette writes roleplay and OOC.
 - **Memory**: recent messages, summaries, and who writes them.
 - **Reaching out**: chattiness, quiet hours, asides and the heartbeat.
+- **Look**: the app theme, its sliders, and the background picture and its fade.
 
 While a section is ticked, changes to it stay with that kinwriter, and changes made while looking at someone
 else pass them by. Unticking it gives them everyone's values again. Jev and hard limits are always shared.
@@ -19,7 +20,11 @@ an exported kinwriter. Choosing a chattiness at the end of an orientation makes 
 own, since it was chosen for them.
 
 What stays each kinwriter's own, as before: who they are (name, prompts, avatar, colour, pronouns), and the
-options on their own page (texting, match my pace, scripts). The look (theme) is unchanged too.
+options on their own page (texting, match my pace, scripts). Glass effects and folding quiet turns are kept by each
+device, not by a kinwriter.
+
+Themes and background pictures are everyone's to choose from. Deleting one takes it away from every kinwriter,
+including one whose look is their own: they go back to Classic, or to the theme's own background.
 
 ## How it works
 
@@ -41,6 +46,8 @@ src/hub.ts), changing nothing about how anyone writes:
 
 - The first server's first kinwriter's settings become the shared ones.
 - Any other kinwriter whose models, memory or reaching out differ keeps theirs, as their own section.
+- The same for a section that became shareable later, like the look: the first kinwriter's is shared, and anyone
+  whose look differs keeps theirs, as their own.
 - Hard limits are put together: every kinwriter has all of them. None is dropped.
 - Profiles and roulettes are put together. One only some kinwriter had is added for everyone. One that had
   been changed for just one kinwriter (same profile, different settings) is kept as a new profile named with

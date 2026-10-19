@@ -12,11 +12,11 @@
  * kinwriters to this screen: they show as "(private)", like Preview prompt.
  */
 
-import { $, api, els, hideFormError, showFormError, state } from "./core.js";
-import { openKinwriter } from "./kinwriter-page.js";
+import { $, api, hideFormError, showFormError, state } from "./core.js";
+import { openSettings, sectionShowing, showSection, whenSectionShown } from "./settings-hub.js";
 import { profileEditor, resolveAssignment, resolveProfileId } from "./profile-inline.js";
 
-const dialog = $("prompts-dialog");
+const dialog = $("prompts-screen");
 const filesBox = $("prompts-files");
 const search = $("prompts-search");
 const dryForm = $("dry-run-form");
@@ -29,18 +29,28 @@ const openFiles = new Set();
 /** Sections saved or reset during this search: they stay shown even if they no longer match. */
 const touched = new Set();
 
-/** Open the screen, on the Wording tab or the Dry run tab. */
-export async function openPrompts(tab = "wording") {
+/** Settings, on Prompts: the Wording tab or the Dry run tab. */
+export function openPrompts(tab = "wording") {
+  if (!sectionShowing("prompts")) openSettings("prompts");
   showTab(tab);
+}
+
+/**
+ * Settings → Prompts: the files as they are now, and the dry run's choices.
+ * Wording you've changed but not saved yet stays as it is, so going to
+ * another section and back doesn't lose it.
+ */
+whenSectionShown("prompts", async () => {
   fillDryRunChoices();
-  if (!dialog.open) dialog.showModal();
+  const unsaved = [...filesBox.querySelectorAll(".prompts-section .button-primary")].some((save) => !save.disabled);
+  if (unsaved) return;
   try {
     files = (await api("GET", "/api/hub/prompts")).files;
     renderFiles();
   } catch (error) {
     filesBox.textContent = error.message;
   }
-}
+});
 
 function showTab(tab) {
   for (const button of dialog.querySelectorAll(".prompts-tab")) button.setAttribute("aria-selected", String(button.dataset.tab === tab));
@@ -59,7 +69,7 @@ function fileTitle(file) {
 function renderFiles() {
   const query = search.value.trim().toLowerCase();
   const matches = (file, section) =>
-    !query || touched.has(`${file.file}/${section.name}`) || section.name.toLowerCase().includes(query) || section.text.toLowerCase().includes(query) || file.file.includes(query);
+    !query || touched.has(`${file.file}/${section.name}`) || section.name.toLowerCase().includes(query) || section.text.toLowerCase().includes(query) || section.used.toLowerCase().includes(query) || file.file.includes(query);
   filesBox.replaceChildren(
     ...files
       .map((file) => {
@@ -100,11 +110,20 @@ function renderSection(file, section) {
   name.textContent = section.name;
   head.append(name);
   if (section.edited) head.append(chip("edited"));
+  // Where this wording is used, from the note under its heading in defaults/.
+  const used = document.createElement("p");
+  used.className = "hint prompts-used";
+  used.textContent = section.used;
+  used.hidden = !section.used;
 
   const text = document.createElement("textarea");
   text.value = section.text;
   text.rows = Math.min(14, Math.max(2, Math.ceil(section.text.length / 60) + section.text.split("\n").length - 1));
   text.setAttribute("aria-label", `${file.file}: ${section.name}`);
+  if (section.used) {
+    used.id = `prompts-used-${file.file}-${section.name}`.replace(/[^\w-]/g, "-");
+    text.setAttribute("aria-describedby", used.id);
+  }
 
   const buttons = document.createElement("div");
   buttons.className = "memory-buttons";
@@ -132,7 +151,7 @@ function renderSection(file, section) {
     if (confirm(`Put "${section.name}" back to its default wording?`)) send("DELETE", undefined, "Back to the default.");
   });
   buttons.append(save, reset, status);
-  box.append(head, text, buttons);
+  box.append(head, used, text, buttons);
   box.dataset.key = `${file.file}/${section.name}`;
   return box;
 }
@@ -301,11 +320,4 @@ search.addEventListener("input", () => {
 dryForm.addEventListener("submit", runDry);
 dryForm.elements.turn.addEventListener("change", updateTurnKind);
 dryForm.elements.channelId.addEventListener("change", () => dryForm.elements.profileId._profileEditor?.render());
-$("open-prompts").addEventListener("click", () => {
-  els.settingsDialog.close();
-  openPrompts();
-});
-$("prompts-open-kinwriter").addEventListener("click", () => {
-  dialog.close();
-  openKinwriter();
-});
+$("prompts-open-kinwriter").addEventListener("click", () => showSection("writing"));

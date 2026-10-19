@@ -12,7 +12,7 @@ import { createApp, type App } from "../src/server.ts";
 import { buildSeedPrompt, generateSeed, generatorSystemPrompt, ideaTags, parseReply, SeedError } from "../src/generator.ts";
 import { loadTags, parseTagFile, pickerView, readTagFiles, TAGS_DIR } from "../src/tags.ts";
 import { parseSeed, SEED_HEADINGS } from "../src/seeds.ts";
-import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt } from "./helpers.ts";
+import { startFakeNanoGpt, tempDir, testConfig, type FakeNanoGpt, oneProfile } from "./helpers.ts";
 
 const MARGO = readFileSync(join(import.meta.dir, "..", "kinwriter-generator", "test-seed.md"), "utf8");
 /**
@@ -29,6 +29,7 @@ beforeEach(() => {
   fake = startFakeNanoGpt();
   dir = tempDir();
   app = createApp(testConfig(dir.path, fake.baseUrl, { developerPanel: true }));
+  oneProfile(app.store);
 });
 
 afterEach(() => {

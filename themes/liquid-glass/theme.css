@@ -7,7 +7,7 @@
  * spring back, the channel highlight flows between channels, and the
  * typing dots merge and split like droplets.
  *
- * Sliders in Appearance (declared in theme.json) set:
+ * Sliders in Settings → Look (declared in theme.json) set:
  *   --glass-tint   how white the glass is: 0 is perfectly clear
  *   --refraction   how strongly the edges bend what's behind (px)
  *   --dispersion   how much the colours split at the edges

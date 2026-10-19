@@ -7,8 +7,9 @@
  * profile, while looking at any kinwriter and every kinwriter gets it.
  *
  * Some sections can be set **just for one kinwriter** (their "own"
- * sections): which models write for them, their memory, and how they reach
- * out (wake-ups and the heartbeat). While a section is their own, changes to
+ * sections): which models write for them, their memory, how they reach out
+ * (wake-ups and the heartbeat), and the look (theme, its sliders, and the
+ * background picture). While a section is their own, changes to
  * it stay with them, and changes made elsewhere pass them by. Turning it off
  * gives them the shared values again. Which sections are a kinwriter's own
  * is kept in their database (app_state), so it travels with them.
@@ -28,12 +29,13 @@ export const SETTING_GROUPS = {
   reaching: ["wakeups", "awayHours", "wakeCooldownMinutes", "asideMinutes", "quietStart", "quietEnd", "heartbeatHours", "heartbeatAssignment"],
   jev: ["decisionModel", "decisionConfidence", "decisionFallback"],
   limits: ["hardLimits"],
+  look: ["appTheme", "themeOptions", "appBackground", "backgroundDim"],
 } as const satisfies Record<string, readonly (keyof Settings)[]>;
 
 export type SettingGroup = keyof typeof SETTING_GROUPS;
 
 /** The sections a kinwriter can have just for themselves. */
-export const OWN_GROUPS: SettingGroup[] = ["models", "memory", "reaching"];
+export const OWN_GROUPS: SettingGroup[] = ["models", "memory", "reaching", "look"];
 
 /** Every shared setting. */
 export const UNIVERSAL_KEYS: (keyof Settings)[] = Object.values(SETTING_GROUPS).flat();

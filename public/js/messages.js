@@ -616,7 +616,7 @@ function drawMessages() {
 const FOLD_QUIET_AT = 3;
 const FOLD_QUIET_KEY = "kinaera.foldQuiet"; // "0" turns folding off on this device
 
-/** Whether runs of quiet turns are folded on this device (on unless turned off in Appearance). */
+/** Whether runs of quiet turns are folded on this device (on unless turned off in Settings → Look). */
 export function foldQuietOn() {
   return readLocal(FOLD_QUIET_KEY) !== "0";
 }
