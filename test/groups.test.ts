@@ -27,7 +27,7 @@ beforeEach(async () => {
   dir = tempDir();
   hub = createHub(testConfig(dir.path, fake.baseUrl, { groupDelayMs: 0 }));
   serverId = (await call("GET", "/api/hub")).data.servers[0].id;
-  // Group channels and DMs need Kinwriters together (Settings → Advanced).
+  // Group channels and DMs need Kinwriters together (Settings → Labs).
   await call("PATCH", "/api/hub/options", { together: true });
   wren = (await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Wren", prompt: "Your name is Wren." })).data.kinwriterId;
   sol = (await call("POST", `/api/hub/servers/${serverId}/kinwriters`, { name: "Sol", prompt: "Your name is Sol." })).data.kinwriterId;

@@ -10,6 +10,7 @@ import { moveChannelIndicator, renderAll } from "./channels.js";
 import { $, api, currentChannel, els, fileToBase64, hideFormError, readLocal, showFormError, state, writeLocal } from "./core.js";
 import { badge } from "./format.js";
 import { actionButton, scrollToBottom } from "./messages.js";
+import { openSettings, whenSectionShown } from "./settings-hub.js";
 
 // ----------------------------------------------------------------- themes
 
@@ -155,7 +156,7 @@ async function loadBackgrounds() {
   try {
     backgroundList = (await api("GET", "/api/backgrounds")).backgrounds;
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
   renderBackgrounds();
 }
@@ -192,16 +193,16 @@ async function saveBackground(update) {
     applyBackground();
     renderBackgrounds();
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
 }
 
 /** Upload a picture, and show it straight away. */
 export async function uploadBackground(file) {
   if (!file) return;
-  hideFormError($("appearance-dialog"));
+  hideFormError($("appearance-panel"));
   if (file.size > 25 * 1024 * 1024) {
-    showFormError($("appearance-dialog"), `${file.name} is too big: background pictures can be 25 MB at most.`);
+    showFormError($("appearance-panel"), `${file.name} is too big: background pictures can be 25 MB at most.`);
     return;
   }
   try {
@@ -212,7 +213,7 @@ export async function uploadBackground(file) {
     applyBackground();
     renderBackgrounds();
   } catch (error) {
-    showFormError($("appearance-dialog"), `${file.name}: ${error.message}`);
+    showFormError($("appearance-panel"), `${file.name}: ${error.message}`);
   }
 }
 
@@ -227,7 +228,7 @@ export async function deleteBackground() {
     applyBackground();
     renderBackgrounds();
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
 }
 
@@ -371,7 +372,7 @@ function judgeStutter() {
   if (typicalFrame > STUTTER_FRAME_MS) {
     writeLocal(AUTO_LITE_KEY, "1");
     applyThemes();
-    showNotice("Scrolling was stuttering, so glass effects switched to Lite on this device. You can change this in Appearance.");
+    showNotice("Scrolling was stuttering, so glass effects switched to Lite on this device. You can change this in Settings → Look.");
   }
 }
 
@@ -382,15 +383,21 @@ export function showNotice(text) {
 
 // ------------------------------------------------------------- appearance
 
+/** Settings, on Look. */
 export function openAppearance() {
+  openSettings("look");
+}
+
+/** Settings → Look: the themes, pictures and effects as they are now. */
+export function renderAppearance() {
   renderThemeList();
   renderThemeOptions();
   renderBackgrounds();
   loadBackgrounds();
   for (const radio of document.querySelectorAll('input[name="effects"]')) radio.checked = radio.value === effectsMode();
-  hideFormError($("appearance-dialog"));
-  $("appearance-dialog").showModal();
+  hideFormError($("appearance-panel"));
 }
+whenSectionShown("look", renderAppearance);
 
 /** The theme cards in Appearance. The app theme is the selected one. */
 function renderThemeList() {
@@ -444,7 +451,7 @@ async function chooseAppTheme(id) {
     renderThemeOptions();
     renderAll();
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
 }
 
@@ -459,7 +466,7 @@ export async function copyTheme() {
     await chooseAppTheme(theme.id);
     openThemeEditor(theme.id);
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
 }
 
@@ -475,7 +482,7 @@ export async function deleteTheme() {
     renderThemeList();
     renderAll();
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
 }
 
@@ -561,7 +568,7 @@ async function saveThemeOptions() {
     const { settings } = await api("PUT", "/api/settings", { themeOptions: state.settings.themeOptions ?? {} });
     state.settings = settings;
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
 }
 
@@ -591,7 +598,7 @@ export async function openThemeEditor(id) {
     hideFormError($("theme-editor-form"));
     $("theme-editor").showModal();
   } catch (error) {
-    showFormError($("appearance-dialog"), error.message);
+    showFormError($("appearance-panel"), error.message);
   }
 }
 

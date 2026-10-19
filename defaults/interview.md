@@ -18,6 +18,10 @@ about each other is that it's fine to differ.
 
 ## for-kinwriter
 
+<!-- Shown to you as question cards during the orientation interview, a few at
+a time, shuffled. Also listed in the kinwriter's prompt in the solo
+questionnaire as the questions you'd ask them. One per line. -->
+
 What would you pitch me if I said "surprise me"?
 What's a trope you'd defend to the death?
 What makes a scene feel dead to you?
@@ -27,6 +31,9 @@ How do you want to know when I love something you wrote?
 When would you text me first?
 
 ## for-user
+
+<!-- Listed in the kinwriter's orientation prompt as questions they might ask
+you, in the interview or, on their own, the questionnaire. One per line. -->
 
 What's a story you keep coming back to, and why?
 How do you like to be told something isn't working?
@@ -38,16 +45,30 @@ Which genre do you fall back on when you can't decide?
 
 ## wrap-up
 
+<!-- Shown to you under the interview once you've each written enough messages
+in the practice channel, nudging you that you can end it. -->
+
 That's a good handful each way. Wrap up whenever you like: Next ends the interview.
 
 ## wrap-up-after
+
+<!-- How many messages each of you must write during the interview before the
+wrap-up nudge appears. A number only, never sent to a model. -->
 
 5
 
 ## kept-user
 
+<!-- Posted as your message in the practice channel when you choose to keep
+something to yourself during the interview, so the kinwriter sees only that
+you did. -->
+
 (I'm keeping something to myself.)
 
 ## kept-user-note
+
+<!-- The name of the hidden notebook entry made when you keep something to
+yourself in the interview and add a note. A number is added if the name is
+taken. -->
 
 Kept to myself

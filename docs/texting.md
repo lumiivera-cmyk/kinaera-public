@@ -6,7 +6,7 @@ Two endgame features from [DESIGN.md](../DESIGN.md): out-of-character chat that 
 
 - **Your kinwriter texts in bursts.** A reply in an OOC channel comes as a few short texts ("omg wait", "you actually said that??", "legend") instead of one paragraph. They arrive **one at a time**, with "Arlo is typing…" between them; a longer text takes longer to type. **Double-tap "typing…"** to see the rest straight away.
 - **Each thing you send is its own text**, and your kinwriter **waits until you pause** (2.5 seconds by default, and longer while you're still typing) before answering all of them in one reply. So you can send "hey", then "guess what", then the news, and they answer the whole thing.
-- Turn it off, or tune it, in the **kinwriter menu** (tap the kinwriter card) → **Texting in OOC**: how long a pause is, and the typing speed. Roleplay channels are never affected.
+- Turn it off, or tune it, in **Settings → How they behave → Texting in OOC**: how long a pause is, and the typing speed. Roleplay channels are never affected.
 
 ### How it works
 

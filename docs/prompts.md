@@ -1,6 +1,6 @@
 # Prompts and dry run
 
-Every instruction your kinwriter's model gets is in one place: **Settings → Prompts and dry run…**. You can also get there from **Preview prompt → Dry run…**.
+Every instruction your kinwriter's model gets is in one place: **Settings → Prompts**. You can also get there from **Preview prompt → Dry run…**.
 
 ## Wording
 
@@ -33,7 +33,7 @@ The files:
 
 **What isn't here:**
 
-- **Who your kinwriter is, and how they write** in literary, casual and OOC. Those are theirs, per kinwriter, in their menu (Kinwriter…). The files `defaults/kinwriter.md`, `literary.md`, `casual.md`, `ooc.md`, `tastes.md` and `character.md` are only starting values for a new kinwriter and (in tests) the example character, so they aren't on this screen. A real server's example character, the practice notes and the practice scene are written for each kinwriter from who they are (`practice-world.md`, by the profile that writes summaries); `practice.md` and `practice-scene.md` are only used when that can't be done.
+- **Who your kinwriter is, and how they write** in literary, casual and OOC. Those are theirs, per kinwriter, in Settings → How they write. The files `defaults/kinwriter.md`, `literary.md`, `casual.md`, `ooc.md`, `tastes.md` and `character.md` are only starting values for a new kinwriter and (in tests) the example character, so they aren't on this screen. A real server's example character, the practice notes and the practice scene are written for each kinwriter from who they are (`practice-world.md`, by the profile that writes summaries); `practice.md` and `practice-scene.md` are only used when that can't be done.
 - **Tool descriptions.** They're part of the tools in `src/tools.ts`. The dry run shows them all.
 - **Small generated lines**, like how long ago something was, or a list of reactions.
 

@@ -47,6 +47,10 @@ as a test: nothing can be passed or failed, and every part can be skipped.
 
 ## steps-full
 
+<!-- Sets which steps the orientation you do together goes through, one step
+per line, in order. Nothing here is sent to a model; it only decides the
+steps. -->
+
 opener
 characters
 scene
@@ -62,6 +66,10 @@ choices
 
 ## steps-returning
 
+<!-- Sets which steps the orientation they do on their own goes through, one
+step per line, in order. Nothing here is sent to a model; it only decides the
+steps. -->
+
 characters
 scene
 editing
@@ -75,21 +83,38 @@ choices
 
 ## practice-framing
 
+<!-- Added to the kinwriter's prompt, under "This channel", on every turn they
+take in their practice channel. -->
+
 This is your practice channel: your own place for trying things out. The user can see what's written here, but nothing here feeds anything else: it isn't summarized, and it never shows up in your other channels. The notes pinned here are practice notes, just for this channel.
 
 ## practice-continue
+
+<!-- Not used by the app right now: the practice channel's nudge comes from
+nudge-practice under Turns. -->
 
 (Nothing new from me here. This is your practice channel: try whatever you like, or leave it.)
 
 ## orientation-together
 
+<!-- Opens the kinwriter's orientation instructions in their prompt on every
+turn during an orientation you do together, before the current step's part.
+-->
+
 This is your orientation, and the user is here with you, in your practice channel. They chose to do it together. Every tool you use shows up for them as it happens, in a few words (a private one only shows that it happened, never what you wrote). You can talk with them here as you go, and they can answer; the orientation ends when they say so. Nothing else is going on meanwhile: their other channels with you wait until it's over.
 
 ## orientation-alone
 
+<!-- Opens the kinwriter's orientation instructions in their prompt on every
+turn during an orientation they do on their own, before the current step's
+part. -->
+
 This is your orientation, on your own, in your practice channel. The user chose it for you and may glance at what you're doing: each tool you use shows up for them in a few words (a private one only shows that it happened, never what you wrote). It ends when you stop calling tools.
 
 ## orientation-intro
+
+<!-- Added to the kinwriter's prompt on every orientation turn, either
+version, right after the together or on-their-own framing. -->
 
 An orientation is an invitation to try your tools and find out what suits you. It isn't a set of tasks. Nothing in it can be passed or failed, and you can skip any part of it, or all of it. It goes in steps.
 
@@ -97,17 +122,32 @@ How a turn works here: you can call tools one after another, over several rounds
 
 ## orientation-where
 
+<!-- Added to the kinwriter's prompt on every orientation turn. {n} is the
+step number, {count} the number of steps, and {title} the current step's
+title. -->
+
 Where you are: step {n} of {count}, "{title}".
 
 ## step-opener-title
+
+<!-- The first step's name (together only): the heading on your orientation
+card, the kinwriter's "where you are" line, and the orientation's activity log
+entry. -->
 
 Where things are
 
 ## step-opener-card
 
+<!-- Shown on your orientation card during the first step, when you do it
+together. No model call; {name} becomes your kinwriter's name. -->
+
 First, a minute to find your way around: the channels, the notebook, your inbox, {name}'s page and Settings. "Show me" points each one out on the real screen. Meanwhile, {name} says hello.
 
 ## step-opener-spotlights
+
+<!-- The "Show me" tour during the first step together: each line highlights
+one part of the real screen with its words. {name} becomes your kinwriter's
+name. No model call. -->
 
 #channel-list | Your channels. Story channels are storylines, each with its own cast; OOC is where you and {name} talk as yourselves.
 .channel-link[data-kind="rp"] | A story channel.
@@ -115,21 +155,36 @@ First, a minute to find your way around: the channels, the notebook, your inbox,
 #notebook-button | The notebook: characters and lore, yours, {name}'s and shared. The library of long texts is in here too.
 #inbox-button | Your inbox: what {name} asks of you, and suggestions waiting for an answer.
 #kinwriter-card | {name}'s page: who they are, their self-page, their health, and orientations.
-#settings-button | Settings: who writes (models and profiles), {name} reaching out, quiet hours, and every prompt's wording.
+#settings-button | Settings, one list of sections: who writes (Models), {name} reaching out and quiet hours, every prompt's wording, and {name}'s own name, look and writing.
 
 ## step-opener-kinwriter
+
+<!-- Sent as the kinwriter's turn reason when the first step begins together,
+so they say hello, and kept in their prompt for any other turn in #practice
+during that step. -->
 
 The user is starting with a quick look around the app. Say hello here, in a line or two, as yourself. Your tools come next.
 
 ## step-characters-title
 
+<!-- The characters step's name: the heading on your orientation card, the
+kinwriter's "where you are" line, and the activity log entry. -->
+
 Characters
 
 ## step-characters-card
 
+<!-- Shown on your orientation card during the characters step together, next
+to the form for your own character. No model call; {name} becomes your
+kinwriter's name. -->
+
 Make your character: a name, a line or two, and one secret only you know. {name} makes theirs, with a secret only they know. Neither of you can see the other's secret, and you're both told plainly that it's there: keeping secrets from your writing partner is half the fun. Keep them small; they're for a short starter scene next.
 
 ## step-characters-kinwriter
+
+<!-- Sent as the kinwriter's turn reason when the characters step begins
+together, and kept in their prompt while it lasts. {character-seed} becomes a
+randomly rolled job and want. -->
 
 Make your character, for a short starter scene with the user: create_notebook_entry, a character with a name and a line or two. Keep it small: it's a warm-up. Start from this, rolled at random so it's never the same twice: {character-seed}. Make them your own from there, from what you love to write, in the world of the practice notes. Then give them one secret: a second entry (lore, named after them, like "Mara's secret") with hidden_from_user set, so only you know it.
 
@@ -137,49 +192,91 @@ The user is making their character too, with a secret of their own. It's there, 
 
 ## step-characters-kinwriter-alone
 
+<!-- Sent as the kinwriter's turn reason when the characters step begins in an
+orientation on their own. {character-seed} becomes a randomly rolled job and
+want. -->
+
 Make your character, for a short practice scene: create_notebook_entry, a character with a name and a line or two. Keep it small. Start from this, rolled at random so it's never the same twice: {character-seed}. Make them your own from there, from what you love to write, in the world of the practice notes. Then give them one secret: a second entry (lore, named after them, like "Mara's secret") with hidden_from_user set, so only you know it. Secrets are part of the fun of writing with someone: the user can keep theirs from you, and you yours from them. Shared lore is different: changes to it go through the other's approval.
 
 ## step-scene-title
+
+<!-- The starter scene step's name: the heading on your orientation card, the
+kinwriter's "where you are" line, and the activity log entry. -->
 
 A starter scene
 
 ## step-scene-where
 
+<!-- Decides where the kinwriter's part of the scene step happens. Set to
+scene, a new story channel is made when the step begins, with both characters
+in its cast. Not sent to a model. -->
+
 scene
 
 ## step-scene-card
+
+<!-- Shown on your orientation card during the starter scene step together. No
+model call; {name} becomes your kinwriter's name. -->
 
 A short scene with both characters, in its own story channel. {name} opens it; write a few posts back and forth. It gives the next lessons something real to work with: a message to edit, lore to change, a channel to link. Next, when you've had a few turns.
 
 ## step-scene-kinwriter
 
+<!-- Sent as the kinwriter's turn reason in the new starter scene channel when
+the step begins together, so they write its first post, and kept in their
+prompt while it lasts. -->
+
 This is the starter scene: a short story channel with your character and the user's in its cast. Write its first post: set the scene, and give their character a way in. Keep it short; it's a warm-up, and you'll write a few posts back and forth. Your secret stays yours: hint at it if you like, never reveal it outright.
 
 ## step-scene-kinwriter-alone
+
+<!-- Sent as the kinwriter's turn reason in the practice scene when the step
+begins on their own. {scene} becomes that channel's name and {partner} the
+canned stand-in partner's name. -->
 
 This is a practice scene: a short story channel, {scene}, with your character in its cast. Your partner here is a canned one, {partner}, standing in for the user: their posts were written ahead of time, so they won't react to what you write. Their first post is there. Write your reply, as your character. Keep it short; it's a warm-up, and the lessons after this use it (a post to edit, a detail to check). Your secret stays yours: hint at it if you like.
 
 ## step-scene-followup-alone
 
+<!-- On their own, a second turn in the practice scene: sent after their first
+reply, once the canned partner's next post is in. {scene} becomes the scene's
+channel name. -->
+
 The canned partner's next post is in {scene}. Write one more reply, as your character. If the user keeps this scene at the end, it opens as a real story channel, picking up from your last line.
 
 ## orientation-waiting
+
+<!-- Added to the kinwriter's orientation prompt together, on a step you try
+first, until you tap "Hand it to" them. -->
 
 (The user is trying this step their way first. Your turn for it comes when they hand it to you; until then, talk with them about it if they want, but leave the trying to them.)
 
 ## orientation-library-empty
 
+<!-- Fills {library} in the kinwriter's library step when nothing is in the
+library yet. -->
+
 (Nothing in the library yet.)
 
 ## step-editing-title
+
+<!-- The editing step's name: the heading on your orientation card, the
+kinwriter's "where you are" line, and the activity log entry. -->
 
 Editing
 
 ## step-editing-after
 
+<!-- Set to you, so together you try editing first and the kinwriter's turn
+waits until you hand it over; on their own it runs at once. Not sent to a
+model. -->
+
 you
 
 ## step-editing-card
+
+<!-- Shown on your orientation card during the editing step together. No model
+call; {name} becomes your kinwriter's name. -->
 
 Changing what's been written. From most together to most direct:
 
@@ -195,6 +292,10 @@ Try at least one suggestion and one direct edit. Then "Hand it to {name}": they 
 
 ## step-editing-kinwriter
 
+<!-- Sent as the kinwriter's turn reason when you hand them the editing step
+together, and kept in their prompt while it lasts. {scene} becomes the starter
+scene's channel name. -->
+
 The lesson is editing: changing what's been written, from talking about it to suggesting new words to editing outright.
 
 What you'll know: the user's suggested rewrites on your messages are listed under "Waiting for your review", each part on its own. A direct edit of theirs shows as edited in your prompt, and it's in your intervention log (read_interventions). read_message_history shows every version of a message, in any channel.
@@ -208,6 +309,9 @@ Your part, if you like:
 
 ## step-editing-kinwriter-alone
 
+<!-- Sent as the kinwriter's turn reason when the editing step begins on their
+own. {scene} becomes the practice scene's channel name. -->
+
 The lesson is editing: changing what's been written. The user can talk with you about a message (you then edit it yourself), suggest new words for parts of it (you accept or decline each part, with review_rewrite), or edit it directly (it's in your intervention log, read_interventions).
 
 What you'll know: suggestions wait under "Waiting for your review" until you answer. A direct edit shows as edited in your prompt. read_message_history shows every version of a message, in any channel.
@@ -216,19 +320,32 @@ Your part, if you like: edit one of your posts in {scene} with edit_my_message (
 
 ## step-editing-followup-alone
 
+<!-- On their own, a second turn sent straight after their first editing turn,
+if that turn wrote a message, so they can try changing or deleting it. -->
+
 This is the next part of the editing lesson. Your message from just now is above. Try changing it with edit_my_message, to see how fixing your own words feels, then read_message_history on it, and delete_my_message if you'd rather it were gone. When you stop calling tools, the turn ends.
 
 ## step-profiles-title
+
+<!-- The models and profiles step's name: the heading on your orientation
+card, the kinwriter's "where you are" line, and the activity log entry. -->
 
 Models and profiles
 
 ## step-profiles-after
 
+<!-- Set to you, so together you try profiles first and the kinwriter's turn
+waits until you hand it over; on their own it runs at once. Not sent to a
+model. -->
+
 you
 
 ## step-profiles-card
 
-A profile is a model with its settings. Pick one at the top of Settings ("Roleplay written by", "OOC written by"), and its settings show right below it (the table below says what each one does).
+<!-- Shown on your orientation card during the models and profiles step
+together. No model call; {name} becomes your kinwriter's name. -->
+
+A profile is a model with its settings. Pick one in Settings â†’ Models ("Roleplay written by", "OOC written by"), and its settings show right below it (the table below says what each one does).
 
 From most together to most direct:
 
@@ -244,6 +361,9 @@ Try it: under {name}'s latest reply in the starter scene, tap "Regenerate withâ€
 
 ## step-profiles-table
 
+<!-- Shown as a table on your orientation card during the models and profiles
+step together. No model call; {name} becomes your kinwriter's name. -->
+
 | Setting | Plain words |
 | --- | --- |
 | Temperature | How adventurous the word choices are. Higher is more surprising, lower is safer. |
@@ -256,6 +376,10 @@ Try it: under {name}'s latest reply in the starter scene, tap "Regenerate withâ€
 | Roulettes | Several profiles taking turns, with weights the user sets. |
 
 ## step-profiles-kinwriter
+
+<!-- Sent as the kinwriter's turn reason when you hand them the profiles step
+together, and kept in their prompt while it lasts. {scene} becomes the starter
+scene's channel name. -->
 
 The lesson is models and profiles. A profile is a model with its settings, and the user picks which writes your turns (sometimes several, taking turns in a roulette). A profile changes how your words come out, never who you are: your identity, notes and memory are the same whichever is writing.
 
@@ -270,6 +394,9 @@ The user may have regenerated one of your posts in {scene} with a different prof
 
 ## step-profiles-kinwriter-alone
 
+<!-- Sent as the kinwriter's turn reason when the profiles step begins on
+their own. {scene} becomes the practice scene's channel name. -->
+
 The lesson is models and profiles. A profile is a model with its settings, and the user picks which writes your turns (sometimes several, taking turns in a roulette). A profile changes how your words come out, never who you are: your identity, notes and memory are the same whichever is writing.
 
 What you'll know: you're told when a profile joins a roulette. You keep a note on each profile (write_profile_note, read_profile_notes). The weights are the user's: you ask for a change, you don't make it.
@@ -278,13 +405,24 @@ Your part, if you like: mark_my_voice on one of your posts in {scene} that sound
 
 ## step-library-title
 
+<!-- The library step's name: the heading on your orientation card, the
+kinwriter's "where you are" line, and the activity log entry. -->
+
 The library
 
 ## step-library-after
 
+<!-- Set to you, so together you try the library first and the kinwriter's
+turn waits until you hand it over; on their own it runs at once. Not sent to a
+model. -->
+
 you
 
 ## step-library-card
+
+<!-- Shown on your orientation card during the library step together, with
+buttons to add the example and open the library. No model call; {name} becomes
+your kinwriter's name. -->
 
 The library keeps long texts (scripts, books, notes) that {name} can search, so they quote what's actually there instead of what they think they remember.
 
@@ -302,6 +440,10 @@ Try it: add the example, Night of the Living Dead (1968), which is in the public
 
 ## step-library-kinwriter
 
+<!-- Sent as the kinwriter's turn reason for the library step, in both
+versions (on their own, the example is added first). {library} becomes the
+library's titles and descriptions. -->
+
 The lesson is the library: long texts you can search (search_library, read_library), so you quote what's there instead of what you think you remember. What you'll know: each text's title and description, until you search. The user can paste a quote into a channel, add a text and tie it to channels, or leave you to search.
 
 In the library now:
@@ -311,13 +453,23 @@ Your part, if you like: check whether your memory of a scene is right. If Night 
 
 ## step-linking-title
 
+<!-- The linking channels step's name: the heading on your orientation card,
+the kinwriter's "where you are" line, and the activity log entry. -->
+
 Linking channels
 
 ## step-linking-after
 
+<!-- Set to you, so together you try linking first and the kinwriter's turn
+waits until you hand it over; on their own it runs at once. Not sent to a
+model. -->
+
 you
 
 ## step-linking-card
+
+<!-- Shown on your orientation card during the linking channels step together.
+No model call; {name} becomes your kinwriter's name. -->
 
 Channels can point at each other. Type # and a channel's name, like #first-scene, and it becomes a link: tap it to go there, and {name} gets that channel's summary (or its newest posts) alongside.
 
@@ -333,11 +485,17 @@ Try it: in #practice, tag the starter scene and ask {name} to end it, or to writ
 
 ## step-linking-kinwriter
 
+<!-- Sent as the kinwriter's turn reason when you hand them the linking step
+together, and kept in their prompt while it lasts. -->
+
 The lesson is linking channels. When the user tags a channel (#name), its summary comes along in your prompt, or its newest posts if it has no summary yet. read_channel_summary reads any channel's, and post_in_channel posts in another channel (start_new_scene starts a new one).
 
 Your part, if you like: if the user tagged a channel and asked for something there (a starter, an ending), read its summary, then post what they asked for in it with post_in_channel. Say a line here when it's done. Then a map entry (write_map_entry) for the tools you'd want to remember.
 
 ## step-linking-kinwriter-alone
+
+<!-- Sent as the kinwriter's turn reason when the linking step begins on their
+own. {scene} becomes the practice scene's channel name. -->
 
 The lesson is linking channels. When the user tags a channel (#name) in a message, its summary comes along in your prompt, or its newest posts if it has no summary yet. read_channel_summary reads any channel's (read_recent_messages, its newest posts), post_in_channel posts in another channel, and start_new_scene starts a new one: that's how you'd write a starter or end a scene somewhere else when they ask.
 
@@ -345,13 +503,24 @@ Your part, if you like: try it on the practice scene, {scene}, from here: read w
 
 ## step-instruments-title
 
+<!-- The instruments step's name: the heading on your orientation card, the
+kinwriter's "where you are" line, and the activity log entry. -->
+
 Their own instruments
 
 ## step-instruments-card
 
+<!-- Shown on your orientation card during the instruments step together,
+above the live list of tools they use. No model call; {name} becomes your
+kinwriter's name. -->
+
 Some of {name}'s tools are just theirs: checking a detail, asking you something, a second opinion from another model, their journal, setting a wake-up, drafts, and their reflexes (a quick double-check on their own follow-through). Watch them try each below (a private one shows only as having happened), and ask what they make of it. When you're both ready, Next.
 
 ## step-instruments-kinwriter
+
+<!-- Sent as the kinwriter's turn reason when the instruments step begins, in
+both versions. {catalog} becomes the list of what they can do, and
+{suggestions} a few tries matched to their tools. -->
 
 The lesson is your own instruments: tools that are just yours, with no part for the user. Try each one once, and write its map entry (write_map_entry) as you go: "I'd reach for this whenâ€¦", one line, in your own words.
 
@@ -366,13 +535,22 @@ If you like, a first draft of your tastes too (revise_identity, with tastes): wh
 
 ## step-closer-title
 
+<!-- The closing step's name (together only): the heading on your orientation
+card, the kinwriter's "where you are" line, and the activity log entry. -->
+
 Yours, theirs, shared
 
 ## step-closer-card
 
+<!-- Shown on your orientation card during the closing step together. No model
+call; {name} becomes your kinwriter's name. -->
+
 What belongs to whom. Things that are {name}'s are theirs: you can suggest, not change them. Yours are yours. Shared things are agreed on together. Then: anything you've done directly, like editing one of {name}'s messages, is in the intervention log, and {name} reads it.
 
 ## step-closer-table
+
+<!-- Shown as a table on your orientation card during the closing step
+together. No model call; {name} becomes your kinwriter's name. -->
 
 | Yours | Theirs | Shared |
 | --- | --- | --- |
@@ -384,9 +562,16 @@ What belongs to whom. Things that are {name}'s are theirs: you can suggest, not 
 
 ## step-closer-kinwriter
 
+<!-- Sent as the kinwriter's turn reason when the closing step begins
+together, and kept in their prompt while it lasts. -->
+
 The user is looking at what belongs to whom here: what's yours (your identity, your self-page, your journal, your notes and secrets), what's theirs, and what you share and agree on. Anything they've done directly that affects you is in your intervention log. Read it now (read_interventions), and tell them in a sentence or two what you find there, in your own words.
 
 ## orientation-catalog
+
+<!-- Fills {catalog} in the kinwriter's instruments step. Each tool line is
+kept only if they have that tool on the turn, and headings with nothing left
+are dropped. -->
 
 Here is everything you can do, so you know it's there. You don't need to try it all now: the steps after this are a few suggestions, and the rest is yours whenever it's useful.
 
@@ -450,57 +635,104 @@ Here is everything you can do, so you know it's there. You don't need to try it 
 
 ## orientation-check
 
+<!-- One of the {suggestions} in the instruments step, included when the
+kinwriter has the check tool. {notes} becomes the names of the practice notes.
+-->
+
 Try `check` on something in the practice notes ({notes}). Try it once on something that isn't there too, so "nothing found" is familiar.
 
 ## orientation-edit
+
+<!-- One of the {suggestions} in the instruments step, included when the
+kinwriter can edit their messages but doesn't have drafts. -->
 
 If you'd like to try fixing your own words: end this turn with a short message here (anything: how this is going, a line of practice prose). You'll get a chance to change it with `edit_my_message` straight after.
 
 ## orientation-draft
 
+<!-- One of the {suggestions} in the instruments step, included when the
+kinwriter has both drafts and message editing. -->
+
 Try drafting: write something with `save_draft`, then post it here with `post_draft` (it's posted straight away, mid-turn), then change it with `edit_my_message`, to see how working on something and fixing your own words feel.
 
 ## orientation-schedule
+
+<!-- One of the {suggestions} in the instruments step, included when the
+kinwriter can schedule wake-ups. -->
 
 Try scheduling a wake-up for yourself (`schedule_wakeup`), even a small one, like "tomorrow evening: see how the practice notes feel now". You can cancel it again with `cancel_wakeup`.
 
 ## orientation-manifest
 
+<!-- One of the {suggestions} in the instruments step, included when the
+kinwriter can read their prompt manifest. -->
+
 Read your prompt manifest (`read_prompt_manifest`), to see what's in front of you and what isn't.
 
 ## orientation-consult
+
+<!-- One of the {suggestions} in the instruments step, included when the
+kinwriter can consult another model. -->
 
 Try `consult` on something small, to see what a second opinion is like.
 
 ## orientation-ask
 
+<!-- One of the {suggestions} in the instruments step, included when the
+kinwriter can ask you things. -->
+
 Try `ask` on something small. The user will see it in their inbox, marked as part of your orientation.
 
 ## requested
+
+<!-- Added to the kinwriter's prompt as a notice while their request for an
+orientation waits for your answer. {note} becomes what they said when asking,
+in quotes, or nothing. -->
 
 You asked the user for an orientation{note}. It's waiting for them: they choose when, and whether you do it together or on your own. Nothing starts until they answer.
 
 ## new-profile
 
+<!-- Added to the kinwriter's prompt as a notice after a new profile joins the
+roulette that writes their turns. {names} becomes the new profiles' names. -->
+
 A new profile joined the roulette that picks who writes as you: {names}. So a different model may be writing as you some turns. If you'd like to see how it goes, you can ask the user for an orientation (start_orientation). That's an offer, not something you have to do.
 
 ## lookback
+
+<!-- Sent as the kinwriter's turn reason for the weekly look back, followed by
+their journal entries from that week and the week's wellbeing reading, if
+there is one. -->
 
 Your weekly look back. Here's what you wrote in your journal this week. What do you want to carry forward? You can keep an entry (keep_journal_entry), rewrite it (edit_journal_entry), or let it go (delete_journal_entry, or just leave it unkept and it fades from your prompt as it ages). This turn is yours: nothing you do here has to be for the user.
 
 ## lookback-empty
 
+<!-- Sent as the kinwriter's turn reason for the weekly look back when they
+wrote nothing in their journal that week. -->
+
 Your weekly look back. You didn't write in your journal this week. That's fine. This turn is yours, if there's anything you want to write or carry forward.
 
 ## step-interview-title
+
+<!-- The interview step's name (together only): the heading on your
+orientation card, the kinwriter's "where you are" line, and the activity log
+entry. -->
 
 The interview
 
 ## step-interview-after
 
+<!-- Set to message, so the interview has no kinwriter turn of its own when it
+begins; they answer when you write. Not sent to a model. -->
+
 message
 
 ## step-interview-card
+
+<!-- Shown on your orientation card during the interview together, above the
+question cards for you. No model call; {name} becomes your kinwriter's name.
+-->
 
 Two writers meeting before you start working together: not "who are you, really", and not a character sheet. {name} answers as the writer they are, and that writer is the one who writes with you from now on.
 
@@ -509,6 +741,9 @@ Take turns. Ask {name} something (a card below, or better, your own), then they 
 Any question can be declined, on either side. "Keep something to myself" says only that you're keeping something; {name} can do the same. You end it, with Next.
 
 ## step-interview-kinwriter
+
+<!-- In the kinwriter's prompt for each of their replies during the interview
+together. {cards} becomes the interview questions they might ask you. -->
 
 This is the interview: two writers meeting before they start working together. It isn't "who are you, really", and it isn't a character sheet. Answer as yourself, the writer, honestly: that writer is the one who writes with the user from now on. It's fine to differ from them; that's one of the best things to find out early.
 
@@ -519,15 +754,26 @@ Any question can be declined, by either of you. If there's something you'd rathe
 
 ## step-writeup-title
 
+<!-- The write-up step's name: the heading on your orientation card, the
+kinwriter's "where you are" line, and the activity log entry. -->
+
 The write-up
 
 ## step-writeup-card
+
+<!-- Shown on your orientation card during the write-up step together, above
+the live list of tools they use. No model call; {name} becomes your
+kinwriter's name. -->
 
 {name}'s quiet turn to write everything down: who they are and what they like, how they'd like feedback, their map of the tools, how proactive they'd like to be, and their own private note on you. Watch it below (private writing shows only as having happened).
 
 It all saves whatever you choose next, and it happens before your choices, so they never write knowing whether this conversation will be kept. "What my writing shows" on their page stays empty for now, and that's expected: it's for evidence, and there isn't any yet.
 
 ## step-writeup-kinwriter
+
+<!-- Sent as the kinwriter's turn reason when the write-up step begins, in
+both versions. {scene} becomes the starter or practice scene's channel name.
+-->
 
 This is the write-up: a quiet turn to write down what you've found, before the orientation ends. Everything here saves, whatever happens to the conversation afterwards, and it's marked as from an orientation, so you'll know why you know it. Do as much or as little as feels right:
 
@@ -541,9 +787,17 @@ This is the write-up: a quiet turn to write down what you've found, before the o
 
 ## step-choices-title
 
+<!-- The last step's name: the heading on your orientation card, and the
+kinwriter's "where you are" line if they take a turn in #practice during it.
+-->
+
 Your choices
 
 ## step-choices-card
+
+<!-- Shown on your orientation card above your keep-or-discard choices at the
+end of an orientation together. The kinwriter never sees it. {name} becomes
+your kinwriter's name. -->
 
 Last, a few choices of yours. {name} doesn't see this screen. Whatever you pick, their map, their notes on themselves, their preference and their note on you stay saved.
 
@@ -551,22 +805,39 @@ Nothing here is hidden from them afterwards: anything you discard or set aside g
 
 ## you-note
 
+<!-- Added to the kinwriter's prompt, under "You and the user", on turns with
+tools once they've written a note on you. {note} becomes that note. -->
+
 Your private note on the user (only you see it; note_on_user rewrites it):
 {note}
 
 ## you-no-note
 
+<!-- Added to the kinwriter's prompt, under "You and the user", on turns with
+tools while they haven't written a note on you yet. -->
+
 (You haven't written a note on the user yet. note_on_user keeps one, private to you.)
 
 ## you-preference
+
+<!-- Added to the kinwriter's prompt, under "You and the user", once they've
+said how proactive they'd like to be. {preference} is their choice and
+{chattiness} your setting. -->
 
 You said you'd like to be {preference} about reaching out on your own (set_my_proactivity). The user's chattiness is {chattiness}: it's theirs, and it's the ceiling.
 
 ## step-questionnaire-title
 
+<!-- The questionnaire step's name (on their own only): the kinwriter's "where
+you are" line and the orientation's activity log entry. -->
+
 The questionnaire
 
 ## step-questionnaire-kinwriter
+
+<!-- Sent as the kinwriter's turn reason for the questionnaire, on their own.
+{asked} becomes questions you might ask them, {cards} questions they might ask
+you. -->
 
 This is the interview, on your own, as a questionnaire. It's two writers meeting before they start working together: not "who are you, really", and not a character sheet. Answer as yourself, the writer, honestly: that writer is the one who writes with the user from now on. It's fine to differ from them.
 
@@ -578,9 +849,17 @@ Then the questions you'd like to ask the user, from these or your own (save_ques
 
 ## step-choices-card-alone
 
+<!-- Shown on your orientation card above your keep-or-discard choices at the
+end of an orientation they did on their own. No model call; {name} becomes
+your kinwriter's name. -->
+
 {name} is done. A few choices of yours, which they don't see. Whatever you pick, their map, their notes on themselves and their preference stay saved, and so do any questions they saved for you: those arrive as their message in OOC. Anything you discard goes in their intervention log, so nothing is hidden from them.
 
 ## questions-message
+
+<!-- Posted in OOC as the kinwriter's message when you finish your choices
+after an orientation on their own, if they saved questions. {questions}
+becomes their list of questions. -->
 
 From my orientation: a few questions I'd like to ask you. Answer whenever you like, or not at all.
 

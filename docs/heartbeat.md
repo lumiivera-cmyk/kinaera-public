@@ -6,7 +6,7 @@ The heartbeat is a timer that now and then gives your kinwriter a free moment, e
 
 ## Using it
 
-- **Settings → Your kinwriter reaching out → Heartbeat**: off by default, or about every 10, 15 or 30 minutes, every hour, every 2, 4, 6, 8 or 12 hours, or once a day. Each gap varies by ±20%, so it never feels like clockwork. The server checks every minute whether a beat is due. A short heartbeat only helps with a short cooldown: every beat still goes through the hard rules below.
+- **Settings → Reaching out → Heartbeat**: off by default, or about every 10, 15 or 30 minutes, every hour, every 2, 4, 6, 8 or 12 hours, or once a day. Each gap varies by ±20%, so it never feels like clockwork. The server checks every minute whether a beat is due. A short heartbeat only helps with a short cooldown: every beat still goes through the hard rules below.
 - **Heartbeat check** (same section): pick a cheaper profile or roulette, and it reads each beat first and only answers whether your kinwriter would use the moment. On a no, nothing else is asked; on a yes, the model that writes OOC takes the moment as usual. "No check" (the default) sends every beat straight to that model. Worth it when your OOC model is expensive to read a whole prompt with.
 - **Set quiet hours** in the same section, so it never wakes you at night.
 - **Beat now** (same section) runs a heartbeat straight away, to try it. The rules still apply.

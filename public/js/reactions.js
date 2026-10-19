@@ -5,6 +5,7 @@
 
 import { $, api, fileToBase64, hideFormError, scoped, showError, showFormError, state } from "./core.js";
 import { refreshMessages, renderMessages } from "./messages.js";
+import { openSettings, whenSectionShown } from "./settings-hub.js";
 
 // -------------------------------------------------------------- reactions
 
@@ -122,7 +123,7 @@ export function openReactionPicker(messageId, anchor) {
   manage.textContent = "Custom emojis…";
   manage.addEventListener("click", () => {
     closeReactionPicker();
-    openEmojiManager();
+    openSettings("emojis");
   });
 
   picker.append(grid, other, manage);
@@ -153,14 +154,13 @@ document.addEventListener("keydown", (event) => {
 
 // ---------------------------------------------------------- custom emojis
 
-function openEmojiManager() {
-  const dialog = $("emoji-dialog");
-  hideFormError(dialog);
+/** Settings → Custom emojis. */
+whenSectionShown("emojis", () => {
+  hideFormError($("emoji-form"));
   $("emoji-name").value = "";
   $("emoji-file").value = "";
   renderEmojiList();
-  dialog.showModal();
-}
+});
 
 function renderEmojiList() {
   const list = $("emoji-list");
@@ -189,7 +189,7 @@ function renderEmojiList() {
 
 async function addEmoji(event) {
   event.preventDefault();
-  const dialog = $("emoji-dialog");
+  const dialog = $("emoji-form");
   const file = $("emoji-file").files[0];
   try {
     if (!file) throw new Error("Choose an image first.");
@@ -214,7 +214,7 @@ async function deleteEmoji(name) {
     renderEmojiList();
     await refreshMessages();
   } catch (error) {
-    showFormError($("emoji-dialog"), error.message);
+    showFormError($("emoji-form"), error.message);
   }
 }
 

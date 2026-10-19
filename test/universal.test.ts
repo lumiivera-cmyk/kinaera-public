@@ -90,6 +90,45 @@ describe("settings", () => {
   });
 });
 
+describe("the look", () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString("base64");
+
+  test("a theme, its sliders and a picture chosen while looking at one kinwriter are everyone's, unless it's just theirs", async () => {
+    const id = await wren();
+    await call("PUT", `/p/${id}/api/settings`, { appTheme: "liquid-glass-dark", themeOptions: { "rainy-window": { rain: 0.3 } } });
+    expect(settingsOf("home")).toMatchObject({ appTheme: "liquid-glass-dark", themeOptions: { "rainy-window": { rain: 0.3 } } });
+    // A new picture shows straight away, for everyone.
+    const file = (await call("POST", `/p/${id}/api/backgrounds`, { data: png })).data.background.file;
+    expect(settingsOf("home").appBackground).toBe(file);
+    const third = (await call("POST", "/api/hub/servers", { name: "Sol", prompt: "You are Sol." })).data.kinwriterId;
+    expect(settingsOf(third)).toMatchObject({ appTheme: "liquid-glass-dark", appBackground: file });
+
+    expect((await call("PUT", `/api/hub/kinwriters/${id}/own`, { group: "look", own: true })).data.own).toEqual(["look"]);
+    await call("PUT", `/p/${id}/api/settings`, { appTheme: "classic", appBackground: "" });
+    expect(settingsOf("home")).toMatchObject({ appTheme: "liquid-glass-dark", appBackground: file });
+    // Shared again: back to everyone's.
+    const back = await call("PUT", `/api/hub/kinwriters/${id}/own`, { group: "look", own: false });
+    expect(back.data.settings).toMatchObject({ appTheme: "liquid-glass-dark", appBackground: file });
+  });
+
+  test("a theme or picture deleted is gone for everyone, even a kinwriter whose look is their own", async () => {
+    const id = await wren();
+    const theme = (await call("POST", "/p/home/api/themes", { name: "Short-lived" })).data.theme.id;
+    const file = (await call("POST", "/p/home/api/backgrounds", { data: png })).data.background.file;
+    await call("PUT", "/p/home/api/settings", { appTheme: theme, themeOptions: { [theme]: { glow: 1 } } });
+    await call("PUT", `/api/hub/kinwriters/${id}/own`, { group: "look", own: true });
+    const third = (await call("POST", "/api/hub/servers", { name: "Sol", prompt: "You are Sol." })).data.kinwriterId;
+
+    expect((await call("DELETE", `/p/${third}/api/themes/${theme}`, {})).status).toBe(200);
+    expect((await call("DELETE", `/p/${third}/api/backgrounds/${file}`, {})).status).toBe(200);
+    for (const who of ["home", id, third]) {
+      expect(settingsOf(who)).toMatchObject({ appTheme: "classic", themeOptions: {}, appBackground: "" });
+    }
+    const shared = JSON.parse(readFileSync(join(dir.path, "hub.json"), "utf8")).settings;
+    expect(shared).toMatchObject({ appTheme: "classic", themeOptions: {}, appBackground: "" });
+  });
+});
+
 describe("profiles and roulettes", () => {
   test("made, changed and deleted while looking at one kinwriter: the same for everyone", async () => {
     const id = await wren();
@@ -130,6 +169,26 @@ describe("a setting added after settings were shared", () => {
     hub = createHub(testConfig(dir.path, fake.baseUrl));
     expect(JSON.parse(readFileSync(path, "utf8")).settings.heartbeatHours).toBe(app(id).store.getSettings().heartbeatHours);
     expect(app(id).store.getSettings().heartbeatHours).toBe(0);
+  });
+
+  test("anyone who had it different keeps theirs, as their own (the look, once each kinwriter's)", async () => {
+    const id = await wren();
+    app("home").store.updateSettings({ appTheme: "liquid-glass-dark" });
+    app(id).store.updateSettings({ appTheme: "rainy-window", backgroundDim: 0.4 });
+    hub.close();
+    const path = join(dir.path, "hub.json");
+    const registry = JSON.parse(readFileSync(path, "utf8"));
+    for (const key of ["appTheme", "themeOptions", "appBackground", "backgroundDim"]) delete registry.settings[key];
+    writeFileSync(path, JSON.stringify(registry));
+    hub = createHub(testConfig(dir.path, fake.baseUrl));
+
+    // Arlo's (the first server's) is the shared look; Wren keeps theirs.
+    expect(JSON.parse(readFileSync(path, "utf8")).settings.appTheme).toBe("liquid-glass-dark");
+    expect(ownGroups(app("home").store)).toEqual([]);
+    expect(ownGroups(app(id).store)).toEqual(["look"]);
+    expect(settingsOf(id)).toMatchObject({ appTheme: "rainy-window", backgroundDim: 0.4 });
+    await call("PUT", "/p/home/api/settings", { appTheme: "classic" });
+    expect(settingsOf(id).appTheme).toBe("rainy-window");
   });
 });
 

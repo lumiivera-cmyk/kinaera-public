@@ -155,7 +155,7 @@ export function healthReport(store: Store, now = Date.now()): HealthReport {
 
   // Wake-ups that failed.
   const failedWakes = store.wakeLog.recent(300).filter((w) => w.outcome === "failed" && w.at >= weekAgo);
-  if (failedWakes.length) findings.push({ level: "watch", area: "wake-ups", text: `${failedWakes.length} wake-up${failedWakes.length === 1 ? "" : "s"} failed this week (Settings → Recent wake-ups has why).` });
+  if (failedWakes.length) findings.push({ level: "watch", area: "wake-ups", text: `${failedWakes.length} wake-up${failedWakes.length === 1 ? "" : "s"} failed this week (Settings → Reaching out → Recent wake-ups has why).` });
 
   if (findings.length === 0) findings.push({ level: "ok", area: "all", text: "Nothing stuck: no repeated failures, rewrites, full sections or unkept journal." });
   return { findings, tools, limits };

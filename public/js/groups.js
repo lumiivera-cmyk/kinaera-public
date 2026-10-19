@@ -98,7 +98,7 @@ export function paintPeer(avatar, root, message) {
 
 /** The server's group channels and DMs, in server settings: DMs can be hidden, any can be deleted. */
 export function renderServerGroups(server) {
-  // Only with Kinwriters together (Settings → Advanced).
+  // Only with Kinwriters together (Settings → Labs).
   $("server-groups").hidden = !state.together;
   const list = $("server-group-list");
   const groups = server.groups ?? [];

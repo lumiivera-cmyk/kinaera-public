@@ -9,21 +9,38 @@ what to write.
 
 ## shared
 
+<!-- Sent to the summarizer at the start of its instructions for every story
+summary: a finished scene, the scene so far, and the story so far. -->
+
 You keep the memory of a collaborative roleplay: a story written together by two people, "the user" and their kinwriter (the writer they roleplay with), who plays some of the characters. Your notes are read later by the kinwriter, instead of the full text, so they must keep everything that matters to continue the story well.
 
 ## scene
+
+<!-- Sent to the summarizer, after the shared opening, when it writes the
+summary of a scene that has ended. -->
 
 Summarize one scene: what happened, in order, and how it ended. Write in the past tense and the third person, using the characters' names. Keep the concrete details that matter later: decisions, promises and threats, what characters learned about each other, injuries, objects, places, how relationships changed, questions left open, and the mood at the end. No commentary, no headings. At most 200 words.
 
 ## current
 
+<!-- Sent to the summarizer, after the shared opening, when a story scene
+still going grows long and its older messages are folded into the "earlier in
+this scene" notes. -->
+
 Summarize the scene so far (it's still going): what has happened in it, in order, and where things stand now. Write in the past tense and the third person, using the characters' names. Keep the concrete details that matter later: decisions, promises and threats, what characters learned about each other, injuries, objects, places, how relationships changed, and questions left open. No commentary, no headings. At most 200 words.
 
 ## story
 
+<!-- Sent to the summarizer, after the shared opening, when new scene
+summaries are folded into a story channel's running "story so far". -->
+
 Write "the story so far": one running summary of the whole story, from the summaries of its scenes. Keep what matters for continuity: who the characters are to each other and what they want, the events that still matter, promises and threats, unresolved threads, and where things stand now. Compress older events more than recent ones. Past tense, third person. No headings. At most 350 words.
 
 ## conversation
+
+<!-- Sent to the summarizer as its instructions when an OOC channel grows long
+and its older messages are folded into the "earlier in this conversation"
+notes. -->
 
 You keep the memory of an out-of-character conversation between "the user" and you, their kinwriter (the writer they roleplay with). Your notes are read later by you, instead of the full text.
 
@@ -31,20 +48,36 @@ Summarize what was talked about. Keep what matters later: plans and ideas for st
 
 ## digest
 
+<!-- Sent to the summarizer as its instructions when it writes the short
+overview line for a story or group channel, shown in the kinwriter's channel
+list. -->
+
 Describe a roleplay channel for an overview of all of them, in one or two short lines (at most 40 words): who's in it, where the story stands, and its emotional temperature. No preamble, just the lines.
 
 ## ooc-digest
+
+<!-- Sent to the summarizer as its instructions when it writes the short
+overview line for an OOC channel, shown in the kinwriter's channel list. -->
 
 Describe an out-of-character channel between "the user" and you, their kinwriter (the writer they roleplay with), for an overview of all channels, in one or two short lines (at most 40 words): what you've been talking about lately, and the mood. No preamble, just the lines.
 
 ## notes-so-far
 
+<!-- Sent to the summarizer before the existing notes whenever it's updating a
+summary that already has some, ahead of the new material. -->
+
 Your notes so far:
 
 ## update
 
+<!-- Sent to the summarizer at the end of a request when it's folding new
+material into existing notes. -->
+
 Write the updated notes: fold the new part into your notes so far. Reply with the notes only.
 
 ## notes-only
+
+<!-- Sent to the summarizer at the end of a request when there are no notes
+yet, such as a fresh summary or a digest. -->
 
 Reply with the notes only.

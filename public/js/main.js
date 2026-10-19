@@ -28,10 +28,12 @@
  *   inbox.js        asks, proposals and suggestions
  *   history.js      message history, the intervention log, the check log
  *   branches.js     going back to a message, and the branches it leaves
- *   settings.js     settings, profiles, roulettes, logs
+ *   settings-hub.js the Settings screen: its list of sections, and saving as you go
+ *   settings.js     the shared sections of Settings, profiles, roulettes, logs
  *   profile-inline.js  a profile's settings, editable where it's picked
  *   model-info.js   which settings each model supports
  *   prompts.js      the Prompts screen: wording, and the dry run
+ *   server-setup.js Settings → API key and setup: your .env file
  *   health.js       health, on a kinwriter's page, and the developer panel link
  *   datafolders.js  data folders, in the developer panel
  *   themes.js       themes and appearance
@@ -74,6 +76,8 @@ import "./scratchpad.js";
 import { updateRewriteButton, withdrawRewrite } from "./rewrites.js";
 import { maybeOfferOrientation } from "./orientation.js";
 import { openPrompts } from "./prompts.js";
+import "./server-setup.js";
+import { openSettings, whenSectionShown } from "./settings-hub.js";
 import { maybeOpenSetup } from "./setup.js";
 import { copyCheckLog, openCheckLog, openInterventions } from "./history.js";
 import { openInbox } from "./inbox.js";
@@ -130,10 +134,8 @@ import {
   deleteProfile,
   deleteRoulette,
   loadModels,
-  openModels,
   openProfile,
   openRoulette,
-  openSettings,
   openToolLog,
   renderToolLog,
   rouletteEntryRow,
@@ -169,7 +171,8 @@ import {
  * so its glass (the gloss, the rim a theme draws on its edges) always
  * covers exactly the dialog, however far you scroll.
  */
-for (const dialog of document.querySelectorAll("dialog.dialog")) {
+// (Settings scrolls its list and its section on their own: js/settings-hub.js.)
+for (const dialog of document.querySelectorAll("dialog.dialog:not(.settings-hub)")) {
   const body = document.createElement("div");
   body.className = "dialog-body";
   body.append(...dialog.childNodes);
@@ -194,14 +197,12 @@ els.input.addEventListener("input", autoGrow);
 
 els.turn.addEventListener("click", kinwriterTurn);
 $("stop-button").addEventListener("click", stopTurn);
-$("appearance-button").addEventListener("click", () => {
-  $("fold-quiet").checked = foldQuietOn();
-  openAppearance();
-});
+$("appearance-button").addEventListener("click", openAppearance);
+whenSectionShown("look", () => ($("fold-quiet").checked = foldQuietOn()));
 $("theme-copy").addEventListener("click", copyTheme);
 $("theme-edit").addEventListener("click", () => openThemeEditor(state.settings.appTheme));
 $("theme-delete").addEventListener("click", deleteTheme);
-$("appearance-dialog").addEventListener("change", (event) => {
+$("appearance-panel").addEventListener("change", (event) => {
   if (event.target.name === "effects") chooseEffects(event.target.value);
   if (event.target.name === "fold-quiet") setFoldQuiet(event.target.checked);
 });
@@ -269,7 +270,7 @@ new ResizeObserver(() => moveChannelIndicator()).observe(els.channelList);
 $("menu-button").addEventListener("click", openSidebar);
 $("sidebar-scrim").addEventListener("click", closeSidebar);
 
-$("settings-button").addEventListener("click", openSettings);
+$("settings-button").addEventListener("click", () => openSettings());
 els.settingsForm.addEventListener("submit", saveSettings);
 els.loadModels.addEventListener("click", loadModels);
 
@@ -342,7 +343,6 @@ $("entry-delete").addEventListener("click", deleteEntry);
 $("folder-form").addEventListener("submit", saveFolder);
 $("folder-delete").addEventListener("click", deleteFolder);
 
-$("open-models").addEventListener("click", openModels);
 $("new-profile").addEventListener("click", () => openProfile(null));
 $("new-roulette").addEventListener("click", () => openRoulette(null));
 $("profile-form").addEventListener("submit", saveProfile);

@@ -1,7 +1,8 @@
 /**
- * The Settings dialog and what hangs off it: profiles and roulettes, their
- * editors, the tool log and tool test, wake-ups and the heartbeat, and
- * Jev's test and log.
+ * The sections of Settings shared by every kinwriter (Models, Memory,
+ * Reaching out, Jev, Rules; js/settings-hub.js is the screen) and what hangs
+ * off them: profiles and roulettes, their editors, the tool log and tool
+ * test, wake-ups and the heartbeat, and Jev's test and log.
  */
 
 import { renderAll } from "./channels.js";
@@ -12,13 +13,15 @@ import { renderToolCall } from "./messages.js";
 import { loadModelInfo, maxTokensFor, modelInfo, onModelInfo, toolNote } from "./model-info.js";
 import { loadoutJobs, profileGauges, profileSwitches, rouletteShares, shortNumber } from "./loadout.js";
 import { profileEditor, refreshProfileEditors, resolveAssignment } from "./profile-inline.js";
+import { explain, saved, sectionShowing, whenSectionShown, whenSettingsOpen } from "./settings-hub.js";
+import { renderAppearance } from "./themes.js";
 
 // ---------------------------------------------------------------- dialogs
 
 /**
  * Filling each section of the Settings form from a settings object. The
- * sections are shared by every kinwriter (src/universal.ts); models, memory
- * and reaching out can be set just for one ("Just for …").
+ * sections are shared by every kinwriter (src/universal.ts); models, memory,
+ * reaching out and the look can be set just for one ("Just for …").
  */
 const FILL = {
   models(s) {
@@ -75,34 +78,40 @@ const FILL = {
 /** The "Just for …" boxes: ticked for this kinwriter's own sections. */
 function renderOwnBoxes() {
   const own = state.ownSettings ?? [];
-  for (const box of els.settingsForm.querySelectorAll("input[data-own]")) {
+  for (const box of els.settingsDialog.querySelectorAll("input[data-own]")) {
     box.checked = own.includes(box.dataset.own);
     box.closest("label").querySelector(".own-name").textContent = state.settings.kinwriterName;
   }
   $("own-status").textContent = "";
 }
 
-/** Settings, shared by every kinwriter: fill the form from `state.settings` and open it. */
-export function openSettings() {
+/** When Settings opens: fill the shared sections from `state.settings`. Every one is saved whole. */
+whenSettingsOpen(() => {
   const s = state.settings;
   $("setting-together").checked = state.together === true;
   $("setting-together-status").textContent = "";
   for (const fill of Object.values(FILL)) fill(s);
   renderOwnBoxes();
-  renderHeartbeatStatus();
   $("beat-result").textContent = "";
   $("test-jev-result").textContent = "";
-  loadWakeLog();
   hideFormError(els.settingsForm);
-  els.settingsDialog.showModal();
-}
+});
+whenSectionShown("reaching", () => {
+  renderHeartbeatStatus();
+  loadWakeLog();
+});
+whenSectionShown("models", () => {
+  renderModels();
+  // What each model supports (its token limit, whether it reasons): the cards redraw when it arrives.
+  loadModelInfo();
+});
 
 /**
  * "Just for …": a section of Settings just for this kinwriter, or shared
  * again. Saved straight away. Shared again, the section shows everyone's
  * values (the hub sends them back).
  */
-for (const box of els.settingsForm.querySelectorAll("input[data-own]")) {
+for (const box of els.settingsDialog.querySelectorAll("input[data-own]")) {
   box.addEventListener("change", async () => {
     const group = box.dataset.own;
     const status = $("own-status");
@@ -110,7 +119,11 @@ for (const box of els.settingsForm.querySelectorAll("input[data-own]")) {
       const data = await api("PUT", `/api/hub/kinwriters/${encodeURIComponent(state.kinwriterId ?? "home")}/own`, { group, own: box.checked });
       state.ownSettings = data.own;
       state.settings = { ...state.settings, ...data.settings };
-      if (!box.checked) FILL[group](state.settings);
+      // Shared again: everyone's values show (for the look, the whole app redraws).
+      if (!box.checked && group === "look") {
+        renderAll();
+        renderAppearance();
+      } else if (!box.checked) FILL[group](state.settings);
       status.textContent = box.checked
         ? `Changes to this section now stay with ${state.settings.kinwriterName}.`
         : `This section is shared again: ${state.settings.kinwriterName} has everyone's.`;
@@ -121,10 +134,26 @@ for (const box of els.settingsForm.querySelectorAll("input[data-own]")) {
   });
 }
 
-export async function saveSettings(event) {
-  // Stop the <form method="dialog"> from closing the dialog before we know
-  // the save worked.
+/** The shared settings' fields: a change to any of them saves them all (`saveSettings`). */
+const SAVED_FIELDS = new Set([
+  "rpAssignment", "oocAssignment", "historyLimit", "hardLimits", "summaries", "summaryEvery", "summaryAssignment",
+  "wakeups", "awayHours", "wakeCooldownMinutes", "asideMinutes", "quietStart", "quietEnd", "decisionModel",
+  "decisionConfidence", "decisionFallback", "heartbeatHours", "heartbeatAssignment",
+]);
+/** One save at a time, in order: a quick second change waits for the first. */
+let saving = Promise.resolve();
+
+els.settingsForm.addEventListener("change", (event) => {
+  if (SAVED_FIELDS.has(event.target.name)) saving = saving.then(saveSettingsNow);
+});
+
+/** Enter in a box (the form's submit) saves too; Settings stays open. */
+export function saveSettings(event) {
   event.preventDefault();
+  saving = saving.then(saveSettingsNow);
+}
+
+async function saveSettingsNow() {
   const form = els.settingsForm.elements;
   try {
     const data = await api("PUT", "/api/settings", {
@@ -149,10 +178,14 @@ export async function saveSettings(event) {
       heartbeatAssignment: form.heartbeatAssignment.value,
     });
     state.settings = data.settings;
-    els.settingsDialog.close();
+    hideFormError(els.settingsForm);
+    saved();
     renderAll();
   } catch (error) {
-    showFormError(els.settingsForm, error.message);
+    // Put every box back as last saved: the sections are saved whole, so one
+    // bad value left in place would stop every later change from saving.
+    for (const fill of Object.values(FILL)) fill(state.settings);
+    showFormError(els.settingsForm, explain(els.settingsForm, error.message));
   }
 }
 
@@ -216,7 +249,7 @@ async function beatNow() {
 
 $("beat-now").addEventListener("click", beatNow);
 
-/** Settings → Your kinwriter reaching out → Recent wake-ups. */
+/** Settings → Reaching out → Recent wake-ups. */
 async function loadWakeLog() {
   const list = $("wake-log-list");
   try {
@@ -288,7 +321,7 @@ async function refreshProfiles() {
   const { profiles, roulettes } = await api("GET", "/api/profiles");
   state.profiles = profiles;
   state.roulettes = roulettes;
-  if ($("models-dialog").open) renderModels();
+  if (sectionShowing("models")) renderModels();
   // Settings may be open underneath: keep its choices current.
   if (els.settingsDialog.open) {
     const form = els.settingsForm.elements;
@@ -338,16 +371,6 @@ export function assignmentName(value) {
   return (state.profiles.find((p) => p.id === id) ?? state.profiles[0])?.name ?? "?";
 }
 
-export function openModels() {
-  hideFormError($("models-dialog"));
-  renderModels();
-  $("models-dialog").showModal();
-  // Focus Done, not the first card, so no focus ring sits on a card in a screenshot.
-  $("models-dialog").querySelector("[data-close]").focus();
-  // What each model supports (its token limit, whether it reasons): the cards redraw when it arrives.
-  loadModelInfo();
-}
-
 /** Draw the lists of profiles and roulettes, and who writes what. */
 function renderModels() {
   const inUse = (value) => {
@@ -380,7 +403,7 @@ function renderModels() {
 
 // The Profiles page redraws once nanoGPT says what each model supports (model limits, reasoning).
 onModelInfo(() => {
-  if ($("models-dialog").open) renderModels();
+  if (sectionShowing("models")) renderModels();
 });
 
 /** An element with a class and, optionally, text. */
@@ -803,7 +826,7 @@ export async function testProfileTools() {
 
 // ------------------------------------------------------- kinwriters together
 
-/** Settings → Advanced → Kinwriters together: hub-wide, saved straight away. */
+/** Settings → Labs → Kinwriters together: hub-wide, saved straight away. */
 $("setting-together").addEventListener("change", async (event) => {
   const status = $("setting-together-status");
   try {

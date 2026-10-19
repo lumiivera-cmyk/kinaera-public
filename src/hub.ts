@@ -42,6 +42,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync
 import { basename, join, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { listWording, setWording, setWordingOverrides } from "./wording.ts";
+import { EnvFile, type EnvChange } from "./envfile.ts";
 import { keepAwake } from "./notify.ts";
 import { acceptedSeed, beginFromSeed, type Seed } from "./seeds.ts";
 import { createApp, type App } from "./server.ts";
@@ -105,7 +106,7 @@ interface Registry {
   /** Group channels and DMs (src/groups.ts). */
   groups?: HubGroup[];
   /**
-   * Kinwriters together (Settings → Advanced, untested): group channels,
+   * Kinwriters together (Settings → Labs, untested): group channels,
    * DMs, and kinwriters knowing about each other. Off (the default), each
    * kinwriter is on their own, even with several on one server.
    */
@@ -328,16 +329,29 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
   } else {
     // A setting added since settings were shared: shared from the first
     // kinwriter who doesn't keep that section as their own (or the default).
+    // Anyone else who had it different keeps theirs, as their own section
+    // (the look, which each kinwriter used to have for themselves).
     const missing = UNIVERSAL_KEYS.filter((k) => registry.settings![k] === undefined);
     if (missing.length) {
       const defaults = defaultSettings();
       const shared = registry.settings as Record<string, unknown>;
       for (const k of missing) shared[k] = inOrder().find((app) => !ownKeys(app.store).has(k))?.store.getSettings()[k] ?? defaults[k];
+      for (const app of inOrder()) {
+        const settings = app.store.getSettings();
+        const own = ownKeys(app.store);
+        for (const group of OWN_GROUPS) {
+          const added = SETTING_GROUPS[group].filter((k) => missing.includes(k) && !own.has(k));
+          if (added.some((k) => !same(settings[k], shared[k]))) {
+            setOwnGroup(app.store, group, true);
+            console.log(`[hub] ${group} is shared now; kept just for ${settings.kinwriterName}`);
+          }
+        }
+      }
       save();
     }
   }
 
-  /** Ask a kinwriter's app to change settings, as Settings → Save does (so the heartbeat and summaries catch up). */
+  /** Ask a kinwriter's app to change settings, as saving Settings does (so the heartbeat and summaries catch up). */
   async function putSettings(app: App, update: Partial<Settings>): Promise<void> {
     if (Object.keys(update).length === 0) return;
     const response = await app.fetch(
@@ -396,7 +410,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
     if (changed) save();
   }
 
-  /** Send a request to a kinwriter's app; settings and profiles it changes are shared with everyone. */
+  /** Send a request to a kinwriter's app; settings, profiles and the look it changes are shared with everyone. */
   async function forward(id: string, app: App, request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     const settings = request.method === "PUT" && path === "/api/settings";
@@ -409,10 +423,35 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
         .catch(() => null)) as unknown;
       if (typeof sent === "object" && sent !== null) keys = Object.keys(sent);
     }
+    // A new picture is shown straight away, which changes the look.
+    if (request.method === "POST" && path === "/api/backgrounds") keys = ["appBackground"];
+    const gone = request.method === "DELETE" ? path.match(/^\/api\/(themes|backgrounds)\/([^/]+)$/) : null;
     const response = await app.fetch(request);
-    if (response.ok && settings) await spreadSettings(id, keys);
+    if (response.ok && keys.length) await spreadSettings(id, keys);
     if (response.ok && profiles) spreadProfiles(id);
+    if (response.ok && gone) forgetLook(gone[1] as "themes" | "backgrounds", decodeURIComponent(gone[2]!));
     return response;
+  }
+
+  /**
+   * A theme or background picture was deleted (they're everyone's): no
+   * kinwriter shows it any more, whether the look is shared or their own.
+   */
+  function forgetLook(kind: "themes" | "backgrounds", name: string): void {
+    for (const app of apps.values()) {
+      if (kind === "themes") app.store.forgetTheme(name);
+      else if (app.store.getSettings().appBackground === name) app.store.updateSettings({ appBackground: "" });
+    }
+    const shared = registry.settings;
+    if (!shared) return;
+    if (kind === "themes") {
+      if (shared.appTheme === name) shared.appTheme = "classic";
+      if (shared.themeOptions?.[name]) {
+        const { [name]: _gone, ...rest } = shared.themeOptions;
+        shared.themeOptions = rest;
+      }
+    } else if (shared.appBackground === name) shared.appBackground = "";
+    save();
   }
 
   function startApp(app: App): void {
@@ -743,6 +782,20 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       }
     }
 
+    // Your .env file (Settings → API key and setup): used after a restart.
+    if (parts[0] === "env" && parts.length === 1 && config.envPath) {
+      const env = new EnvFile(config.envPath, config);
+      if (method === "GET") return json(env.view());
+      if (method === "PUT") {
+        const input = await body(request);
+        try {
+          return json(env.save({ values: input.values as EnvChange["values"], apiKey: input.apiKey as string | undefined }));
+        } catch (error) {
+          throw new HubError(400, error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
+
     // Data folders (developer panel only, for now): start fresh, and the old folders' kinwriters.
     if (parts[0] === "dev") {
       if (!config.developerPanel) throw new HubError(404, "No such API route.");
@@ -804,7 +857,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
       }
     }
 
-    // Hub-wide options (Settings → Advanced).
+    // Hub-wide options (Settings → Labs).
     if (parts[0] === "options" && parts.length === 1 && method === "PATCH") {
       const input = await body(request);
       if (input.together !== undefined) {
@@ -818,7 +871,7 @@ export function createHub(config: Config, makeApp: (config: Config) => App = cre
 
     // Group channels and DMs (src/groups.ts), only with kinwriters together.
     if ((parts[0] === "servers" && parts[2] === "groups") || parts[0] === "groups") {
-      if (!registry.together) throw new HubError(400, "Group channels and DMs need Kinwriters together, under Settings → Advanced.");
+      if (!registry.together) throw new HubError(400, "Group channels and DMs need Kinwriters together, under Settings → Labs.");
     }
     if (parts[0] === "servers" && parts[2] === "groups" && method === "POST") {
       const target = server(parts[1] ?? "");

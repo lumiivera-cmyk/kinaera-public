@@ -22,9 +22,25 @@ import { markdownSections } from "./frontmatter.ts";
 
 const DEFAULTS_DIR = resolve(import.meta.dir, "..", "defaults");
 
-/** Split a wording file's text into its sections, by name. */
+/**
+ * A note for people at the start of a section, saying where it's used:
+ *
+ *   ## heartbeat
+ *
+ *   <!-- Sent to the kinwriter as the reason for a heartbeat turn... -->
+ *
+ * It's shown above the section's box in Settings → Prompts and never sent.
+ */
+const USED_NOTE = /^<!--([\s\S]*?)-->\s*/;
+
+/** Split a wording file's text into its sections, by name (without their notes). */
 export function parseSections(text: string): Record<string, string> {
-  return Object.fromEntries(markdownSections(text).map((s) => [s.heading, s.text]));
+  return Object.fromEntries(markdownSections(text).map((s) => [s.heading, s.text.replace(USED_NOTE, "")]));
+}
+
+/** Each section's note saying where it's used, by name ("" if it has none). */
+export function sectionNotes(text: string): Record<string, string> {
+  return Object.fromEntries(markdownSections(text).map((s) => [s.heading, s.text.match(USED_NOTE)?.[1]!.replace(/\s+/g, " ").trim() ?? ""]));
 }
 
 // ------------------------------------------------------------ your edits
@@ -89,7 +105,8 @@ export interface WordingFile {
   file: string;
   /** The note at the top of the file, for people (never sent). */
   about: string;
-  sections: { name: string; text: string; defaultText: string; edited: boolean }[];
+  /** `used`: where the section is used, for people (never sent). */
+  sections: { name: string; used: string; text: string; defaultText: string; edited: boolean }[];
 }
 
 /** Every wording file in `defaults/` with its sections, defaults and your edits. */
@@ -102,6 +119,7 @@ export function listWording(): WordingFile[] {
       const file = f.slice(0, -3);
       const text = defaultText(file);
       const defaults = parseSections(text);
+      const notes = sectionNotes(text);
       const firstSection = text.search(/^##\s/m);
       const about = (firstSection === -1 ? text : text.slice(0, firstSection)).replace(/^#\s+.*\n/, "").trim();
       const mine = edits[file] ?? {};
@@ -110,6 +128,7 @@ export function listWording(): WordingFile[] {
         about,
         sections: Object.entries(defaults).map(([name, defaultText]) => ({
           name,
+          used: notes[name] ?? "",
           text: mine[name] ?? defaultText,
           defaultText,
           edited: name in mine && mine[name] !== defaultText,

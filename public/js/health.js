@@ -124,3 +124,6 @@ async function openDeveloper() {
 details.addEventListener("toggle", () => {
   if (details.open) renderHealth();
 });
+
+// Settings → Developer: the same panel.
+$("settings-open-developer").addEventListener("click", openDeveloper);

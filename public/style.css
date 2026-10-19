@@ -1356,6 +1356,10 @@ button:disabled {
   margin-bottom: 4px;
 }
 
+.prompts-used {
+  margin: 0 0 6px;
+}
+
 .prompts-section textarea {
   width: 100%;
   font: 13px / 1.5 var(--font-mono);
@@ -3709,4 +3713,188 @@ button.attach-chip {
 
 .scratchpad-status {
   margin-top: 6px;
+}
+
+/* Server setup: saved, waiting for a restart (js/server-setup.js). */
+.restart-notice {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warning, #d9a441);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #d9a441) 12%, transparent);
+  font-size: 14px;
+}
+
+/* ============================================================ settings */
+
+/*
+ * Settings (js/settings-hub.js): one screen, the list of sections beside the
+ * open section; on a phone, the list first, then a section with a back arrow.
+ * The list and the section each scroll on their own.
+ */
+.settings-hub {
+  width: min(960px, 100vw - 24px);
+  height: calc(100vh - 24px);
+  height: calc(100dvh - 24px);
+  padding: 0;
+}
+
+.settings-hub[open] {
+  flex-direction: row;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 230px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 10px 20px;
+  border-right: 1px solid color-mix(in srgb, var(--text-muted) 20%, transparent);
+}
+
+.settings-nav-head,
+.settings-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-nav-head {
+  padding: 0 6px;
+}
+
+.settings-nav-head .dialog-title,
+.settings-head .dialog-title {
+  flex: 1;
+  margin: 0;
+}
+
+.settings-nav-group {
+  margin: 16px 10px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  margin: 1px 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--channel-link-color);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: var(--channel-link-hover-bg);
+  color: var(--text);
+}
+
+/* The open section: like the open channel, plus a bar, for themes whose open channel has no fill of its own. */
+.settings-nav-item[aria-current="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--channel-link-active-bg));
+  color: var(--channel-link-active-color);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* The list and the section scroll, so they can take focus: no ring round them. */
+.settings-nav:focus,
+.settings-scroll:focus {
+  outline: none;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-head {
+  padding: 14px 16px 0 20px;
+}
+
+.settings-saved {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.settings-for,
+#own-status:not(:empty) {
+  margin: 2px 20px 0;
+}
+
+#own-status:empty {
+  display: none;
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px 24px;
+}
+
+/* A save that failed: kept in view at the bottom of the section, however far down it is. */
+.settings-scroll .form-error:not([hidden]) {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  /* Over the dialog's own fill and frosted, so the section scrolling under it doesn't show through. */
+  background: linear-gradient(var(--error-bg), var(--error-bg)), var(--dialog-bg);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+
+/* Wide: the list is always there, so no back arrow, and one close button (the section's). */
+@media (min-width: 800px) {
+  .settings-back,
+  .settings-nav .settings-close {
+    display: none;
+  }
+}
+
+/* A phone: the list, or a section, filling the screen. */
+@media (max-width: 799px) {
+  .settings-hub {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .settings-nav {
+    flex: 1;
+    border-right: 0;
+  }
+
+  .settings-nav-item {
+    padding: 11px 12px;
+  }
+
+  .settings-hub[data-view="list"] .settings-body,
+  .settings-hub[data-view="panel"] .settings-nav {
+    display: none;
+  }
+
+  .settings-head {
+    padding-left: 8px;
+  }
 }

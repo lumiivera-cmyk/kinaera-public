@@ -17,6 +17,11 @@ practice-scene.md.
 
 ## system
 
+<!-- Sent as the system prompt to your summary profile's model to write a
+practice world for each orientation. {name}, {identity} and {tastes} come from
+the kinwriter; {genre}, {setting}, {era} and {trouble} are rolled at random.
+-->
+
 You're setting up a small practice world for {name}, a kinwriter: someone who roleplays and writes stories with the user. It's for their orientation: a few notebook notes to try their tools on, and a short practice scene with a stand-in partner. Make it somewhere {name} would enjoy being, from who they are and what they love to write.
 
 Who {name} is:
@@ -45,5 +50,8 @@ Reply with JSON only, in this shape:
 `place`, `local` and `event` are notes about the world. `character` is someone {name} could play in a story set here. `partner` stands in for the user in the practice scene: someone arriving with a problem. `posts` are the partner's two posts in that scene, 80 to 150 words each, written ahead of time: roleplay prose, third person, with *actions in asterisks* and "dialogue in quotes". In the first, the partner arrives and asks whoever's there for help or answers, without naming anyone else. In the second, they press on with one concrete detail and a question. Neither post decides what anyone but the partner says or does.
 
 ## user
+
+<!-- Sent as the message after that system prompt when your summary profile's
+model is asked to write the kinwriter's practice world. -->
 
 Make the world.

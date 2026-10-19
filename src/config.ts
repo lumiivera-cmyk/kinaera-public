@@ -28,6 +28,11 @@ export interface Config {
   publicDir: string;
   /** Absolute path of the folder of built-in themes. (Your own are in `<dataDir>/themes`.) */
   themesDir: string;
+  /**
+   * The `.env` file the server was started with, which Settings → API key
+   * and setup edits (src/envfile.ts). Unset (tests): that screen isn't there.
+   */
+  envPath?: string;
   /** nanoGPT API key. Empty means "not configured yet". */
   apiKey: string;
   /** Base URL of the OpenAI-compatible API, without a trailing slash. */
@@ -116,6 +121,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dataDir: resolve(root, env.DATA_DIR || "data"),
     publicDir: resolve(root, "public"),
     themesDir: resolve(root, "themes"),
+    envPath: resolve(root, ".env"),
     apiKey: (env.NANOGPT_API_KEY || "").trim(),
     // Strip any trailing slashes so we can always write `${base}/path`.
     apiBaseUrl: (env.NANOGPT_BASE_URL || "https://nano-gpt.com/api/v1").replace(/\/+$/, ""),

@@ -326,7 +326,7 @@ class JevError extends ApiError {
 }
 
 async function postChat(api: ApiOptions, body: Record<string, unknown>, signal?: AbortSignal): Promise<{ json: unknown; raw: string }> {
-  if (!api.apiKey) throw new ApiError("No nanoGPT API key is set. Add NANOGPT_API_KEY to your .env file and restart the server.");
+  if (!api.apiKey) throw new ApiError("No nanoGPT API key is set. Add your key in Settings → API key and setup (or NANOGPT_API_KEY in .env), then restart the server.");
   const timeout = AbortSignal.timeout(api.timeoutMs);
   let response: Response;
   let raw: string;

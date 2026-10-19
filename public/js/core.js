@@ -36,7 +36,7 @@ export const state = {
    * the bottom of the sidebar. You can read it, not write in it.
    */
   practice: null,
-  /** Kinwriters together (Settings → Advanced): group channels, DMs, knowing about each other. */
+  /** Kinwriters together (Settings → Labs): group channels, DMs, knowing about each other. */
   together: false,
   /** Presence: what they're doing in each busy channel ({id: "writing" | "reading"}), overall, and their own status. */
   phases: {},
